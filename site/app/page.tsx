@@ -154,7 +154,7 @@ export default function Page() {
         <div
           role="tooltip"
           id="hero-credit"
-          className="pointer-events-none absolute right-0 bottom-full mb-3 w-[23rem] origin-bottom-right translate-y-1 scale-[0.98] rounded-md border p-4 text-left opacity-0 backdrop-blur-md transition-[opacity,transform] duration-200 ease-out group-hover:translate-y-0 group-hover:scale-100 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:scale-100 group-focus-within:opacity-100 group-active:translate-y-0 group-active:scale-100 group-active:opacity-100 motion-reduce:transition-none"
+          className="pointer-events-none absolute right-0 bottom-full mb-3 w-[min(28rem,calc(100vw-3rem))] origin-bottom-right translate-y-1 scale-[0.98] rounded-md border p-4 text-left opacity-0 backdrop-blur-md transition-[opacity,transform] duration-200 ease-out group-hover:translate-y-0 group-hover:scale-100 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:scale-100 group-focus-within:opacity-100 group-active:translate-y-0 group-active:scale-100 group-active:opacity-100 motion-reduce:transition-none"
           style={{
             backgroundColor: "rgba(20,16,12,0.9)",
             borderColor: "rgba(244,245,247,0.14)",
