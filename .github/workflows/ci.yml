@@ -1,0 +1,38 @@
+name: CI
+
+# The site is the only thing with a build today. As services land, add a job
+# per service rather than growing this one - each one has its own toolchain.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to a PR makes the first run's answer worthless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: site/package.json
+
+      # Fails if bun.lock and package.json disagree, which is the whole point
+      # of committing the lockfile.
+      - run: bun install --frozen-lockfile
+
+      # next build runs TypeScript, so this covers typecheck and build in one
+      # step. It also renders the OG images, which have failed before now.
+      - run: bun run build
