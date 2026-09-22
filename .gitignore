@@ -11,3 +11,8 @@ docs/
 
 # Viewport probe, local debugging only
 public/viewport.html
+
+# Licensed fonts: free for personal use, not for distribution.
+# next/font/local inlines them into hashed build assets at build time,
+# so they must exist locally but are never committed or served raw.
+assets/fonts/
