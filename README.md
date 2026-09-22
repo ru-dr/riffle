@@ -12,9 +12,14 @@ Riffle orders a team's pull request queue by risk — trained on your
 repository's own revert history, not one vendor's rules. Self-hosted, open source, and nothing skips review.
 
 <p>
-  <img alt="in development" src="https://shieldcn.dev/badge/in%20development.svg?valueColor=a1a1aa&color=18181b&height=20&fontSize=11&radius=3&padX=7">
-  <img alt="Apache-2.0" src="https://shieldcn.dev/badge/Apache--2.0.svg?logo=apache&logoColor=a1a1aa&valueColor=a1a1aa&color=18181b&height=20&fontSize=11&radius=3&padX=7">
-  <img alt="self-hosted" src="https://shieldcn.dev/badge/self--hosted.svg?valueColor=a1a1aa&color=18181b&height=20&fontSize=11&radius=3&padX=7">
+  <img alt="status: in development"
+    src="https://shieldcn.dev/badge/status-in%20development-18181b.svg?color=18181b&labelTextColor=a1a1aa&labelOpacity=1&height=22&fontSize=11&radius=4&padX=9&font=geist-mono&valueColor=f5b544&logo=lu:Hammer&logoColor=f5b544">
+  <img alt="stack: Go, Python, TypeScript"
+    src="https://shieldcn.dev/badge/stack-Go%20%C2%B7%20Python%20%C2%B7%20TypeScript-18181b.svg?color=18181b&labelTextColor=a1a1aa&labelOpacity=1&height=22&fontSize=11&radius=4&padX=9&font=geist-mono&valueColor=e4e4e7&logo=lu:Layers&logoColor=a1a1aa">
+  <img alt="deploy: self-hosted"
+    src="https://shieldcn.dev/badge/deploy-self--hosted-18181b.svg?color=18181b&labelTextColor=a1a1aa&labelOpacity=1&height=22&fontSize=11&radius=4&padX=9&font=geist-mono&valueColor=7dd3fc&logo=lu:Server&logoColor=7dd3fc">
+  <img alt="license: Apache-2.0"
+    src="https://shieldcn.dev/badge/license-Apache--2.0-18181b.svg?color=18181b&labelTextColor=a1a1aa&labelOpacity=1&height=22&fontSize=11&radius=4&padX=9&font=geist-mono&valueColor=e4e4e7&logo=apache&logoColor=e8604c">
 </p>
 
 </div>
@@ -97,11 +102,16 @@ riffle/
   contracts/      shared JSON schemas, the source of truth
   infra/
     docker/ k8s/ terraform/
+  fixtures/       webhook payloads and a seed tenant
+  site/           the marketing page at riffle.dev
   docs/
 ```
 
 `contracts/` is the important directory. Any change to a schema there is a
 breaking change.
+
+Every directory carries a `README.md` describing what belongs in it and which
+invariants it owns. Read that before adding code to one.
 
 ## Local development
 
