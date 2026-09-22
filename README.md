@@ -12,9 +12,9 @@ Riffle orders a team's pull request queue by risk — trained on your
 repository's own revert history, not one vendor's rules. Self-hosted, open source, and nothing skips review.
 
 <p>
-  <img alt="in development" src="https://shieldcn.dev/badge/in%20development.svg?valueColor=ff8600&color=1c1814&height=20&fontSize=11&radius=3&padX=7">
-  <img alt="Apache-2.0" src="https://shieldcn.dev/badge/Apache--2.0.svg?valueColor=aeb8fe&color=1c1814&height=20&fontSize=11&radius=3&padX=7">
-  <img alt="self-hosted" src="https://shieldcn.dev/badge/self--hosted.svg?valueColor=758bfd&color=1c1814&height=20&fontSize=11&radius=3&padX=7">
+  <img alt="in development" src="https://shieldcn.dev/badge/in%20development.svg?valueColor=a1a1aa&color=18181b&height=20&fontSize=11&radius=3&padX=7">
+  <img alt="Apache-2.0" src="https://shieldcn.dev/badge/Apache--2.0.svg?logo=apache&logoColor=a1a1aa&valueColor=a1a1aa&color=18181b&height=20&fontSize=11&radius=3&padX=7">
+  <img alt="self-hosted" src="https://shieldcn.dev/badge/self--hosted.svg?valueColor=a1a1aa&color=18181b&height=20&fontSize=11&radius=3&padX=7">
 </p>
 
 </div>
