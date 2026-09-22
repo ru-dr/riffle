@@ -153,7 +153,7 @@ export default function Page() {
         <div
           role="tooltip"
           id="hero-credit"
-          className="pointer-events-none absolute right-0 bottom-full mb-3 w-[20rem] origin-bottom-right translate-y-1 scale-[0.98] rounded-md border p-4 text-left opacity-0 backdrop-blur-md transition-[opacity,transform] duration-200 ease-out group-hover:translate-y-0 group-hover:scale-100 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:scale-100 group-focus-within:opacity-100 group-active:translate-y-0 group-active:scale-100 group-active:opacity-100 motion-reduce:transition-none"
+          className="pointer-events-none absolute right-0 bottom-full mb-3 w-[17.5rem] origin-bottom-right translate-y-1 scale-[0.98] rounded-md border p-4 text-left opacity-0 backdrop-blur-md transition-[opacity,transform] duration-200 ease-out group-hover:translate-y-0 group-hover:scale-100 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:scale-100 group-focus-within:opacity-100 group-active:translate-y-0 group-active:scale-100 group-active:opacity-100 motion-reduce:transition-none"
           style={{
             backgroundColor: "rgba(20,16,12,0.9)",
             borderColor: "rgba(244,245,247,0.14)",
@@ -170,15 +170,8 @@ export default function Page() {
             className="mt-2.5 border-t pt-2.5 font-geist text-[12.5px] leading-[1.55]"
             style={{ color: INK_DIM, borderColor: "rgba(244,245,247,0.12)" }}
           >
-            Fourth of five paintings tracking one city from wilderness to
-            ruin. Cole&rsquo;s argument is that the collapse was legible in
-            the earlier canvases — it arrives along the seams the city was
-            built with, not out of nowhere.
-            <span className="mt-2 block" style={{ color: INK_FAINT }}>
-              That is Riffle&rsquo;s claim about a codebase. The next
-              incident follows the fault lines your repository has already
-              broken along, and its own history is where they are written.
-            </span>
+            Fourth of five. The city falls along seams it was built with —
+            the same bet Riffle makes about a repository.
           </p>
         </div>
 
