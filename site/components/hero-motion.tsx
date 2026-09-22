@@ -71,18 +71,6 @@ export function HeroMotion() {
       );
 
       tl.fromTo(q("credit"), { opacity: 0, y: 6 }, { opacity: 1, y: 0 }, 1.28);
-
-      // The brackets around the status keep breathing after the entrance:
-      // the only motion that outlives the load, on the one line that is
-      // genuinely live. Opacity only — scaling type forces a re-raster.
-      gsap.to(q("status-bracket"), {
-        opacity: 0.3,
-        duration: 1.7,
-        delay: 2,
-        ease: "sine.inOut",
-        repeat: -1,
-        yoyo: true,
-      });
     });
 
     return () => ctx.revert();

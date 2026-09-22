@@ -19,6 +19,7 @@ const INK = "#f4f5f7"; // primary type — slate-tinted white, not pure #fff
 const INK_DIM = "rgba(244,245,247,0.68)"; // body copy
 const INK_FAINT = "rgba(244,245,247,0.5)"; // meta row
 const INK_GHOST = "rgba(244,245,247,0.28)"; // brackets, separators
+const ACCENT = "#7dd3a0"; // live status — cool green, reads active not festive
 const BASE = "#14100c"; // page base — warm near-black, keyed to the smoke
 const SCRIM = "20,16,12"; // scrim rgb, same hue as BASE
 
@@ -153,7 +154,7 @@ export default function Page() {
         <div
           role="tooltip"
           id="hero-credit"
-          className="pointer-events-none absolute right-0 bottom-full mb-3 w-[17.5rem] origin-bottom-right translate-y-1 scale-[0.98] rounded-md border p-4 text-left opacity-0 backdrop-blur-md transition-[opacity,transform] duration-200 ease-out group-hover:translate-y-0 group-hover:scale-100 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:scale-100 group-focus-within:opacity-100 group-active:translate-y-0 group-active:scale-100 group-active:opacity-100 motion-reduce:transition-none"
+          className="pointer-events-none absolute right-0 bottom-full mb-3 w-[23rem] origin-bottom-right translate-y-1 scale-[0.98] rounded-md border p-4 text-left opacity-0 backdrop-blur-md transition-[opacity,transform] duration-200 ease-out group-hover:translate-y-0 group-hover:scale-100 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:scale-100 group-focus-within:opacity-100 group-active:translate-y-0 group-active:scale-100 group-active:opacity-100 motion-reduce:transition-none"
           style={{
             backgroundColor: "rgba(20,16,12,0.9)",
             borderColor: "rgba(244,245,247,0.14)",
@@ -207,19 +208,20 @@ export default function Page() {
             Self-hosted, and nothing skips review.
           </p>
 
-          {/* Meta row reads as one monospace line, slashes as separators. */}
-          <div style={{ color: INK_FAINT }} className="mt-5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono text-[12px] tracking-[0.01em] sm:mt-7 sm:gap-x-3 sm:gap-y-2 sm:text-[14px] [@media_(min-height:561px)_and_(max-height:820px)]:mt-5 [@media_(min-height:561px)_and_(max-height:820px)]:text-[12px] [@media_(max-height:560px)]:mt-3.5 [@media_(max-height:560px)]:gap-x-2 [@media_(max-height:560px)]:text-[10px]">
+          {/* Meta row reads as one monospace line, slashes as separators.
+              The type only grows once there is room for it: five items in a
+              monospace face need ~700px, and between 640px and 1024px the
+              column is narrower than that. It holds at 12px through those
+              widths and wraps only on phones, where a second line is fine. */}
+          <div style={{ color: INK_FAINT }} className="mt-5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono text-[12px] tracking-[0.01em] sm:mt-7 sm:gap-y-2 md:gap-x-3 md:text-[13px] lg:flex-nowrap lg:text-[14px] [@media_(min-height:561px)_and_(max-height:820px)]:mt-5 [@media_(min-height:561px)_and_(max-height:820px)]:text-[12px] [@media_(max-height:560px)]:mt-3.5 [@media_(max-height:560px)]:gap-x-2 [@media_(max-height:560px)]:text-[10px]">
             {/* Status reads like build output: bracketed, monospace. The
-                brackets pulse rather than a status dot — the punctuation is
-                already there, so nothing extra has to be drawn to say live. */}
-            <span data-anim="meta-item" className="inline-flex items-center" style={{ color: INK_DIM }}>
-              <span data-anim="status-bracket" style={{ color: INK_FAINT }}>
-                [
-              </span>
+                brackets carry the accent green instead of a status dot or a
+                pulse — the punctuation was already there, and colour says
+                live without anything moving. */}
+            <span data-anim="meta-item" className="inline-flex items-center whitespace-nowrap" style={{ color: INK_DIM }}>
+              <span style={{ color: ACCENT }}>[</span>
               in development
-              <span data-anim="status-bracket" style={{ color: INK_FAINT }}>
-                ]
-              </span>
+              <span style={{ color: ACCENT }}>]</span>
             </span>
             <Dot />
             <a
@@ -230,11 +232,11 @@ export default function Page() {
               GitHub
             </a>
             <Dot />
-            <span data-anim="meta-item">Self-hosted</span>
+            <span data-anim="meta-item" className="whitespace-nowrap">Self-hosted</span>
             <Dot />
-            <span data-anim="meta-item">Open source</span>
+            <span data-anim="meta-item" className="whitespace-nowrap">Open source</span>
             <Dot />
-            <span data-anim="meta-item">Apache-2.0</span>
+            <span data-anim="meta-item" className="whitespace-nowrap">Apache-2.0</span>
           </div>
         </div>
       </div>
