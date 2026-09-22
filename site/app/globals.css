@@ -69,12 +69,12 @@ html[data-motion="on"] [data-anim] {
   opacity: 0;
 }
 
-html[data-motion="on"] [data-anim="hero"] {
-  will-change: transform, filter, opacity;
-}
-
-html[data-motion="on"] [data-anim="headline-line"],
+/* Promote only what moves, and only while it is moving — the timeline clears
+   this on completion. transform/opacity only: the entrance deliberately
+   animates nothing that triggers layout or a repaint. */
+html[data-motion="on"] [data-anim="hero"],
 html[data-motion="on"] [data-anim="lockup"],
+html[data-motion="on"] [data-anim="headline-line"],
 html[data-motion="on"] [data-anim="body"] {
-  will-change: transform, filter, opacity;
+  will-change: transform, opacity;
 }

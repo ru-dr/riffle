@@ -19,7 +19,6 @@ const INK = "#f4f5f7"; // primary type — slate-tinted white, not pure #fff
 const INK_DIM = "rgba(244,245,247,0.68)"; // body copy
 const INK_FAINT = "rgba(244,245,247,0.5)"; // meta row
 const INK_GHOST = "rgba(244,245,247,0.28)"; // brackets, separators
-const ACCENT = "#7dd3a0"; // live status — cool green, reads active not festive
 const BASE = "#14100c"; // page base — warm near-black, keyed to the smoke
 const SCRIM = "20,16,12"; // scrim rgb, same hue as BASE
 
@@ -105,10 +104,13 @@ export default function Page() {
 
       {/* Progressive blur on the same bottom-left axis as the scrim above:
           masked with matching radial geometry so the softening tracks the
-          type block and clears toward the top-right. */}
+          type block and clears toward the top-right.
+
+          Deliberately not animated: fading a stack of backdrop-filter layers
+          re-runs three viewport blurs every frame. It is present from the
+          first paint and the gradient scrims move over it instead. */}
       <div
         aria-hidden="true"
-        data-anim="veil"
         className="pointer-events-none absolute inset-0 z-0"
       >
         {[
@@ -162,15 +164,21 @@ export default function Page() {
             className="font-mono text-[10.5px] tracking-[0.06em] uppercase"
             style={{ color: INK_FAINT }}
           >
-            Thomas Cole &middot; oil on canvas
+            Thomas Cole &middot; 1836 &middot; oil on canvas
           </p>
           <p
             className="mt-2.5 border-t pt-2.5 font-geist text-[12.5px] leading-[1.55]"
             style={{ color: INK_DIM, borderColor: "rgba(244,245,247,0.12)" }}
           >
-            Fifth in a five-part cycle on the rise and fall of a civilisation.
-            The collapse arrives along the seams that were always weakest —
-            which is the bet Riffle makes about your repository.
+            Fourth of five paintings tracking one city from wilderness to
+            ruin. Cole&rsquo;s argument is that the collapse was legible in
+            the earlier canvases — it arrives along the seams the city was
+            built with, not out of nowhere.
+            <span className="mt-2 block" style={{ color: INK_FAINT }}>
+              That is Riffle&rsquo;s claim about a codebase. The next
+              incident follows the fault lines your repository has already
+              broken along, and its own history is where they are written.
+            </span>
           </p>
         </div>
 
@@ -208,17 +216,17 @@ export default function Page() {
 
           {/* Meta row reads as one monospace line, slashes as separators. */}
           <div style={{ color: INK_FAINT }} className="mt-5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono text-[12px] tracking-[0.01em] sm:mt-7 sm:gap-x-3 sm:gap-y-2 sm:text-[14px] [@media_(min-height:561px)_and_(max-height:820px)]:mt-5 [@media_(min-height:561px)_and_(max-height:820px)]:text-[12px] [@media_(max-height:560px)]:mt-3.5 [@media_(max-height:560px)]:gap-x-2 [@media_(max-height:560px)]:text-[10px]">
-            {/* Status reads like build output: bracketed, monospace. */}
-            <span data-anim="meta-item" className="inline-flex items-center gap-1.5" style={{ color: INK_DIM }}>
-              <span
-                aria-hidden="true"
-                data-anim="status-dot"
-                className="mb-0.5 inline-flex size-1 shrink-0 rounded-full"
-                style={{ backgroundColor: ACCENT }}
-              />
-              <span style={{ color: INK_GHOST }}>[</span>
+            {/* Status reads like build output: bracketed, monospace. The
+                brackets pulse rather than a status dot — the punctuation is
+                already there, so nothing extra has to be drawn to say live. */}
+            <span data-anim="meta-item" className="inline-flex items-center" style={{ color: INK_DIM }}>
+              <span data-anim="status-bracket" style={{ color: INK_FAINT }}>
+                [
+              </span>
               in development
-              <span style={{ color: INK_GHOST }}>]</span>
+              <span data-anim="status-bracket" style={{ color: INK_FAINT }}>
+                ]
+              </span>
             </span>
             <Dot />
             <a
@@ -226,12 +234,12 @@ export default function Page() {
               href={REPO}
               className="riffle-link rounded-sm underline decoration-1 underline-offset-[5px] transition-colors focus-visible:ring-2 focus-visible:ring-offset-4 focus-visible:outline-none"
             >
-              GitHub repo
+              GitHub
             </a>
             <Dot />
-            <span data-anim="meta-item">Open source</span>
-            <Dot />
             <span data-anim="meta-item">Self-hosted</span>
+            <Dot />
+            <span data-anim="meta-item">Open source</span>
             <Dot />
             <span data-anim="meta-item">Apache-2.0</span>
           </div>

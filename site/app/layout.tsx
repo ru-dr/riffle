@@ -99,6 +99,12 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${tagline.variable} ${GeistSans.variable} ${supplyMono.variable}`}
+      // The motion script below sets data-motion on this element before
+      // hydration, by design - it has to run before first paint. That makes
+      // the server and client attribute sets differ, which is exactly what
+      // this suppresses. Scoped to <html>, so mismatches anywhere else still
+      // report. Browser extensions that decorate <html> stop warning too.
+      suppressHydrationWarning
     >
       <head>
         <style dangerouslySetInnerHTML={{ __html: criticalCss }} />
