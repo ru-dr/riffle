@@ -24,8 +24,6 @@ repository's own revert history, not one vendor's rules. Self-hosted, open sourc
 
 </div>
 
----
-
 ## The problem
 
 AI coding agents made writing code cheap. Reviewing it did not get cheaper.
