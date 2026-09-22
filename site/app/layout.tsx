@@ -4,7 +4,11 @@ import { GeistSans } from "geist/font/sans";
 import { Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
-const url = "https://riffle.dev";
+// Stopgap: riffle.dev is still parked at the registrar, so absolute URLs
+// built from it (og:image above all) resolve to a lander instead of this
+// site. Points at the Vercel domain until riffle.dev is attached to the
+// project, then goes back to "https://riffle.dev".
+const url = "https://rifffle.vercel.app";
 const title = "Riffle — review what matters first";
 const description =
   "Riffle is an open-source GitHub App, in development, that ranks your pull request queue by risk — trained on your own repository's history.";
