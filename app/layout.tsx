@@ -21,8 +21,8 @@ const tagline = Instrument_Serif({
 
 const supplyMono = localFont({
   src: [
-    { path: "../assets/fonts/PPSupplyMono-Regular.otf", weight: "400" },
-    { path: "../assets/fonts/PPSupplyMono-Ultralight.otf", weight: "200" },
+    { path: "../public/fonts/PPSupplyMono-Regular.woff2", weight: "400" },
+    { path: "../public/fonts/PPSupplyMono-Ultralight.woff2", weight: "200" },
   ],
   display: "swap",
   variable: "--font-supply-mono",

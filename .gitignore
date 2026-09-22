@@ -16,3 +16,6 @@ public/viewport.html
 # next/font/local inlines them into hashed build assets at build time,
 # so they must exist locally but are never committed or served raw.
 assets/fonts/
+
+# Derived woff2 subsets ARE committed (see public/fonts) - they are
+# webfonts, not installable font files.
