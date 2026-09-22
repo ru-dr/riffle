@@ -13,17 +13,9 @@ repository's own revert history, not one vendor's rules.<br>
 Self-hosted, open source, and nothing skips review.
 
 <p>
-  <a href="#status"><img alt="Status: in development" src="https://shieldcn.dev/badge/status-in%20development-amber.svg?labelColor=14100c&valueColor=ff8600&labelTextColor=f4f5f7&font=geist&radius=4"></a>
-  <a href="#license"><img alt="License: Apache-2.0" src="https://shieldcn.dev/badge/license-Apache--2.0-slate.svg?labelColor=14100c&valueColor=aeb8fe&labelTextColor=f4f5f7&font=geist&radius=4"></a>
-  <a href="#deployment"><img alt="Self-hosted" src="https://shieldcn.dev/badge/deploy-self--hosted-indigo.svg?labelColor=14100c&valueColor=758bfd&labelTextColor=f4f5f7&font=geist&radius=4"></a>
-  <a href="#architecture"><img alt="Services: 4" src="https://shieldcn.dev/badge/services-4-emerald.svg?labelColor=14100c&valueColor=7dd3a0&labelTextColor=f4f5f7&font=geist&radius=4"></a>
-</p>
-
-<p>
-  <img alt="Go 1.22+" src="https://shieldcn.dev/badge/Go-1.22%2B-cyan.svg?logo=go&logoColor=f4f5f7&labelColor=14100c&valueColor=00add8&labelTextColor=f4f5f7&font=geist&radius=4">
-  <img alt="Python 3.11+" src="https://shieldcn.dev/badge/Python-3.11%2B-blue.svg?logo=python&logoColor=f4f5f7&labelColor=14100c&valueColor=4b8bbe&labelTextColor=f4f5f7&font=geist&radius=4">
-  <img alt="TypeScript" src="https://shieldcn.dev/badge/TypeScript-Next.js-blue.svg?logo=typescript&logoColor=f4f5f7&labelColor=14100c&valueColor=3178c6&labelTextColor=f4f5f7&font=geist&radius=4">
-  <img alt="Kubernetes" src="https://shieldcn.dev/badge/Kubernetes-GKE-blue.svg?logo=kubernetes&logoColor=f4f5f7&labelColor=14100c&valueColor=326ce5&labelTextColor=f4f5f7&font=geist&radius=4">
+  <img alt="in development" src="https://shieldcn.dev/badge/in%20development.svg?valueColor=ff8600&color=1c1814&height=20&fontSize=11&radius=3&padX=7">
+  <img alt="Apache-2.0" src="https://shieldcn.dev/badge/Apache--2.0.svg?valueColor=aeb8fe&color=1c1814&height=20&fontSize=11&radius=3&padX=7">
+  <img alt="self-hosted" src="https://shieldcn.dev/badge/self--hosted.svg?valueColor=758bfd&color=1c1814&height=20&fontSize=11&radius=3&padX=7">
 </p>
 
 </div>
