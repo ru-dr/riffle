@@ -63,6 +63,27 @@ const schema = {
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
 
+// Runs before first paint, so the entrance never flashes finished content.
+//
+// It opts *in* to motion rather than out: the hidden initial states in
+// globals.css only apply while this attribute is set. No JS, an early error,
+// or a reduce-motion preference all leave the page fully rendered.
+//
+// The timer is the failsafe — if the GSAP timeline has not claimed the page
+// within 2.5s (slow hydration, chunk failure), the attribute is dropped and
+// everything becomes visible without animation.
+const motionInit = `
+try {
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    var r = document.documentElement;
+    r.dataset.motion = 'on';
+    setTimeout(function () {
+      if (!r.dataset.motionReady) r.removeAttribute('data-motion');
+    }, 2500);
+  }
+} catch (e) {}
+`;
+
 const criticalCss = `
 html,body{height:100%;margin:0;background:#14100c}
 body{color:#f4f5f7}
@@ -81,6 +102,7 @@ export default function RootLayout({
     >
       <head>
         <style dangerouslySetInnerHTML={{ __html: criticalCss }} />
+        <script dangerouslySetInnerHTML={{ __html: motionInit }} />
         <link
           rel="preload"
           as="image"

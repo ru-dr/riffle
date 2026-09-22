@@ -59,3 +59,22 @@ body:has([data-riffle-lock]) {
     transform: translateY(0) scale(1);
   }
 }
+
+/* Entrance states for the GSAP timeline in components/hero-motion.tsx.
+   Gated on html[data-motion="on"], which the blocking script in layout.tsx
+   sets only when JS is running and reduced motion is not requested — so a
+   no-JS or reduce-motion reader gets the finished page, never a blank one.
+   The attribute is removed when the timeline completes. */
+html[data-motion="on"] [data-anim] {
+  opacity: 0;
+}
+
+html[data-motion="on"] [data-anim="hero"] {
+  will-change: transform, filter, opacity;
+}
+
+html[data-motion="on"] [data-anim="headline-line"],
+html[data-motion="on"] [data-anim="lockup"],
+html[data-motion="on"] [data-anim="body"] {
+  will-change: transform, filter, opacity;
+}

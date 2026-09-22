@@ -1,4 +1,5 @@
 import { Lockup } from "@/components/brand";
+import { HeroMotion } from "@/components/hero-motion";
 
 // Riffle — the whole site. One screen, no scroll.
 //
@@ -27,7 +28,12 @@ const HERO_ALT =
 
 function Dot() {
   return (
-    <span aria-hidden="true" className="select-none" style={{ color: INK_GHOST }}>
+    <span
+      aria-hidden="true"
+      data-anim="meta-item"
+      className="select-none"
+      style={{ color: INK_GHOST }}
+    >
       /
     </span>
   );
@@ -75,6 +81,7 @@ export default function Page() {
         <img
           src={HERO}
           alt={HERO_ALT}
+          data-anim="hero"
           className="absolute inset-0 z-0 h-full w-full object-cover object-center"
           fetchPriority="high"
           decoding="async"
@@ -88,6 +95,7 @@ export default function Page() {
           burning colonnade stays fully visible. */}
       <div
         aria-hidden="true"
+        data-anim="veil"
         className="pointer-events-none absolute inset-0 z-0"
         style={{
           background:
@@ -100,6 +108,7 @@ export default function Page() {
           type block and clears toward the top-right. */}
       <div
         aria-hidden="true"
+        data-anim="veil"
         className="pointer-events-none absolute inset-0 z-0"
       >
         {[
@@ -127,6 +136,7 @@ export default function Page() {
           the meta row and rule from floating on raw painting. */}
       <div
         aria-hidden="true"
+        data-anim="veil"
         className="pointer-events-none absolute inset-0 z-0"
         style={{
           background:
@@ -137,7 +147,7 @@ export default function Page() {
       {/* Image credit, bottom-right. The trigger names the painting and
           year; the tooltip carries the artist, medium, and why this image is
           the one behind a product about predictable failure. */}
-      <aside className="group absolute right-6 bottom-8 z-20 hidden sm:right-10 sm:bottom-14 lg:right-16 lg:bottom-20 xl:right-20 [@media_(min-width:640px)_and_(min-aspect-ratio:1.1)]:block">
+      <aside data-anim="credit" className="group absolute right-6 bottom-8 z-20 hidden sm:right-10 sm:bottom-14 lg:right-16 lg:bottom-20 xl:right-20 [@media_(min-width:640px)_and_(min-aspect-ratio:1.1)]:block">
         <div
           role="tooltip"
           id="hero-credit"
@@ -179,15 +189,18 @@ export default function Page() {
           the negative space sits above it rather than around it. */}
       <div className="relative z-10 flex h-full flex-col justify-end px-7 pb-12 sm:px-10 sm:pb-14 md:px-14 lg:px-16 xl:px-20 md:pb-16 lg:pb-20">
         <div className="w-full max-w-184">
-          <Lockup style={{ color: INK }} className="h-auto w-26 sm:w-40 [@media_(min-height:561px)_and_(max-height:820px)]:w-33 [@media_(max-height:560px)]:w-27" />
+          <Lockup data-anim="lockup" style={{ color: INK }} className="h-auto w-26 sm:w-40 [@media_(min-height:561px)_and_(max-height:820px)]:w-33 [@media_(max-height:560px)]:w-27" />
 
           <h1 style={{ color: INK }} className="mt-6 font-tagline text-[clamp(1.9rem,10.5vw,2.75rem)] leading-[1.08] font-normal tracking-[-0.018em] sm:mt-9 sm:text-[clamp(2.4rem,7vw,6rem)] [@media_(min-height:561px)_and_(max-height:820px)]:mt-6 [@media_(min-height:561px)_and_(max-height:820px)]:text-[clamp(1.9rem,6.3vw,4.875rem)] [@media_(max-height:560px)]:mt-4 [@media_(max-height:560px)]:text-[clamp(1.6rem,5vw,3.25rem)]">
-            Every repo
-            <br />
-            breaks differently.
+            <span data-anim="headline-line" className="block">
+              Every repo
+            </span>
+            <span data-anim="headline-line" className="block">
+              breaks differently.
+            </span>
           </h1>
 
-          <p style={{ color: INK_DIM }} className="mt-5 max-w-[21rem] font-geist text-[14px] leading-[1.6] font-normal sm:mt-7 sm:max-w-[38rem] sm:text-[15px] sm:leading-[1.65] [@media_(min-height:561px)_and_(max-height:820px)]:mt-5 [@media_(min-height:561px)_and_(max-height:820px)]:max-w-[31rem] [@media_(min-height:561px)_and_(max-height:820px)]:text-[13.5px] [@media_(min-height:561px)_and_(max-height:820px)]:leading-[1.6] [@media_(max-height:560px)]:mt-3.5 [@media_(max-height:560px)]:max-w-[26rem] [@media_(max-height:560px)]:text-[11px] [@media_(max-height:560px)]:leading-[1.55]">
+          <p data-anim="body" style={{ color: INK_DIM }} className="mt-5 max-w-[21rem] font-geist text-[14px] leading-[1.6] font-normal sm:mt-7 sm:max-w-[38rem] sm:text-[15px] sm:leading-[1.65] [@media_(min-height:561px)_and_(max-height:820px)]:mt-5 [@media_(min-height:561px)_and_(max-height:820px)]:max-w-[31rem] [@media_(min-height:561px)_and_(max-height:820px)]:text-[13.5px] [@media_(min-height:561px)_and_(max-height:820px)]:leading-[1.6] [@media_(max-height:560px)]:mt-3.5 [@media_(max-height:560px)]:max-w-[26rem] [@media_(max-height:560px)]:text-[11px] [@media_(max-height:560px)]:leading-[1.55]">
             Riffle ranks your pull request queue by risk — trained on your
             repository&rsquo;s own revert history, not one vendor&rsquo;s rules.
             Self-hosted, and nothing skips review.
@@ -196,9 +209,10 @@ export default function Page() {
           {/* Meta row reads as one monospace line, slashes as separators. */}
           <div style={{ color: INK_FAINT }} className="mt-5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono text-[12px] tracking-[0.01em] sm:mt-7 sm:gap-x-3 sm:gap-y-2 sm:text-[14px] [@media_(min-height:561px)_and_(max-height:820px)]:mt-5 [@media_(min-height:561px)_and_(max-height:820px)]:text-[12px] [@media_(max-height:560px)]:mt-3.5 [@media_(max-height:560px)]:gap-x-2 [@media_(max-height:560px)]:text-[10px]">
             {/* Status reads like build output: bracketed, monospace. */}
-            <span className="inline-flex items-center gap-1.5" style={{ color: INK_DIM }}>
+            <span data-anim="meta-item" className="inline-flex items-center gap-1.5" style={{ color: INK_DIM }}>
               <span
                 aria-hidden="true"
+                data-anim="status-dot"
                 className="mb-0.5 inline-flex size-1 shrink-0 rounded-full"
                 style={{ backgroundColor: ACCENT }}
               />
@@ -208,18 +222,23 @@ export default function Page() {
             </span>
             <Dot />
             <a
+              data-anim="meta-item"
               href={REPO}
               className="riffle-link rounded-sm underline decoration-1 underline-offset-[5px] transition-colors focus-visible:ring-2 focus-visible:ring-offset-4 focus-visible:outline-none"
             >
               GitHub repo
             </a>
             <Dot />
-            <span>Self-hosted</span>
+            <span data-anim="meta-item">Open source</span>
             <Dot />
-            <span>Apache-2.0</span>
+            <span data-anim="meta-item">Self-hosted</span>
+            <Dot />
+            <span data-anim="meta-item">Apache-2.0</span>
           </div>
         </div>
       </div>
+
+      <HeroMotion />
     </main>
   );
 }
