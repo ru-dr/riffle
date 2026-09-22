@@ -3,19 +3,44 @@ node_modules
 next-env.d.ts
 *.tsbuildinfo
 
-# Full-resolution source paintings (not served)
-assets/source/
+# Environment
+.env
+.env.local
 
-# Confidential design docs - marked "do not redistribute"
-docs/
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Go
+/services/intake/bin/
+
+# ML / data: raw downloads are never committed. DVC pointer files are.
+/data/
+mlruns/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Full-resolution source paintings (not served)
+site/assets/source/
+
+# Confidential design docs - marked "do not redistribute".
+# Note: /docs at the repo root is the tracked engineering docs directory.
+site/docs/
 
 # Viewport probe, local debugging only
-public/viewport.html
+site/public/viewport.html
 
 # Licensed fonts: free for personal use, not for distribution.
 # next/font/local inlines them into hashed build assets at build time,
 # so they must exist locally but are never committed or served raw.
-assets/fonts/
+site/assets/fonts/
 
-# Derived woff2 subsets ARE committed (see public/fonts) - they are
+# Derived woff2 subsets ARE committed (see site/public/fonts) - they are
 # webfonts, not installable font files.
