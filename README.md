@@ -9,8 +9,7 @@
 ### Every repo breaks differently.
 
 Riffle orders a team's pull request queue by risk — trained on your
-repository's own revert history, not one vendor's rules.<br>
-Self-hosted, open source, and nothing skips review.
+repository's own revert history, not one vendor's rules. Self-hosted, open source, and nothing skips review.
 
 <p>
   <img alt="in development" src="https://shieldcn.dev/badge/in%20development.svg?valueColor=ff8600&color=1c1814&height=20&fontSize=11&radius=3&padX=7">

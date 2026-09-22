@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+@theme {
+  --font-tagline: var(--font-tagline), ui-serif, Georgia, serif;
+  --font-geist: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-supply-mono), ui-monospace, monospace;
+}
+
+/* Browser surfaces: the parts we didn't draw still carry the design.
+   Default selection blue reads as an unstyled page against the warm base. */
+html {
+  color-scheme: dark;
+}
+
+::selection {
+  background-color: rgba(125, 211, 160, 0.26);
+  color: #f4f5f7;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+:root {
+  --ink-dim: rgba(244, 245, 247, 0.68);
+}
+
+/* Scoped to the landing page so future routes (dashboard) still scroll. */
+body:has([data-riffle-lock]) {
+  overflow: hidden;
+}
+
+@layer components {
+  /* Link states: hover/focus colors can't be inline styles, so they live
+     here. Cool tones, deliberately away from the painting's firelight. */
+  .riffle-link {
+    color: rgba(244, 245, 247, 0.85);
+    text-decoration-color: rgba(244, 245, 247, 0.28);
+  }
+  .riffle-link:hover {
+    color: #a5b4fc;
+    text-decoration-color: #a5b4fc;
+  }
+  .riffle-link:focus-visible {
+    --tw-ring-color: #a5b4fc;
+    --tw-ring-offset-color: #14100c;
+  }
+}
+
+
+/* Touch devices have no hover: reveal the hero credit panel while the
+   trigger is focused or being pressed. */
+@media (hover: none) {
+  aside:has(> button:focus) [role="tooltip"],
+  aside:has(> button:active) [role="tooltip"] {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

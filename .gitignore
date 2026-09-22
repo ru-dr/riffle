@@ -1,0 +1,13 @@
+node_modules
+.next
+next-env.d.ts
+*.tsbuildinfo
+
+# Full-resolution source paintings (not served)
+assets/source/
+
+# Confidential design docs - marked "do not redistribute"
+docs/
+
+# Viewport probe, local debugging only
+public/viewport.html
