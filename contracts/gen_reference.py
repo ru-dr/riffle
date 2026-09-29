@@ -146,6 +146,16 @@ def import_section(I):
         walk(I, v, k, rows)
     return md + [table(rows), ""]
 
+def other_section(name, X):
+    md = [f"## {X.get('title', name)} (`{name}`)", "", ver(X), X.get("description", ""), ""]
+    rows = []
+    for k, v in X.get("properties", {}).items():
+        walk(X, v, k, rows)
+    md += [table(rows), ""]
+    for tname, cols in X.get("x-riffle-tables", {}).items():
+        md += [f"### Table `{tname}`", "", table([(c, d) for c, d in cols.items()], ("Column", "Type and meaning")), ""]
+    return md
+
 def main():
     files = {p.name: p for p in HERE.glob("*.schema.json")}
     def pick(*names):
@@ -162,6 +172,10 @@ def main():
           "- [Mined features](#mined-features-mined_featuresschemajson)",
           "- [Outcome import](#outcome-import-outcome_importschemajson)", ""]
     md += rules_section(R) + settings_section(S) + mined_section(M) + import_section(I)
+    known = {"org_rules.schema.json", "org_config.schema.json", "mined_features.schema.json", "outcome_import.schema.json",
+             "org-rules.schema.json", "org-config.schema.json", "mined-features.schema.json", "outcome-import.schema.json"}
+    for name in sorted(n for n in files if n not in known):
+        md += other_section(name, load(name))
     text = "\n".join(md).rstrip() + "\n"
     if "--check" in sys.argv:
         if not OUT.exists() or OUT.read_text() != text:
