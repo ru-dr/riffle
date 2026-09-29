@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://riffle.dev/contracts/org_rules.schema.json",
   "title": "Riffle rules",
+  "x-riffle-version": "5.3",
   "description": "How an organisation manages its code, as flat typed rules (kind + match + value). Orgs may write any number of rules, but the compiler always reduces them to the fixed column set in x-riffle-model-columns. Undeclared means null, never 0. Adding a column is a schema version bump, a retrain, and a decision record. Rules are read point-in-time from git history of the rules file, and the compiled hash is pinned into model_version. Read from the default branch only; an invalid file keeps the last valid compiled rules and posts a notice. Org file: riffle/rules.yml in the org's .github repo. Repo file: .github/riffle/rules.yml, appended after org rules and limited to that repo.",
   "type": "object",
   "additionalProperties": false,

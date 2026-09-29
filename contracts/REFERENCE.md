@@ -9,6 +9,8 @@ Generated from the schemas by `gen_reference.py`. Do not edit by hand.
 
 ## Rules (`org_rules.schema.json`)
 
+**Version:** 5.3
+
 How an organisation manages its code, as flat typed rules (kind + match + value). Orgs may write any number of rules, but the compiler always reduces them to the fixed column set in x-riffle-model-columns. Undeclared means null, never 0. Adding a column is a schema version bump, a retrain, and a decision record. Rules are read point-in-time from git history of the rules file, and the compiled hash is pinned into model_version. Read from the default branch only; an invalid file keeps the last valid compiled rules and posts a notice. Org file: riffle/rules.yml in the org's .github repo. Repo file: .github/riffle/rules.yml, appended after org rules and limited to that repo.
 
 ### Fields every rule accepts
@@ -391,6 +393,8 @@ Every rule compiles to these fixed columns. `null` when undeclared.
 
 ## Settings (`org_config.schema.json`)
 
+**Version:** 5.0
+
 How the app behaves. Settings never change what the model sees or learns; those live in contracts/org_rules.schema.json and are pinned into model_version. Files: .github/riffle.yml in the org's .github repo (org defaults) and in each repo. Loading: built-in defaults, then org file, then repo file (repo wins), then organization.locked_keys restored from the org file. Files are read from the default branch only, so a PR cannot change the settings it is judged by. An invalid file never stops Riffle: the last valid settings stay in force and one neutral notice is posted. Arrays replace unless marked x-riffle-merge: union. Keys marked x-riffle-org-only are ignored in repo files. Every key has a default, so a file with only schema_version is valid.
 
 ### `schema_version`
@@ -645,6 +649,8 @@ Cross-field rules the schema cannot express:
 
 ## Mined features (`mined_features.schema.json`)
 
+**Version:** 1.0
+
 Five features mined from git, CI and review history that capture how one repository behaves. Produced by the scorer's extractor at the PR's base commit, appended to the fixed feature vector, and emitted alongside evidence the narrator may cite. Point-in-time rule: only past PRs merged before this PR opened AND whose labels were mature at that moment may contribute. Only reviews completed before open count. null means not enough history (thresholds in rules.mining), never 0.
 
 ### `columns`
@@ -676,6 +682,8 @@ Five features mined from git, CI and review history that capture how one reposit
 | `evidence.release_context` | object or null |  |  |  |
 
 ## Outcome import (`outcome_import.schema.json`)
+
+**Version:** 1.0
 
 Body of POST /v1/outcomes. Lets an org report outcomes Riffle cannot see (internal reverts, incidents, internal CI). Signed with the secret named in rules sources.outcome_import. Imported outcomes become the external_import label source, weighted by its label_source rule. Idempotent on event_id. Never carries code or diffs.
 

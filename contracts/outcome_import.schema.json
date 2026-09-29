@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://riffle.dev/contracts/outcome_import.schema.json",
   "title": "Riffle outcome import",
+  "x-riffle-version": "1.0",
   "description": "Body of POST /v1/outcomes. Lets an org report outcomes Riffle cannot see (internal reverts, incidents, internal CI). Signed with the secret named in rules sources.outcome_import. Imported outcomes become the external_import label source, weighted by its label_source rule. Idempotent on event_id. Never carries code or diffs.",
   "type": "object",
   "additionalProperties": false,

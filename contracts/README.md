@@ -41,6 +41,7 @@ JSON Schema ignores these; our loaders and compiler read them.
 
 | Keyword | Meaning |
 | --- | --- |
+| `x-riffle-version` | The schema's current version. Config files must match its major; history in `docs/contracts.md` |
 | `x-riffle-merge` | `union` or `replace` for arrays when org and repo files merge. Default `replace` |
 | `x-riffle-org-only` | Ignored in repo files |
 | `x-riffle-sink` | Where a rule goes: `feature`, `label`, `link`, `filter` |
@@ -86,5 +87,7 @@ JSON Schema ignores these; our loaders and compiler read them.
 
 ## Open decisions
 
-Band floors, union versus weighted labels, and the `downweight` value.
-Each gets a record in `docs/adr/` before its default is final.
+- Label target, including union vs weighted and the `downweight` value:
+  proposed in `docs/adr/0002-label-target.md`, awaiting training owner sign-off.
+- Band floors: no ADR yet. Marked `x-riffle-decision-pending` in
+  `org_config.schema.json`.

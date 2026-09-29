@@ -44,6 +44,10 @@ def summarize(schema, node):
     pat = f" matching `{node['pattern']}`" if "pattern" in node and t == "string" else ""
     return f"{t}{rng}{fmt}{pat}".strip() or "any"
 
+def ver(schema):
+    v = schema.get("x-riffle-version")
+    return f"**Version:** {v}\n" if v else ""
+
 def default(node):
     if "default" not in node:
         return ""
@@ -77,7 +81,7 @@ def table(rows, head=("Key", "Allowed", "Default", "Flags", "Meaning")):
     return "\n".join(out)
 
 def rules_section(R):
-    md = ["## Rules (`org_rules.schema.json`)", "", R["description"], ""]
+    md = ["## Rules (`org_rules.schema.json`)", "", ver(R), R["description"], ""]
     md += ["### Fields every rule accepts", ""]
     base = R["$defs"]["base"]
     rows = []
@@ -114,7 +118,7 @@ def rules_section(R):
     return md
 
 def settings_section(S):
-    md = ["## Settings (`org_config.schema.json`)", "", S["description"], ""]
+    md = ["## Settings (`org_config.schema.json`)", "", ver(S), S["description"], ""]
     for k, v in S["properties"].items():
         if k == "overrides":
             md += ["### `overrides`", "", resolve(S, v).get("description", ""), "",
@@ -128,7 +132,7 @@ def settings_section(S):
     return md
 
 def mined_section(M):
-    md = ["## Mined features (`mined_features.schema.json`)", "", M["description"], ""]
+    md = ["## Mined features (`mined_features.schema.json`)", "", ver(M), M["description"], ""]
     for block in ["columns", "evidence"]:
         rows = []
         walk(M, M["properties"][block], block, rows)
@@ -136,7 +140,7 @@ def mined_section(M):
     return md
 
 def import_section(I):
-    md = ["## Outcome import (`outcome_import.schema.json`)", "", I["description"], ""]
+    md = ["## Outcome import (`outcome_import.schema.json`)", "", ver(I), I["description"], ""]
     rows = []
     for k, v in I["properties"].items():
         walk(I, v, k, rows)
