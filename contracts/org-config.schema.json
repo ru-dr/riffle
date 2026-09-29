@@ -1,0 +1,1089 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/org-config.schema.json",
+  "title": "Riffle settings",
+  "description": "How the app behaves. Settings never change what the model sees or learns; those live in contracts/org-rules.schema.json and are pinned into model_version. Files: .github/riffle.yml in the org's .github repo (org defaults) and in each repo. Loading: built-in defaults, then org file, then repo file (repo wins), then organization.locked_keys restored from the org file. Files are read from the default branch only, so a PR cannot change the settings it is judged by. An invalid file never stops Riffle: the last valid settings stay in force and one neutral notice is posted. Arrays replace unless marked x-riffle-merge: union. Keys marked x-riffle-org-only are ignored in repo files. Every key has a default, so a file with only schema_version is valid.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version"
+  ],
+  "x-riffle-code-checks": [
+    "rank_bands.percentile.senior_recommended_top_fraction <= review_first_top_fraction",
+    "rank_bands.absolute.review_first_min_score <= senior_recommended_min_score",
+    "size.thresholds strictly increase xs < s < m < l < xl",
+    "scope.base_branches entries compile as regex",
+    "repo files cannot loosen locked or privacy keys (e.g. llm.send may only move toward features_only)",
+    "floors never lower a band; a floor that equals the model band is not shown"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^5\\.[0-9]+$",
+      "description": "major.minor. Minor adds optional keys; major renames or removes, with deprecated keys accepted for one minor version"
+    },
+    "mode": {
+      "enum": [
+        "active",
+        "shadow",
+        "off"
+      ],
+      "default": "active",
+      "description": "shadow scores, learns and logs but posts nothing"
+    },
+    "organization": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outcome_sharing": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Anonymised feature vectors and outcomes only. Never code, diffs or identities"
+            }
+          }
+        },
+        "data_retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "store_diffs": {
+              "type": "boolean",
+              "default": false
+            },
+            "retention_days": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 730,
+              "default": 365
+            }
+          }
+        },
+        "label_prefix": {
+          "type": "string",
+          "maxLength": 20,
+          "default": "riffle"
+        },
+        "locked_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^/"
+          },
+          "default": [
+            "/organization",
+            "/llm/provider",
+            "/llm/send"
+          ],
+          "description": "JSON pointers a repo file may not change"
+        }
+      },
+      "description": "Org-only.",
+      "x-riffle-org-only": true
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "base_branches": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "regex"
+          },
+          "default": [],
+          "description": "Extra target branches besides the default branch"
+        },
+        "include_drafts": {
+          "type": "boolean",
+          "default": false
+        },
+        "quiet_authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "dependabot[bot]",
+            "renovate[bot]",
+            "github-actions[bot]"
+          ],
+          "x-riffle-merge": "union",
+          "description": "Scored and shown on the dashboard, but no comment or label. Nothing is left unscored"
+        },
+        "quiet_title_keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "WIP",
+            "DO NOT MERGE"
+          ],
+          "x-riffle-merge": "union",
+          "description": "Same as quiet_authors, matched on the PR title"
+        }
+      },
+      "description": "Which PRs Riffle posts on. Every PR is still scored (fail open, and no gaps in training data)."
+    },
+    "rank_bands": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "percentile",
+            "absolute"
+          ],
+          "default": "percentile"
+        },
+        "percentile": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "senior_recommended_top_fraction": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.05
+            },
+            "review_first_top_fraction": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.2,
+              "description": "Matches the top-20% effort-aware recall metric"
+            },
+            "window": {
+              "enum": [
+                "repo",
+                "component"
+              ],
+              "default": "repo",
+              "description": "component ranks each monorepo package against itself"
+            }
+          }
+        },
+        "absolute": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "senior_recommended_min_score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.8
+            },
+            "review_first_min_score": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.5
+            }
+          }
+        },
+        "holdout_fraction": {
+          "type": "number",
+          "minimum": 0.02,
+          "maximum": 0.1,
+          "default": 0.05,
+          "description": "Share of PRs left unranked (FIFO) to measure lift and limit feedback-loop bias"
+        },
+        "tie_break": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 4,
+          "items": {
+            "enum": [
+              "similar_pr_bad_rate",
+              "path_detection_lag_days",
+              "revealed_path_scrutiny",
+              "path_size_pctile",
+              "release_cycle_position"
+            ]
+          },
+          "default": [
+            "similar_pr_bad_rate",
+            "path_detection_lag_days"
+          ],
+          "description": "Only for identical rounded scores; PR age is always the last key"
+        }
+      },
+      "description": "Band order, lowest to highest: standard, review_first, senior_recommended."
+    },
+    "floors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "paths": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "pattern": {
+                "type": "string"
+              },
+              "min_band": {
+                "$ref": "#/$defs/floor_band"
+              }
+            },
+            "required": [
+              "pattern"
+            ]
+          },
+          "x-riffle-merge": "union",
+          "default": []
+        },
+        "ai_agents": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/floor_band"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "first_time_contributors": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/floor_band"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "description": "Minimum bands applied AFTER scoring. Never change risk_score, always named in the comment, logged, and excluded from backtest and per-repo layer evaluation. Pending team decision.",
+      "x-riffle-decision-pending": "band floors"
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "xs": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "s": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 10
+            },
+            "m": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 100
+            },
+            "l": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 500
+            },
+            "xl": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1000
+            }
+          }
+        },
+        "count_files": {
+          "type": "boolean",
+          "default": false
+        },
+        "ignore_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/*.lock",
+            "**/package-lock.json",
+            "**/go.sum"
+          ],
+          "description": "Excluded from the size label only; still counted for risk"
+        },
+        "apply_label": {
+          "type": "boolean",
+          "default": true
+        },
+        "large_pr_note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 200,
+          "default": null
+        }
+      },
+      "description": "Size labels for people. The model's size features are separate."
+    },
+    "authors": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "$ref": "#/$defs/presence",
+          "default": "full"
+        },
+        "external": {
+          "$ref": "#/$defs/presence",
+          "default": "full"
+        },
+        "ai_agent_label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "ai-authored",
+          "description": "Transparency label. Detection itself is configured in rules (author_class)"
+        },
+        "path_experience_note": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mention when the author rarely touches these files"
+        }
+      }
+    },
+    "reviewer_routing": {
+      "$ref": "#/$defs/reviewer_routing"
+    },
+    "availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "users_unavailable": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handle"
+          },
+          "default": []
+        },
+        "timezone": {
+          "type": "string",
+          "default": "UTC",
+          "description": "IANA name"
+        },
+        "working_days": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "mon",
+              "tue",
+              "wed",
+              "thu",
+              "fri",
+              "sat",
+              "sun"
+            ]
+          },
+          "default": [
+            "mon",
+            "tue",
+            "wed",
+            "thu",
+            "fri"
+          ]
+        },
+        "working_hours": {
+          "type": "string",
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "default": "09:00-17:00"
+        }
+      }
+    },
+    "review_targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "senior_recommended_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720,
+          "default": 4
+        },
+        "review_first_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720,
+          "default": 4
+        },
+        "standard_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720,
+          "default": 8
+        }
+      },
+      "description": "Working hours to first review. Shown on the dashboard; PRs past target move up within their band."
+    },
+    "reminders": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "min_age_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720,
+          "default": 24
+        },
+        "min_staleness_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720,
+          "default": 8
+        },
+        "ignore_drafts": {
+          "type": "boolean",
+          "default": true
+        },
+        "ignore_approved_with": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 1
+        },
+        "ignored_labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
+    "rescore": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "push",
+              "ready_for_review",
+              "ci_completed",
+              "reopened",
+              "edited",
+              "labeled"
+            ]
+          },
+          "default": [
+            "push",
+            "ready_for_review",
+            "ci_completed",
+            "reopened"
+          ]
+        },
+        "max_rescores_per_pr": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 20
+        },
+        "min_minutes_between_edits": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60,
+          "default": 2
+        }
+      },
+      "description": "Stage 2 (scanners, dependency check) also triggers one rescore."
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "prefix": {
+          "type": "string",
+          "pattern": "^/[a-z-]+$",
+          "default": "/riffle"
+        },
+        "override": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allowed": {
+              "enum": [
+                "write_access",
+                "maintainers",
+                "codeowners"
+              ],
+              "default": "write_access"
+            },
+            "require_reason": {
+              "type": "boolean",
+              "default": true,
+              "description": "The reason is stored with the route_override training label"
+            },
+            "allow_downgrade": {
+              "type": "boolean",
+              "default": true,
+              "description": "Floors still apply"
+            }
+          },
+          "x-riffle-org-only": true
+        },
+        "disable_label": {
+          "type": "string",
+          "default": "riffle:disabled",
+          "description": "Stops comments on that PR; it is still scored"
+        }
+      },
+      "description": "/riffle rescore, /riffle band <band> <reason>, /riffle explain."
+    },
+    "pr_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "post_comment": {
+          "type": "boolean",
+          "default": true
+        },
+        "update_existing_comment": {
+          "type": "boolean",
+          "default": true
+        },
+        "apply_labels": {
+          "type": "boolean",
+          "default": true
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "review_first": {
+              "type": "string",
+              "maxLength": 30,
+              "default": "review first"
+            },
+            "standard": {
+              "type": "string",
+              "maxLength": 30,
+              "default": "standard"
+            },
+            "senior_recommended": {
+              "type": "string",
+              "maxLength": 30,
+              "default": "senior recommended"
+            },
+            "override": {
+              "type": "string",
+              "maxLength": 30,
+              "default": "wrong route"
+            }
+          },
+          "description": "Text after organization.label_prefix; full label capped at 50 characters by code check"
+        },
+        "component_label_prefix": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "bands_with_comment": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/band"
+          },
+          "default": [
+            "review_first",
+            "senior_recommended"
+          ]
+        },
+        "show_top_factors": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5,
+          "default": 3,
+          "description": "From SHAP; explains the rank even with the LLM off"
+        },
+        "show_score": {
+          "type": "boolean",
+          "default": false
+        },
+        "show_component": {
+          "type": "boolean",
+          "default": true
+        },
+        "collapse": {
+          "type": "boolean",
+          "default": true
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cite_similar_prs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5,
+              "default": 3
+            },
+            "failure_mode": {
+              "type": "boolean",
+              "default": true
+            },
+            "scrutiny": {
+              "type": "boolean",
+              "default": true
+            },
+            "path_size": {
+              "type": "boolean",
+              "default": true
+            },
+            "release_cycle": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "description": "Mined evidence the narrator may cite (contracts/mined-features.schema.json)"
+        }
+      }
+    },
+    "explanation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Turning off never stops scoring"
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
+          "default": "en-US"
+        },
+        "max_bullets": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7,
+          "default": 3
+        },
+        "show_review_effort": {
+          "type": "boolean",
+          "default": true
+        },
+        "mention_missing_tests": {
+          "type": "boolean",
+          "default": true
+        },
+        "mention_missing_issue": {
+          "type": "boolean",
+          "default": false
+        },
+        "show_effective_config": {
+          "type": "boolean",
+          "default": false
+        },
+        "known_fragile": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Paths the narrator names explicitly"
+        },
+        "house_terms": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 50,
+          "default": {}
+        }
+      },
+      "description": "Narrator output only. Phrases what the score and evidence contain; invents nothing."
+    },
+    "llm": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "enum": [
+            "none",
+            "hosted",
+            "self_hosted"
+          ],
+          "default": "none",
+          "description": "none = SHAP template explanations only"
+        },
+        "endpoint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uri",
+          "default": null
+        },
+        "send": {
+          "enum": [
+            "features_only",
+            "diff_hunks",
+            "full_files"
+          ],
+          "default": "features_only",
+          "description": "Repos may only make this stricter"
+        },
+        "excluded_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.env*",
+            "**/*.pem",
+            "**/*.key",
+            "**/*secret*"
+          ],
+          "x-riffle-merge": "union"
+        },
+        "max_calls_per_hour": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "default": 60
+        }
+      },
+      "description": "Secrets are always redacted before any call. Fixed, not a setting."
+    },
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "epic_priority": {
+          "type": "boolean",
+          "default": false,
+          "description": "Linked issue priority breaks ties inside a band"
+        },
+        "manual_boosts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "areas": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "paths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "boost": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 0.2,
+                    "default": 0.05,
+                    "description": "Moves queue position, never risk_score"
+                  }
+                },
+                "required": [
+                  "paths"
+                ]
+              },
+              "default": []
+            }
+          },
+          "description": "Off by default; excluded from backtest numbers"
+        }
+      },
+      "description": "Ordering applied after scoring."
+    },
+    "stacks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "score_as": {
+          "enum": [
+            "each_pr",
+            "whole_stack"
+          ],
+          "default": "each_pr"
+        },
+        "comment_on": {
+          "enum": [
+            "each_pr",
+            "stack_top"
+          ],
+          "default": "each_pr"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_comments_per_hour": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 120
+        }
+      }
+    },
+    "overrides": {
+      "type": "array",
+      "maxItems": 200,
+      "description": "Per component or path, inside a monorepo. Most specific match wins.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "component": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "minProperties": 1
+          },
+          "rank_bands": {
+            "$ref": "#/properties/rank_bands"
+          },
+          "pr_output": {
+            "$ref": "#/properties/pr_output"
+          },
+          "reviewer_routing": {
+            "$ref": "#/$defs/reviewer_routing"
+          },
+          "review_targets": {
+            "$ref": "#/properties/review_targets"
+          }
+        },
+        "required": [
+          "match"
+        ]
+      }
+    },
+    "dashboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "visibility": {
+          "enum": [
+            "org_members",
+            "repo_writers",
+            "admins"
+          ],
+          "default": "repo_writers"
+        },
+        "show_individual_metrics": {
+          "type": "boolean",
+          "default": false,
+          "description": "Per-person statistics stay hidden unless on"
+        },
+        "group_by": {
+          "enum": [
+            "band",
+            "component",
+            "owner",
+            "author_type"
+          ],
+          "default": "band"
+        }
+      },
+      "x-riffle-org-only": true
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 1095,
+          "default": 365
+        }
+      },
+      "description": "Logs overrides, config changes, floors applied and scores shown.",
+      "x-riffle-org-only": true
+    },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "slack_webhook_secret_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "digest": {
+          "enum": [
+            "off",
+            "daily",
+            "weekly"
+          ],
+          "default": "off"
+        }
+      },
+      "x-riffle-phase": "later"
+    }
+  },
+  "$defs": {
+    "band": {
+      "enum": [
+        "review_first",
+        "standard",
+        "senior_recommended"
+      ]
+    },
+    "floor_band": {
+      "enum": [
+        "review_first",
+        "senior_recommended"
+      ],
+      "description": "standard is the lowest band, so it is not a floor"
+    },
+    "presence": {
+      "enum": [
+        "full",
+        "label_only",
+        "silent"
+      ],
+      "description": "silent still scores and shows on the dashboard"
+    },
+    "handle": {
+      "type": "string",
+      "pattern": "^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$"
+    },
+    "reviewer_routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "off",
+            "suggest",
+            "request"
+          ],
+          "default": "suggest"
+        },
+        "use_codeowners": {
+          "type": "boolean",
+          "default": true
+        },
+        "senior_reviewers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handle"
+          },
+          "default": []
+        },
+        "groups": {
+          "type": "array",
+          "maxItems": 50,
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reviewers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/handle"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "paths",
+              "reviewers"
+            ]
+          }
+        },
+        "reviewers_per_pr": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 1
+        },
+        "algorithm": {
+          "enum": [
+            "load_balance",
+            "round_robin",
+            "random"
+          ],
+          "default": "load_balance"
+        },
+        "max_open_reviews_per_reviewer": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "default": null
+        },
+        "skip_title_keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "wip"
+          ]
+        }
+      },
+      "description": "The PR author is never suggested. Fixed behaviour."
+    }
+  }
+}

@@ -1,0 +1,1545 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/org-rules.schema.json",
+  "title": "Riffle rules",
+  "description": "How an organisation manages its code, as flat typed rules (kind + match + value). Orgs may write any number of rules, but the compiler always reduces them to the fixed column set in x-riffle-model-columns. Undeclared means null, never 0. Adding a column is a schema version bump, a retrain, and a decision record. Rules are read point-in-time from git history of the rules file, and the compiled hash is pinned into model_version. Read from the default branch only; an invalid file keeps the last valid compiled rules and posts a notice. Org file: riffle/rules.yml in the org's .github repo. Repo file: .github/riffle/rules.yml, appended after org rules and limited to that repo.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "level",
+    "rules"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^5\\.[0-9]+$"
+    },
+    "includes": {
+      "description": "Other rule files in the same repo, so large orgs can split rules by team, e.g. riffle/rules/streams.yml. Resolved depth-first, max depth 2.",
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_./-]+\\.ya?ml$"
+      }
+    },
+    "sources": {
+      "$ref": "#/$defs/sources"
+    },
+    "rules": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "$ref": "#/$defs/rule"
+      }
+    },
+    "labels": {
+      "description": "How outcomes become the training target. The team still has to settle union vs weighted in a decision record; both are supported.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "enum": [
+            "union",
+            "weighted"
+          ],
+          "default": "union",
+          "description": "union: label_bad = any enabled source fires. weighted: each source contributes its label_source weight"
+        },
+        "szz_in_target": {
+          "type": "boolean",
+          "default": false,
+          "description": "SZZ stays a separate label unless true"
+        },
+        "maturity_days": {
+          "type": "integer",
+          "minimum": 7,
+          "maximum": 180,
+          "default": 30,
+          "description": "Rows younger than this are dropped before training (label_mature)"
+        },
+        "szz_maturity_days": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 365,
+          "default": 90
+        },
+        "unobserved": {
+          "enum": [
+            "mask",
+            "negative",
+            "downweight"
+          ],
+          "default": "downweight",
+          "description": "What to do when a label source had no data for a mature PR (e.g. CI results expired). Any observed source that fired still makes the row positive. Otherwise: mask drops the row; negative counts it as fully clean; downweight counts it as clean with sample weight unobserved_weight"
+        },
+        "unobserved_weight": {
+          "type": "number",
+          "minimum": 0.05,
+          "maximum": 1,
+          "default": 0.5,
+          "description": "downweight only. Multiplies the row's sample weight for each unobserved source (0.5 with one missing, 0.25 with two)"
+        }
+      }
+    },
+    "mining": {
+      "description": "Parameters for the mined, repo-local features in contracts/mined-features.schema.json. They change model inputs, so they are part of the compiled rules hash pinned into model_version. Every value has a default; most repos never set this block.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "similar_prs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "k": {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 20,
+              "default": 5
+            },
+            "min_file_overlap": {
+              "type": "number",
+              "minimum": 0.05,
+              "maximum": 1,
+              "default": 0.2,
+              "description": "Jaccard over touched files"
+            },
+            "lookback_days": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 1095,
+              "default": 365
+            },
+            "min_neighbours": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 3,
+              "description": "Fewer than this and the feature is null"
+            }
+          }
+        },
+        "scrutiny": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lookback_days": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 1095,
+              "default": 180
+            },
+            "exclude_bot_reviews": {
+              "type": "boolean",
+              "default": true
+            },
+            "min_prior_prs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 5
+            }
+          }
+        },
+        "failure_mode": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lookback_days": {
+              "type": "integer",
+              "minimum": 90,
+              "maximum": 1095,
+              "default": 365
+            },
+            "min_bad_changes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 2
+            }
+          }
+        },
+        "path_size": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lookback_days": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 1095,
+              "default": 365
+            },
+            "min_prior_changes": {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 100,
+              "default": 10
+            }
+          }
+        },
+        "release_cycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tag_pattern": {
+              "type": "string",
+              "format": "regex",
+              "default": "^v?\\d+\\.\\d+(\\.\\d+)?$",
+              "description": "Which tags count as releases, e.g. ^\\d+\\.\\d+\\.0$ for minor releases only"
+            },
+            "min_releases": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 20,
+              "default": 3
+            },
+            "interval_stat": {
+              "enum": [
+                "median",
+                "mean"
+              ],
+              "default": "median"
+            }
+          }
+        },
+        "flaky_detection": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Marks checks flaky without test reports: a check that failed then passed on re-run at the same SHA. Adds to, never replaces, ci_check flaky rules",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "min_rerun_passes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 3
+            },
+            "lookback_days": {
+              "type": "integer",
+              "minimum": 14,
+              "maximum": 365,
+              "default": 90
+            }
+          }
+        }
+      }
+    },
+    "level": {
+      "enum": [
+        "org",
+        "repo"
+      ]
+    },
+    "model": {
+      "description": "Settings that change what the model sees or learns. They live here, not in org-config, so they are hashed into model_version.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "per_repo_layer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "false serves the global model only (layer_weight 0)"
+            },
+            "max_layer_weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 1.0
+            }
+          }
+        },
+        "disabled_features": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "x-riffle-merge": "union",
+          "description": "Feature names forced to null. Width of the vector never changes. Repos may only add. Example: agent_authored"
+        },
+        "backfill": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "On-install history mining. Recent history first so the per-repo layer can train within hours, then older history in the background",
+          "properties": {
+            "lookback_days": {
+              "type": "integer",
+              "minimum": 90,
+              "maximum": 3650,
+              "default": 1095
+            },
+            "recent_first_days": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 365,
+              "default": 180
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sources": {
+      "description": "Where outcome data lives beyond GitHub. Credentials are secret references, never values.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trackers": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "provider"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/slug"
+              },
+              "provider": {
+                "enum": [
+                  "github",
+                  "jira",
+                  "linear",
+                  "bugzilla",
+                  "youtrack"
+                ]
+              },
+              "base_url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "credentials_ref": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "ci": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "provider"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/slug"
+              },
+              "provider": {
+                "enum": [
+                  "github_checks",
+                  "commit_status",
+                  "external_api"
+                ],
+                "description": "commit_status covers Jenkins, Buildkite and anything posting legacy statuses"
+              },
+              "context_glob": {
+                "type": "string",
+                "default": "*"
+              },
+              "credentials_ref": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "test_reports": {
+          "x-riffle-phase": "later",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "format": {
+              "enum": [
+                "junit_xml"
+              ],
+              "default": "junit_xml"
+            },
+            "artifact_glob": {
+              "type": "string",
+              "default": "**/TEST-*.xml"
+            }
+          }
+        },
+        "outcome_import": {
+          "description": "Lets an org push outcomes Riffle cannot see (internal incidents, internal reverts) to POST /v1/outcomes, keyed by commit SHA or PR. Contract: contracts/outcome-import.schema.json.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "secret_ref": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "base": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "applies_to": {
+          "description": "Narrows where a rule applies. In a repo file, repos is ignored.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repos": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [
+                "*"
+              ]
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Limit to a monorepo package, e.g. packages/react-native/**"
+            },
+            "branches": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "priority": {
+          "description": "Conflict resolution: higher wins, then the more specific glob, then the later rule.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 50
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 300
+        }
+      }
+    },
+    "rule": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/path_tier"
+        },
+        {
+          "$ref": "#/$defs/path_class"
+        },
+        {
+          "$ref": "#/$defs/sensitivity"
+        },
+        {
+          "$ref": "#/$defs/change_signal"
+        },
+        {
+          "$ref": "#/$defs/component"
+        },
+        {
+          "$ref": "#/$defs/owner"
+        },
+        {
+          "$ref": "#/$defs/policy"
+        },
+        {
+          "$ref": "#/$defs/freeze_window"
+        },
+        {
+          "$ref": "#/$defs/pr_label"
+        },
+        {
+          "$ref": "#/$defs/safe_change"
+        },
+        {
+          "$ref": "#/$defs/pattern"
+        },
+        {
+          "$ref": "#/$defs/link"
+        },
+        {
+          "$ref": "#/$defs/identity"
+        },
+        {
+          "$ref": "#/$defs/merge_signal"
+        },
+        {
+          "$ref": "#/$defs/issue_field"
+        },
+        {
+          "$ref": "#/$defs/issue_label"
+        },
+        {
+          "$ref": "#/$defs/author_class"
+        },
+        {
+          "$ref": "#/$defs/ci_check"
+        },
+        {
+          "$ref": "#/$defs/test_class"
+        },
+        {
+          "$ref": "#/$defs/label_source"
+        },
+        {
+          "$ref": "#/$defs/branch_class"
+        },
+        {
+          "$ref": "#/$defs/stack"
+        }
+      ]
+    },
+    "path_tier": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "path_tier"
+        },
+        "match": {
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "low",
+            "normal",
+            "elevated",
+            "critical"
+          ]
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "max_path_tier",
+        "share_critical_lines"
+      ]
+    },
+    "path_class": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "path_class"
+        },
+        "match": {
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "excluded",
+            "vendored",
+            "generated",
+            "lockfile",
+            "test",
+            "test_fixture",
+            "docs",
+            "config",
+            "build_config",
+            "dependency_manifest",
+            "i18n"
+          ]
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature | filter",
+      "x-riffle-compiles-to": [
+        "effective_lines_changed",
+        "test_lines_ratio",
+        "docs_only",
+        "config_only"
+      ]
+    },
+    "change_signal": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "change_signal"
+        },
+        "match": {
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "schema_migration",
+            "wire_protocol",
+            "infra_as_code",
+            "build_system",
+            "dependency_bump",
+            "feature_flag",
+            "concurrency",
+            "native_interop",
+            "release_config"
+          ]
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "sharpens extractor touches_* features; no new columns"
+      ],
+      "description": "Risky change types. Handled by the extractor's own path rules too; these declarations override its defaults per repo."
+    },
+    "component": {
+      "description": "Names a monorepo package or module. The name is free text, but the model only sees generic stats computed per component from history.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "component"
+        },
+        "match": {
+          "type": "string",
+          "description": "e.g. streams/** or packages/virtualized-lists/**"
+        },
+        "value": {
+          "$ref": "#/$defs/slug"
+        },
+        "tier": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "Availability tier, 1 is most critical"
+        },
+        "exposure": {
+          "enum": [
+            "internal",
+            "partner",
+            "external"
+          ]
+        },
+        "data_class": {
+          "enum": [
+            "public",
+            "internal",
+            "confidential",
+            "restricted"
+          ]
+        },
+        "regimes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "pci",
+              "gdpr",
+              "hipaa",
+              "sox",
+              "soc2",
+              "fedramp"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "lifecycle": {
+          "enum": [
+            "experimental",
+            "active",
+            "stable",
+            "deprecated"
+          ]
+        },
+        "blast_radius": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Declared downstream dependents"
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "n_components_touched",
+        "max_criticality",
+        "max_exposure",
+        "max_data_class",
+        "regulated_scope_count",
+        "log_max_blast_radius",
+        "touches_deprecated"
+      ]
+    },
+    "owner": {
+      "description": "Path ownership. import_codeowners reads CODEOWNERS instead of listing paths.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "owner"
+        },
+        "match": {
+          "type": "string",
+          "description": "Path glob, or the CODEOWNERS path when import_codeowners is true"
+        },
+        "value": {
+          "type": "string",
+          "description": "Team or login, e.g. @apache/kafka-streams"
+        },
+        "import_codeowners": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "author_owns_paths_share",
+        "owning_teams_touched"
+      ]
+    },
+    "pattern": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "pattern"
+        },
+        "match": {
+          "type": "string",
+          "format": "regex"
+        },
+        "value": {
+          "enum": [
+            "revert",
+            "bugfix",
+            "hotfix",
+            "backport",
+            "conventional_type",
+            "security_fix"
+          ]
+        },
+        "field": {
+          "enum": [
+            "commit_message",
+            "commit_trailer",
+            "pr_title",
+            "pr_body",
+            "branch_name"
+          ],
+          "default": "commit_message"
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "label | feature",
+      "x-riffle-compiles-to": [
+        "task_type",
+        "is_backport",
+        "labels: revert, bugfix"
+      ]
+    },
+    "link": {
+      "description": "Connects objects Riffle would otherwise treat as unrelated. match must contain a named group (?<ref>...).",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "link"
+        },
+        "match": {
+          "type": "string",
+          "format": "regex"
+        },
+        "field": {
+          "enum": [
+            "commit_message",
+            "commit_trailer",
+            "pr_title",
+            "pr_body"
+          ],
+          "default": "commit_trailer"
+        },
+        "value": {
+          "enum": [
+            "pr_ref",
+            "revert_target",
+            "cherry_pick_source",
+            "issue_key",
+            "external_change_id"
+          ]
+        },
+        "tracker": {
+          "$ref": "#/$defs/slug",
+          "description": "For issue_key: which sources.trackers entry"
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "link",
+      "x-riffle-compiles-to": [
+        "commit-PR-issue graph used by every label source; cherry picks dedupe labels across branches"
+      ]
+    },
+    "identity": {
+      "description": "Recovers the real person when a bot lands the commit or email differs from login. match needs a named group (?<login>...) or (?<email>...).",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "identity"
+        },
+        "match": {
+          "type": "string",
+          "format": "regex"
+        },
+        "on": {
+          "enum": [
+            "commit_trailer",
+            "commit_message",
+            "pr_body",
+            "co_authored_by"
+          ],
+          "default": "commit_trailer"
+        },
+        "value": {
+          "enum": [
+            "author",
+            "co_author",
+            "reviewer",
+            "lander"
+          ]
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "author_* features use the resolved author",
+        "reviewer_count",
+        "reviewer_path_experience"
+      ]
+    },
+    "merge_signal": {
+      "description": "What counts as merged. Needed when PRs are closed and the change lands another way.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "merge_signal"
+        },
+        "value": {
+          "enum": [
+            "github_merge",
+            "linked_commit_on_default",
+            "bot_close_with_commit",
+            "direct_push"
+          ]
+        },
+        "match": {
+          "type": "string",
+          "description": "Actor login for bot_close_with_commit, else '*'",
+          "default": "*"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "label",
+      "x-riffle-compiles-to": [
+        "merged_at, merge_commit_sha for every outcome window"
+      ]
+    },
+    "issue_field": {
+      "description": "Tracker fields beyond labels, e.g. Jira issuetype and priority.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "issue_field"
+        },
+        "tracker": {
+          "$ref": "#/$defs/slug"
+        },
+        "field": {
+          "type": "string",
+          "description": "e.g. issuetype, priority, customfield_10020"
+        },
+        "match": {
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "bug",
+            "incident",
+            "regression",
+            "security",
+            "not_a_bug"
+          ]
+        },
+        "severity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "description": "1 is worst; scales label weight"
+        }
+      },
+      "required": [
+        "tracker",
+        "field",
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "label"
+    },
+    "issue_label": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "issue_label"
+        },
+        "tracker": {
+          "$ref": "#/$defs/slug",
+          "default": "github"
+        },
+        "match": {
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "bug",
+            "incident",
+            "regression",
+            "security",
+            "not_a_bug"
+          ]
+        },
+        "severity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "label"
+    },
+    "author_class": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "author_class"
+        },
+        "match": {
+          "type": "string"
+        },
+        "on": {
+          "enum": [
+            "login",
+            "email_domain",
+            "branch_prefix",
+            "commit_trailer"
+          ],
+          "default": "login"
+        },
+        "value": {
+          "enum": [
+            "bot",
+            "agent",
+            "maintainer",
+            "employee",
+            "external"
+          ]
+        },
+        "new_contributor_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 730,
+          "description": "Optional; overrides the default tenure cut for authors this rule matches"
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "agent_authored",
+        "author_is_maintainer",
+        "author_is_external",
+        "author_is_new"
+      ]
+    },
+    "ci_check": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "ci_check"
+        },
+        "source": {
+          "$ref": "#/$defs/slug",
+          "description": "sources.ci entry; default is GitHub checks"
+        },
+        "match": {
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "required",
+            "flaky",
+            "informational",
+            "auxiliary"
+          ],
+          "description": "auxiliary (CodeQL, Scorecards, coverage) never triggers ci_fail"
+        },
+        "stage": {
+          "enum": [
+            "pre_merge",
+            "post_merge",
+            "nightly",
+            "release"
+          ],
+          "default": "pre_merge"
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature | label",
+      "x-riffle-compiles-to": [
+        "ci_required_failed",
+        "ci_failures_non_flaky",
+        "label: post_merge_ci"
+      ]
+    },
+    "test_class": {
+      "x-riffle-phase": "later",
+      "description": "Test-level flakiness from sources.test_reports, for repos with one giant CI check.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "test_class"
+        },
+        "match": {
+          "type": "string",
+          "description": "Test id glob, e.g. org.apache.kafka.streams.integration.*"
+        },
+        "value": {
+          "enum": [
+            "flaky",
+            "quarantined",
+            "slow"
+          ]
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature | label"
+    },
+    "label_source": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "label_source"
+        },
+        "match": {
+          "enum": [
+            "revert",
+            "ci_fail",
+            "hotfix",
+            "szz",
+            "follow_up_fix",
+            "route_override",
+            "incident_link",
+            "external_import"
+          ]
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "window_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "label",
+      "description": "Enable and weight outcome sources. Defaults: revert 30d, ci_fail on required checks only, hotfix is a hotfix-labelled PR on the same lines within 7d, follow_up_fix is any PR on the same lines within 14d."
+    },
+    "branch_class": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "branch_class"
+        },
+        "match": {
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "default",
+            "release",
+            "hotfix",
+            "backport",
+            "long_lived",
+            "experimental"
+          ]
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature | label",
+      "x-riffle-compiles-to": [
+        "target_branch_class"
+      ]
+    },
+    "stack": {
+      "description": "Stacked PR tooling, so a stack is understood as related changes.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "stack"
+        },
+        "value": {
+          "enum": [
+            "ghstack",
+            "graphite",
+            "sapling",
+            "spr",
+            "branch_chain"
+          ]
+        },
+        "match": {
+          "type": "string",
+          "description": "Branch pattern or body marker the tool leaves"
+        }
+      },
+      "required": [
+        "value",
+        "match"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "stack_depth",
+        "stack_position"
+      ]
+    },
+    "sensitivity": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "sensitivity"
+        },
+        "match": {
+          "type": "string"
+        },
+        "value": {
+          "enum": [
+            "authn",
+            "authz",
+            "payments",
+            "pii",
+            "secrets",
+            "crypto",
+            "infra",
+            "public_api"
+          ]
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "n_sensitivity_tags"
+      ],
+      "description": "What the code handles. Split from change_signal so authn and authz stay distinct."
+    },
+    "policy": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "if": {
+            "properties": {
+              "value": {
+                "enum": [
+                  "no_import_from",
+                  "dependency_allowlist",
+                  "dependency_denylist",
+                  "regen_pair"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "target"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "policy"
+        },
+        "match": {
+          "type": "string",
+          "description": "Path glob the policy covers"
+        },
+        "value": {
+          "enum": [
+            "required_tests",
+            "high_scrutiny",
+            "perf_critical",
+            "no_import_from",
+            "flag_required",
+            "migration_reversible",
+            "migration_no_destructive",
+            "dependency_allowlist",
+            "dependency_denylist",
+            "regen_pair"
+          ]
+        },
+        "target": {
+          "description": "no_import_from: forbidden path glob. dependency_*: package names. regen_pair: generated path glob.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "tests": {
+          "type": "string",
+          "description": "required_tests: test glob that satisfies it; defaults to path_class test"
+        },
+        "languages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "java",
+              "python",
+              "typescript",
+              "javascript",
+              "go",
+              "kotlin"
+            ]
+          },
+          "description": "no_import_from only: languages to parse imports for. Others are skipped, and the feature is null for files in them"
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "policy_violations",
+        "required_tests_missing"
+      ],
+      "description": "Team policies checked against the diff. Each firing policy adds one to policy_violations; the specific policy is shown in the comment, not given its own column.",
+      "x-riffle-phase-notes": {
+        "no_import_from": "v1 for listed languages via tree-sitter import queries; other languages later",
+        "flag_required": "later: heuristic on known flag SDK calls only"
+      }
+    },
+    "freeze_window": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "freeze_window"
+        },
+        "start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "match": {
+          "type": "string",
+          "default": "*",
+          "description": "Branch glob"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "in_freeze_window"
+      ],
+      "description": "Declared code freeze. days_to_freeze_start is left to the extractor."
+    },
+    "pr_label": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "if": {
+            "properties": {
+              "value": {
+                "const": "priority"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "level"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "pr_label"
+        },
+        "match": {
+          "type": "string",
+          "description": "Exact PR label name"
+        },
+        "value": {
+          "enum": [
+            "priority",
+            "hotfix",
+            "security",
+            "safe"
+          ]
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "priority only: 3 is highest (P0)"
+        }
+      },
+      "required": [
+        "match",
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "label_priority",
+        "label_is_hotfix",
+        "label_security"
+      ],
+      "description": "Maps PR labels at open time. Different from issue_label, which is about linked issues."
+    },
+    "safe_change": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "const": "safe_change"
+        },
+        "value": {
+          "enum": [
+            "docs",
+            "tests",
+            "formatting",
+            "comments",
+            "generated",
+            "i18n"
+          ]
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "unevaluatedProperties": false,
+      "x-riffle-sink": "feature",
+      "x-riffle-compiles-to": [
+        "is_safe_change_only"
+      ],
+      "description": "Which change kinds this team treats as safe. No match; the extractor classifies lines."
+    }
+  },
+  "x-riffle-model-columns": {
+    "max_criticality": "0-3 from path_tier and component tier",
+    "frac_lines_in_critical": "share of changed lines at tier critical",
+    "n_components_touched": "declared components spanned",
+    "n_sensitivity_tags": "distinct sensitivity values touched",
+    "max_exposure": "0 internal, 1 partner, 2 external",
+    "max_data_class": "0 public, 1 internal, 2 confidential, 3 restricted",
+    "regulated_scope_count": "distinct regimes touched",
+    "log_max_blast_radius": "log1p of declared dependents",
+    "touches_deprecated": "any touched component has lifecycle deprecated",
+    "policy_violations": "count of policy rules broken by the diff",
+    "required_tests_missing": "a required_tests policy fired",
+    "in_freeze_window": "PR opened inside a freeze window",
+    "targets_release_branch": "base branch class is release or hotfix",
+    "author_is_owner": "resolved author owns any touched path",
+    "agent_in_critical": "agent-authored and max_criticality = 3",
+    "label_priority": "0-3 from pr_label priority, null if unlabeled",
+    "is_safe_change_only": "every changed line falls in a declared safe_change kind"
+  },
+  "x-riffle-mined-columns": "See contracts/mined-features.schema.json. Mined columns are always present for every repo, including training repos; declared columns (x-riffle-model-columns) are null unless an org writes rules."
+}

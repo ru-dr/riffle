@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/outcome-import.schema.json",
+  "title": "Riffle outcome import",
+  "description": "Body of POST /v1/outcomes. Lets an org report outcomes Riffle cannot see (internal reverts, incidents, internal CI). Signed with the secret named in rules sources.outcome_import. Imported outcomes become the external_import label source, weighted by its label_source rule. Idempotent on event_id. Never carries code or diffs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "repo", "target", "outcome", "occurred_at"],
+  "properties": {
+    "event_id": { "type": "string", "maxLength": 128, "description": "Sender's unique id; resends are ignored" },
+    "repo": { "type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" },
+    "target": {
+      "description": "What the outcome is about. At least one key.",
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": {
+        "commit_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "pr_number": { "type": "integer", "minimum": 1 },
+        "external_change_id": { "type": "string", "maxLength": 64, "description": "Matched through link rules, e.g. D12345678" }
+      }
+    },
+    "outcome": { "enum": ["revert", "incident", "ci_fail", "hotfix", "clean"] },
+    "severity": { "type": "integer", "minimum": 1, "maximum": 4, "description": "1 is worst" },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "source": { "type": "string", "maxLength": 64, "description": "Free label for audit, e.g. internal-ci" }
+  }
+}
