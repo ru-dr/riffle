@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-29
 - **Status:** Proposed
-- **Owners:** #8 GitHub App (Rudr), with #5 Data ingestion as reviewer
+- **Owners:** #5 Data ingestion (Go miner built by Rudr), with #1 Feature engineering as reviewer
 
 ## Context
 
@@ -20,16 +20,25 @@ The team also wants more Go experience beyond `intake`.
 - **Rule:** Go for components that move, coordinate, or compile data. Python
   for anything that computes a model feature or a label. No feature is
   computed in two languages.
-- **1. History miner** (`services/miner/`, first). A Go CLI run as Kubernetes
-  Jobs. Mines commits, file changes, PRs, reviews, check runs, and tags into
-  Parquet, recent-first per `model.backfill`. Writes a manifest per run
-  (`contracts/mined_history.schema.json`). Requirements:
-  - one GitHub rate-limit budget shared across all workers of an installation,
-    using conditional requests where possible;
-  - checkpoints, so a crashed or preempted Job resumes rather than restarts;
-  - idempotent writes keyed by `run_id`;
-  - a bounded worker pool that respects training backpressure;
-  - `coverage` fields that tell the label builder which sources are unobserved.
+- **1. History miner** (`services/miner/`, first).
+  - The existing Python miner (`repo-mining`, #5) is the reference
+    implementation. It is used for the data phase and the backtest, and is
+    updated to write `contracts/mined_history.schema.json`.
+  - The Go miner is built alongside it against the same contract: a Go CLI
+    run as Kubernetes Jobs that mines commits, file changes, PRs, reviews,
+    check runs, and tags into Parquet, recent-first per `model.backfill`.
+  - Go-specific requirements: one GitHub rate-limit budget shared across all
+    workers of an installation, using conditional requests where possible;
+    checkpoints, so a crashed or preempted Job resumes rather than restarts;
+    idempotent writes keyed by `run_id`; a bounded worker pool that respects
+    training backpressure; `coverage` fields that tell the label builder which
+    sources are unobserved.
+  - **Parity test:** both miners run on a fixture repo and on one backtest
+    repo, and the tables are compared row by row, ignoring row order. The
+    test is built first, before the Go miner is complete.
+  - **Replacement:** when the parity test passes, one PR switches
+    `pipelines/` to the Go miner and marks this ADR Accepted. The Python
+    miner is then removed.
 - **2. Config compiler** (`services/compiler/`, second). One Go binary merges
   org and repo settings, compiles rules, computes the rules hash, and stores
   the effective config in Postgres. `scorer` and `app` read that row and never
@@ -48,6 +57,8 @@ The team also wants more Go experience beyond `intake`.
 | Option | Why not |
 | --- | --- |
 | Everything in Python | Works, but the miner is the hardest concurrency problem in the system and the team gains no Go depth |
+| Replace the Python miner immediately | Blocks the data phase and backtest for no accuracy gain |
+| Two miners with their own formats | `pipelines/` would have to handle both, and results could differ silently |
 | Feature parsers in Go | Training would need the same Go code, or features drift between training and serving |
 | Go parser service called over the network | New contract, new deploy, and another version to pin, for no accuracy gain |
 | Put the miner or compiler in `intake` | `intake` must stay tiny and answer within 10 seconds |
@@ -63,13 +74,15 @@ The team also wants more Go experience beyond `intake`.
   `model_version`.
 - #10 adds Go build and test jobs for the new services to CI, and the Job
   templates to `infra/k8s/`.
-- Workload: the miner is on the week 3 to 5 data critical path. If it slips,
-  pipelines fall back to a Python miner for the backtest repositories only.
+- The Go miner is off the critical path: the Python miner serves the data
+  phase and backtest until parity passes.
+- `miner` and `compiler` are added as branch prefixes in ADR 0003 and the
+  `branch-name` check.
 
 ## Revisit if
 
-- The miner is not producing complete runs for the backtest repositories by
-  the end of week 5.
+- The parity test still fails by week 12 (scaling): keep the Python miner and
+  close the Go miner as a learning project.
 - Any feature ends up computed in Go.
 - The compiler adds latency to scoring that a cached Python loader would not.
 
