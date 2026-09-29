@@ -35,7 +35,7 @@
       }
     },
     "labels": {
-      "description": "How outcomes become the training target. The team still has to settle union vs weighted in a decision record; both are supported.",
+      "description": "How outcomes become the training target. Defaults follow docs/decisions/002-label-target.md. The global model always uses the default target_sources with binary union; org changes here apply only to that org's per-repo layer.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -45,7 +45,7 @@
             "weighted"
           ],
           "default": "union",
-          "description": "union: label_bad = any enabled source fires. weighted: each source contributes its label_source weight"
+          "description": "union: label_bad = any target source fires (binary). weighted: each source's label_source weight becomes a sample weight. Per-repo layer only"
         },
         "szz_in_target": {
           "type": "boolean",
@@ -80,6 +80,28 @@
           "maximum": 1,
           "default": 0.5,
           "description": "downweight only. Multiplies the row's sample weight for each unobserved source (0.5 with one missing, 0.25 with two)"
+        },
+        "target_sources": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "revert",
+              "ci_fail",
+              "hotfix",
+              "szz",
+              "follow_up_fix",
+              "route_override",
+              "incident_link",
+              "external_import"
+            ]
+          },
+          "default": [
+            "revert",
+            "ci_fail",
+            "hotfix"
+          ],
+          "description": "Sources that can make a row positive. Others still get mined and reported as ablations, but do not enter the target"
         }
       }
     },
@@ -1191,7 +1213,7 @@
       ],
       "unevaluatedProperties": false,
       "x-riffle-sink": "label",
-      "description": "Enable and weight outcome sources. Defaults: revert 30d, ci_fail on required checks only, hotfix is a hotfix-labelled PR on the same lines within 7d, follow_up_fix is any PR on the same lines within 14d."
+      "description": "Weight of an outcome source as a sample weight in this org's per-repo layer. Never applied to the global model. Windows: revert 30d, ci_fail on required checks only, hotfix is a hotfix-labelled PR on the same lines within 7d, follow_up_fix is any PR on the same lines within 14d."
     },
     "branch_class": {
       "allOf": [

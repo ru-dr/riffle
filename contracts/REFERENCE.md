@@ -268,7 +268,7 @@ Test-level flakiness from sources.test_reports, for repos with one giant CI chec
 
 #### `label_source`
 
-Enable and weight outcome sources. Defaults: revert 30d, ci_fail on required checks only, hotfix is a hotfix-labelled PR on the same lines within 7d, follow_up_fix is any PR on the same lines within 14d.
+Weight of an outcome source as a sample weight in this org's per-repo layer. Never applied to the global model. Windows: revert 30d, ci_fail on required checks only, hotfix is a hotfix-labelled PR on the same lines within 7d, follow_up_fix is any PR on the same lines within 14d.
 
 **Sink:** label
 
@@ -325,12 +325,13 @@ Stacked PR tooling, so a stack is understood as related changes.
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `labels.target` | `union`, `weighted` | `"union"` |  | union: label_bad = any enabled source fires. weighted: each source contributes its label_source weight |
+| `labels.target` | `union`, `weighted` | `"union"` |  | union: label_bad = any target source fires (binary). weighted: each source's label_source weight becomes a sample weight. Per-repo layer only |
 | `labels.szz_in_target` | boolean | `false` |  | SZZ stays a separate label unless true |
 | `labels.maturity_days` | integer 7–180 | `30` |  | Rows younger than this are dropped before training (label_mature) |
 | `labels.szz_maturity_days` | integer 30–365 | `90` |  |  |
 | `labels.unobserved` | `mask`, `negative`, `downweight` | `"downweight"` |  | What to do when a label source had no data for a mature PR (e.g. CI results expired). Any observed source that fired still makes the row positive. Otherwise: mask drops the row; negative counts it as fully clean; downweight counts it as clean with sample weight unobserved_weight |
 | `labels.unobserved_weight` | number 0.05–1 | `0.5` |  | downweight only. Multiplies the row's sample weight for each unobserved source (0.5 with one missing, 0.25 with two) |
+| `labels.target_sources` | list of `revert`, `ci_fail`, `hotfix`, `szz`, `follow_up_fix`, `route_override`, `incident_link`, `external_import` | `["revert", "ci_fail", "hotfix"]` |  | Sources that can make a row positive. Others still get mined and reported as ablations, but do not enter the target |
 
 ### `mining` block
 
