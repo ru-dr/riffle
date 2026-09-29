@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/mined_history.schema.json",
+  "title": "Riffle mined history manifest",
+  "x-riffle-version": "1.0",
+  "description": "Manifest written by the Go history miner (services/miner) for one repository and one run, next to the Parquet tables it lists. pipelines/ and scorer read the tables only through this manifest. Tables are raw history, not model features: every feature is computed in Python from these tables, in training and serving alike. Data stays inside the installation; author emails are stored only as salted hashes. A run is usable only when status is complete; partial runs carry a checkpoint and are resumed, never read.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "tenant_id", "repo", "miner_version", "status", "window", "started_at", "tables"],
+  "properties": {
+    "run_id": { "type": "string", "maxLength": 64, "description": "Unique per run; reruns with the same run_id overwrite the same files (idempotent)" },
+    "tenant_id": { "type": "string" },
+    "repo": { "type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" },
+    "miner_version": { "type": "string", "description": "Pinned into model_version via the feature extractor version" },
+    "status": { "enum": ["running", "partial", "complete", "failed"] },
+    "window": {
+      "description": "History covered. Backfill runs recent-first (rules model.backfill), so a partial run always covers the newest data.",
+      "type": "object", "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "type": "string", "format": "date-time" },
+        "to": { "type": "string", "format": "date-time" },
+        "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "Default branch head the run mined up to" }
+      }
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": ["string", "null"], "format": "date-time" },
+    "checkpoint": {
+      "description": "Where a partial or failed run resumes. Opaque to readers.",
+      "type": ["object", "null"], "additionalProperties": false,
+      "properties": {
+        "table": { "type": "string" },
+        "cursor": { "type": "string", "maxLength": 512 },
+        "rows_written": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "rate_limit": {
+      "description": "GitHub API budget used, for capacity planning.",
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "requests": { "type": "integer", "minimum": 0 },
+        "conditional_hits": { "type": "integer", "minimum": 0, "description": "304 responses, which do not count against the limit" },
+        "secondary_limit_waits": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "coverage": {
+      "description": "What history was actually available. Feeds labels.unobserved in the label builder.",
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "check_runs_from": { "type": ["string", "null"], "format": "date-time", "description": "Earliest check result still retrievable; ci_fail is unobserved before this" },
+        "reviews_from": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "tables": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "uri", "rows", "sha256"],
+        "properties": {
+          "name": { "enum": ["commits", "file_changes", "pull_requests", "reviews", "check_runs", "tags"] },
+          "uri": { "type": "string", "description": "gs:// or file:// path to the Parquet file" },
+          "rows": { "type": "integer", "minimum": 0 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  },
+  "x-riffle-tables": {
+    "commits": {
+      "sha": "string, primary key",
+      "parent_shas": "list<string>",
+      "author_login": "string or null, resolved through identity rules",
+      "author_email_hash": "string, salted per installation",
+      "committed_at": "timestamp",
+      "message": "string, used by pattern and link rules",
+      "is_merge": "bool"
+    },
+    "file_changes": {
+      "sha": "string, commits.sha",
+      "path": "string",
+      "old_path": "string or null, set on rename",
+      "status": "added | modified | removed | renamed",
+      "lines_added": "int",
+      "lines_deleted": "int",
+      "is_binary": "bool"
+    },
+    "pull_requests": {
+      "number": "int, primary key",
+      "author_login": "string",
+      "created_at": "timestamp",
+      "merged_at": "timestamp or null",
+      "closed_at": "timestamp or null",
+      "base_branch": "string",
+      "head_branch": "string",
+      "merge_commit_sha": "string or null",
+      "labels_at_open": "list<string>",
+      "is_draft_at_open": "bool",
+      "title": "string"
+    },
+    "reviews": {
+      "pr_number": "int, pull_requests.number",
+      "reviewer_login": "string",
+      "state": "approved | changes_requested | commented | dismissed",
+      "submitted_at": "timestamp",
+      "comment_count": "int"
+    },
+    "check_runs": {
+      "head_sha": "string",
+      "name": "string",
+      "conclusion": "success | failure | neutral | cancelled | skipped | timed_out | action_required | null",
+      "run_attempt": "int, for flaky detection",
+      "app_id": "int",
+      "completed_at": "timestamp or null"
+    },
+    "tags": {
+      "name": "string",
+      "sha": "string",
+      "created_at": "timestamp"
+    }
+  }
+}

@@ -17,6 +17,7 @@ Every rule kind, value, setting and default is listed in
 | `explain.schema.json` | `scorer` → `explainer` (`POST /v1/explain`) | `scorer` | #9 Inference |
 | `mined_features.schema.json` | `scorer` (extractor) | `scorer` (model), narrator, `pipelines/training` | #1 Features |
 | `outcome_import.schema.json` | Organisation systems (`POST /v1/outcomes`) | `pipelines` (label mining) | #5 Ingestion |
+| `mined_history.schema.json` | `miner` (Go, ADR 0004) | `pipelines`, `scorer` | #5 Ingestion |
 
 Shapes are specified in the root `README.md` under **Contracts**; write the
 schema files to match.

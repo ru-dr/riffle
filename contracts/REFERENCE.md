@@ -698,3 +698,102 @@ Body of POST /v1/outcomes. Lets an org report outcomes Riffle cannot see (intern
 | `severity` | integer 1–4 |  |  | 1 is worst |
 | `occurred_at` | string (date-time) |  |  |  |
 | `source` | string |  |  | Free label for audit, e.g. internal-ci |
+
+## Riffle mined history manifest (`mined_history.schema.json`)
+
+**Version:** 1.0
+
+Manifest written by the Go history miner (services/miner) for one repository and one run, next to the Parquet tables it lists. pipelines/ and scorer read the tables only through this manifest. Tables are raw history, not model features: every feature is computed in Python from these tables, in training and serving alike. Data stays inside the installation; author emails are stored only as salted hashes. A run is usable only when status is complete; partial runs carry a checkpoint and are resumed, never read.
+
+| Key | Allowed | Default | Flags | Meaning |
+|---|---|---|---|---|
+| `run_id` | string |  |  | Unique per run; reruns with the same run_id overwrite the same files (idempotent) |
+| `tenant_id` | string |  |  |  |
+| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  |  |
+| `miner_version` | string |  |  | Pinned into model_version via the feature extractor version |
+| `status` | `running`, `partial`, `complete`, `failed` |  |  |  |
+| `window.from` | string (date-time) |  |  |  |
+| `window.to` | string (date-time) |  |  |  |
+| `window.head_sha` | string matching `^[0-9a-f]{40}$` |  |  | Default branch head the run mined up to |
+| `started_at` | string (date-time) |  |  |  |
+| `finished_at` | string or null (date-time) |  |  |  |
+| `checkpoint` | object or null |  |  | Where a partial or failed run resumes. Opaque to readers. |
+| `rate_limit.requests` | integer 0– |  |  |  |
+| `rate_limit.conditional_hits` | integer 0– |  |  | 304 responses, which do not count against the limit |
+| `rate_limit.secondary_limit_waits` | integer 0– |  |  |  |
+| `coverage.check_runs_from` | string or null (date-time) |  |  | Earliest check result still retrievable; ci_fail is unobserved before this |
+| `coverage.reviews_from` | string or null (date-time) |  |  |  |
+| `tables` | list of objects |  |  |  |
+| `tables[].name` | `commits`, `file_changes`, `pull_requests`, `reviews`, `check_runs`, `tags` |  |  |  |
+| `tables[].uri` | string |  |  | gs:// or file:// path to the Parquet file |
+| `tables[].rows` | integer 0– |  |  |  |
+| `tables[].sha256` | string matching `^[0-9a-f]{64}$` |  |  |  |
+
+### Table `commits`
+
+| Column | Type and meaning |
+|---|---|
+| `sha` | string, primary key |
+| `parent_shas` | list<string> |
+| `author_login` | string or null, resolved through identity rules |
+| `author_email_hash` | string, salted per installation |
+| `committed_at` | timestamp |
+| `message` | string, used by pattern and link rules |
+| `is_merge` | bool |
+
+### Table `file_changes`
+
+| Column | Type and meaning |
+|---|---|
+| `sha` | string, commits.sha |
+| `path` | string |
+| `old_path` | string or null, set on rename |
+| `status` | added \| modified \| removed \| renamed |
+| `lines_added` | int |
+| `lines_deleted` | int |
+| `is_binary` | bool |
+
+### Table `pull_requests`
+
+| Column | Type and meaning |
+|---|---|
+| `number` | int, primary key |
+| `author_login` | string |
+| `created_at` | timestamp |
+| `merged_at` | timestamp or null |
+| `closed_at` | timestamp or null |
+| `base_branch` | string |
+| `head_branch` | string |
+| `merge_commit_sha` | string or null |
+| `labels_at_open` | list<string> |
+| `is_draft_at_open` | bool |
+| `title` | string |
+
+### Table `reviews`
+
+| Column | Type and meaning |
+|---|---|
+| `pr_number` | int, pull_requests.number |
+| `reviewer_login` | string |
+| `state` | approved \| changes_requested \| commented \| dismissed |
+| `submitted_at` | timestamp |
+| `comment_count` | int |
+
+### Table `check_runs`
+
+| Column | Type and meaning |
+|---|---|
+| `head_sha` | string |
+| `name` | string |
+| `conclusion` | success \| failure \| neutral \| cancelled \| skipped \| timed_out \| action_required \| null |
+| `run_attempt` | int, for flaky detection |
+| `app_id` | int |
+| `completed_at` | timestamp or null |
+
+### Table `tags`
+
+| Column | Type and meaning |
+|---|---|
+| `name` | string |
+| `sha` | string |
+| `created_at` | timestamp |

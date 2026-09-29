@@ -18,7 +18,8 @@ not have an unclear review process of its own.
 - Branch names are `<prefix>/<short-description>`, lowercase, words joined
   with hyphens.
 - Product work uses an area prefix: `intake/`, `scorer/`, `explainer/`,
-  `app/`, `pipelines/`, `infra/`, `site/`.
+  `app/`, `miner/`, `compiler/`, `pipelines/`, `infra/`, `site/`. `miner/` and
+  `compiler/` were added by ADR 0004.
 - Other work uses a type prefix: `docs/` (docs and ADRs only), `ci/` (GitHub
   Actions), `chore/` (repo hygiene, config, tooling), `fix/` (bug fixes that
   cross areas), `deps/` (manual dependency bumps). Dependabot keeps its own
