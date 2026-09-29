@@ -1,0 +1,25 @@
+name: branch-name
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+
+permissions: {}
+
+jobs:
+  branch-name:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check branch name (ADR 0003)
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          pattern='^(intake|scorer|explainer|app|pipelines|infra|site|docs|ci|chore|fix|deps)/[a-z0-9]+(-[a-z0-9]+)*$'
+          if [[ "$BRANCH" =~ ^dependabot/ ]] || [[ "$BRANCH" =~ $pattern ]]; then
+            echo "ok: $BRANCH"
+          else
+            echo "::error::Branch '$BRANCH' does not follow docs/adr/0003-branch-and-merge-rules.md"
+            echo "Use <prefix>/<short-description>, lowercase with hyphens."
+            echo "Prefixes: intake scorer explainer app pipelines infra site docs ci chore fix deps"
+            exit 1
+          fi
