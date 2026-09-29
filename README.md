@@ -8,8 +8,9 @@
 
 ### Every repo breaks differently.
 
-Riffle orders a team's pull request queue by risk — trained on your
-repository's own revert history, not one vendor's rules. Self-hosted, open source, and nothing skips review.
+Riffle orders a team's pull request queue by risk — one model that works from
+the first PR, sharpened by what actually broke in your repository. Self-hosted,
+open source, and nothing skips review.
 
 <p>
   <img alt="status: in development"
@@ -47,9 +48,11 @@ it never merges, and it never removes a PR from review.
 
 **The difference is where the signal comes from.** A change to a config file
 might be routine in one codebase and the most common cause of incidents in
-another. Generic heuristics cannot tell the difference. Riffle trains a model
-**per repository** on that repository's own merge, revert, and follow-up-fix
-history.
+another. Generic heuristics cannot tell the difference. Riffle serves every
+repository with one **global model** from its first pull request, and adds a
+**per-repo layer** trained on that repository's own reverts, post-merge CI
+failures, and hotfixes. The layer starts at zero weight and gains influence
+as labelled outcomes accumulate ([ADR 0001](docs/adr/0001-global-first.md)).
 
 ## Architecture
 
@@ -58,13 +61,13 @@ Four independently deployable services.
 | Service | Language | Responsibility |
 | --- | --- | --- |
 | `intake` | Go | Verify webhook signature, deduplicate by delivery ID, publish to queue, return 200 inside 10 seconds. Nothing else. |
-| `scorer` | Python | Consume events, extract features, run the tenant ranking model, call the explainer, write the result |
-| `explainer` | Python | LLM inference behind an API. Warm GPU, cached, rate-limited, times out to a template fallback |
+| `scorer` | Python | Consume events, read the tenant's compiled config and rules, extract features, run the global model with the tenant's per-repo layer, call the explainer, write the result. Two stages: diff, history, and rules first so the route posts fast; parsers and scanners (lizard, tree-sitter, Semgrep, OSV) second, followed by one rescore. Parsers live in `libs/features/` ([ADR 0005](docs/adr/0005-feature-parsers.md)) |
+| `explainer` | Python | Turns the score and its evidence into what to check first. SHAP template explanations by default (`llm.provider: none`); an optional LLM, self-hosted or hosted, phrases them. Times out to the template |
 | `app` | TypeScript | GitHub App plus the Next.js dashboard. Everything that talks to GitHub or to humans |
 
 Supporting: Postgres (features, tenants, outcomes), Redis (idempotency keys,
 inference cache), Pub/Sub (event bus), Airflow (scheduled retraining), MLflow
-(registry), Kubernetes Jobs (per-tenant training).
+(registry), Kubernetes Jobs (global retraining and per-repo layer fits).
 
 **Each boundary is a place where the failure mode changes.** Intake must never
 be slow, because GitHub gives us 10 seconds. Scoring must never be lost,
@@ -78,11 +81,13 @@ because a missing sentence degrades quality and not correctness.
 These are not preferences. Breaking one is a bug even if the tests pass.
 
 - **Idempotent scoring** — the same delivery ID must never produce two scores
-- **Version pinning** — a request never mixes a new model with an old feature extractor
+- **Version pinning** — one `model_version` per request covers the global model, the per-repo layer, the feature extractor, and the compiled rules hash; a request never mixes them
+- **Point-in-time scoring** — features, mined history, and the backtest use only data from before the PR opened, and only labels already mature at that moment
 - **Tenant fairness** — one monorepo pushing 500 PRs an hour must not starve a small team
 - **Training backpressure** — bounded job pool; excess requests queue or defer, never run
 - **Fail open, not closed** — if scoring fails, the PR still appears in the queue, unranked and flagged
 - **Explanation is optional** — the explainer's failure degrades quality only
+- **Nothing leaves by default** — outcome sharing is opt-in and off; when on, only anonymised feature vectors and outcomes leave, never code, diffs, or author identities
 
 ## Repository layout
 
@@ -91,18 +96,24 @@ riffle/
   services/
     intake/       Go, webhook front door
     scorer/       Python, feature extraction and ranking
-    explainer/    Python, LLM inference service
+    explainer/    Python, template and optional LLM explanations
     app/          TypeScript, GitHub App and dashboard
   pipelines/
     ingestion/    dataset download and normalisation
-    training/     per-tenant training, evaluation, promotion
+    training/     global model, per-repo layer fits, evaluation, promotion
+    backtest/     time-ordered replay against historical repos
     dags/         Airflow DAGs
+  libs/
+    features/     Python parsers and feature code, shared by scorer and pipelines
   contracts/      shared JSON schemas, the source of truth
   infra/
     docker/ k8s/ terraform/
   fixtures/       webhook payloads and a seed tenant
-  site/           the marketing page at riffle.dev
+    config/       example riffle.yml files
+  site/           the marketing page at rifffle.vercel.app
   docs/
+    handbook.md
+    adr/          one file per decision, numbered
 ```
 
 `contracts/` is the important directory. Any change to a schema there is a
@@ -139,15 +150,26 @@ gh webhook forward --repo=<org>/<test-repo> --events=pull_request \
   --url=http://localhost:8080/webhook
 ```
 
-**Training locally** — runs on CPU and should finish in minutes:
+**Training locally** — CPU only. Global training should finish in minutes and
+a per-repo layer fit in seconds:
 
 ```bash
-make train    TENANT=fixture
-make evaluate TENANT=fixture
-make promote  TENANT=fixture VERSION=<version>
+make train-global
+make fit-layer TENANT=fixture
+make evaluate  TENANT=fixture
+make promote   TENANT=fixture VERSION=<version>
+make backtest  REPO=<apache-project>
 ```
 
+Report backtest results as effort-aware recall and lift over FIFO, from
+time-ordered validation only.
+
 ## Contracts
+
+Every schema, rule kind, setting, and default is specified in
+[`contracts/README.md`](contracts/README.md) and
+[`contracts/REFERENCE.md`](contracts/REFERENCE.md). The two wire formats below
+are the ones every service touches.
 
 The event `intake` publishes and `scorer` consumes:
 
@@ -157,11 +179,15 @@ The event `intake` publishes and `scorer` consumes:
   "tenant_id":   "string, installation id",
   "repo":        "string, owner/name",
   "pr_number":   0,
-  "action":      "opened | synchronize | reopened",
+  "action":      "opened | synchronize | reopened | ready_for_review | edited | labeled | ci_completed",
   "head_sha":    "string",
   "received_at": "RFC3339 timestamp"
 }
 ```
+
+`action` covers every trigger `rescore.on` can enable. `ci_completed` is
+mapped by `intake` from the check suite event rather than a pull request
+action.
 
 The result `scorer` produces and `app` consumes:
 
@@ -172,7 +198,8 @@ The result `scorer` produces and `app` consumes:
   "pr_number":     0,
   "risk_score":    0.0,
   "rank_band":     "review_first | standard | senior_recommended",
-  "model_version": "string, pinned for this request",
+  "model_version": "string, global model + layer + extractor + rules hash, pinned for this request",
+  "layer_weight":  0.0,
   "features":      { "...": "the vector used, for audit" },
   "explanation":   "string or null when the explainer timed out",
   "scored_at":     "RFC3339 timestamp"
@@ -181,6 +208,10 @@ The result `scorer` produces and `app` consumes:
 
 `explanation` is nullable by design. A null means the explainer was slow or
 down — the rank is still valid.
+
+`layer_weight` is the per-repo layer's share of the score, from 0.0 to 1.0.
+It is 0.0 for a new repository, or one whose layer has fallen back, so the
+score is the global model's alone.
 
 ## Observability
 
@@ -195,16 +226,19 @@ all four services.
 | `riffle_explainer_timeouts_total` | How often we degrade to no explanation |
 | `riffle_queue_depth` | Drives KEDA autoscaling |
 | `riffle_tenant_model_auc` | Per-tenant ranking quality over time |
+| `riffle_tenant_layer_weight` | How much each per-repo layer contributes; zero means fallback |
 | `riffle_drift_score` | Feature distribution shift per tenant |
+| `riffle_training_jobs_active` | Running training jobs, against the bounded pool size |
+| `riffle_parser_failures_total` | Parser errors and timeouts, by parser; their features become `null` |
 
 ## Data
 
 | Dataset | Use |
 | --- | --- |
 | [AIDev](https://arxiv.org/html/2601.15195) | Primary training data. Agent-authored PRs with merge outcomes, CI results, reviewer interactions |
-| On the Shoulders of Giants | 69 engineered features for PR outcome prediction (MSR 2020) |
-| ApacheJIT | 106,674 commits, 28,239 labelled bug-inducing. Bootstraps the defect signal |
-| Live ingestion | Labels from merge, revert, and follow-up-fix history on connected repositories |
+| On the Shoulders of Giants | Engineered feature set for PR outcome prediction (MSR 2020) |
+| ApacheJIT | 106,674 commits, 28,239 labelled bug-inducing. Bootstraps the defect signal and supplies the backtest repositories |
+| Live ingestion | Labels from reverts, post-merge CI failures, and hotfixes on connected repositories ([ADR 0002](docs/adr/0002-label-target.md)). SZZ and follow-up fixes are mined and reported as ablations only |
 
 Raw downloads are never committed. DVC tracks them; pointer files are in git
 and the data lives in a bucket.
@@ -213,25 +247,34 @@ and the data lives in a bucket.
 
 | Environment | Where | Notes |
 | --- | --- | --- |
-| `local` | Docker Compose | Emulated Pub/Sub, no GPU, stub explainer by default |
-| `staging` | GKE, small pool | Real GitHub App on a test org, real Pub/Sub, one shared GPU node |
-| `prod` | GKE | One shared GPU node for the explainer; per-tenant training is CPU only |
+| `local` | Docker Compose | Emulated Pub/Sub, no GPU, template explainer by default |
+| `staging` | GKE, small pool | Real GitHub App on a test org, real Pub/Sub. A GPU node only when testing a self-hosted LLM, scaled to zero outside working hours |
+| `prod` | GKE | The Expo demo runs here. Global retraining and per-repo layer fits are CPU only; a shared GPU node is added only if `llm.provider` is `self_hosted` |
 
 ## Glossary
 
 | Term | Meaning here |
 | --- | --- |
-| **Tenant** | One GitHub App installation. Its own model, data, and metrics |
+| **Tenant** | One GitHub App installation. Shares the global model; has its own per-repo layer, data, and metrics |
+| **Global model** | The tree model trained on published datasets and opt-in shared outcomes. Serves every tenant from the first PR |
+| **Per-repo layer** | Calibration and adjustments fitted to one tenant's outcomes, applied on top of the global model |
 | **Rank band** | The three-way output: review first, standard, senior recommended |
-| **Promotion** | Moving a newly trained tenant model into serving after it beats its predecessor on that tenant's holdout |
-| **Fallback** | Serving the global base model when a tenant model is missing or underperforms |
+| **Promotion** | Moving a new global model or per-repo layer into serving after it beats its predecessor on holdout — the tenant's own holdout for a layer |
+| **Fallback** | Setting a tenant's `layer_weight` to 0, so the global model serves alone, when the layer is missing or makes ranking worse |
 | **Drift** | Feature distribution shift for a tenant, measured against the window its current model trained on |
+
+## Contributing
+
+Read [ADR 0003](docs/adr/0003-branch-and-merge-rules.md) and [`docs/adr/PROMPT.md`](docs/adr/PROMPT.md)
+before opening a pull request; both are required. Anything argued about for
+more than ten minutes becomes a numbered record in `docs/adr/`. Day-to-day
+conventions live in [`docs/handbook.md`](docs/handbook.md).
 
 ## Status
 
 Riffle is **in development** and not yet ready for production use. The
-architecture, contracts, and invariants above are settled; the
-implementation is in progress.
+architecture and invariants above are settled, the contracts are in
+review, and the implementation is in progress.
 
 ## License
 

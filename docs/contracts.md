@@ -1,10 +1,13 @@
 # Contracts version history
 
 Current versions are in each schema's `x-riffle-version`. Config files set
-`schema_version: "major.minor"`; any minor within the current major is accepted.
+`schema_version: "major.minor"`. Compatibility is decided by the config
+compiler, not the schema (ADR 0006): same major and a minor no newer than the
+schema is accepted; one major behind is accepted with deprecated keys mapped
+and a warning; anything else fails and the last valid config stays in force.
 
 Minor: adds optional keys or changes a default. Major: renames or removes keys;
-old keys stay accepted, marked deprecated, for one minor version.
+old keys are mapped for exactly one major, then rejected.
 
 ## `org_rules.schema.json`
 
@@ -34,3 +37,9 @@ Earlier drafts (1–4) were never merged and need no migration.
 | Version | Date | Changes |
 | --- | --- | --- |
 | 1.0 | 2026-09-29 | `POST /v1/outcomes` body |
+
+## `mined_history.schema.json`
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0 | 2026-09-29 | Go miner run manifest and six Parquet tables (ADR 0004) |
