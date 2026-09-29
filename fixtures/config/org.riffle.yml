@@ -1,0 +1,16 @@
+# our-org/.github  →  .github/riffle.yml   (org defaults)
+# yaml-language-server: $schema=../../contracts/org_config.schema.json
+schema_version: "5.0"
+organization:
+  outcome_sharing: { enabled: false }
+  data_retention: { store_diffs: false, retention_days: 180 }
+  label_prefix: riffle
+  locked_keys: ["/organization", "/llm/provider", "/llm/send"]
+scope:
+  quiet_authors: ["dependabot[bot]", "renovate[bot]", "release-bot"]
+llm:
+  provider: none
+  send: features_only
+availability: { timezone: America/New_York }
+reviewer_routing: { mode: suggest, use_codeowners: true }
+review_targets: { standard_hours: 8 }

@@ -1,0 +1,21 @@
+# our-org/our-repo  →  .github/riffle.yml
+# yaml-language-server: $schema=../../contracts/org_config.schema.json
+schema_version: "5.0"
+mode: active
+scope:
+  base_branches: ["develop", "release/.*"]
+  quiet_title_keywords: ["[skip riffle]"]      # union with org list
+rank_bands:
+  percentile: { senior_recommended_top_fraction: 0.05, review_first_top_fraction: 0.25 }
+floors:
+  paths:
+    - { pattern: "src/auth/**", min_band: senior_recommended }
+size:
+  large_pr_note: "This PR is large. Consider splitting it."
+reviewer_routing:
+  senior_reviewers: ["@divyam", "@our-org/backend-leads"]
+  groups:
+    - { name: frontend, paths: ["web/**"], reviewers: ["@our-org/frontend"] }
+  max_open_reviews_per_reviewer: 5
+availability:
+  users_unavailable: ["@rudr"]
