@@ -35,7 +35,7 @@
       }
     },
     "labels": {
-      "description": "How outcomes become the training target. Defaults follow docs/decisions/002-label-target.md. The global model always uses the default target_sources with binary union; org changes here apply only to that org's per-repo layer.",
+      "description": "How outcomes become the training target. Defaults follow docs/adr/0002-label-target.md. The global model always uses the default target_sources with binary union; org changes here apply only to that org's per-repo layer.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

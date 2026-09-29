@@ -87,4 +87,4 @@ JSON Schema ignores these; our loaders and compiler read them.
 ## Open decisions
 
 Band floors, union versus weighted labels, and the `downweight` value.
-Each gets a record in `docs/decisions/` before its default is final.
+Each gets a record in `docs/adr/` before its default is final.
