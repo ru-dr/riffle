@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://riffle.dev/contracts/org-config.schema.json",
+  "$id": "https://riffle.dev/contracts/org_config.schema.json",
   "title": "Riffle settings",
-  "description": "How the app behaves. Settings never change what the model sees or learns; those live in contracts/org-rules.schema.json and are pinned into model_version. Files: .github/riffle.yml in the org's .github repo (org defaults) and in each repo. Loading: built-in defaults, then org file, then repo file (repo wins), then organization.locked_keys restored from the org file. Files are read from the default branch only, so a PR cannot change the settings it is judged by. An invalid file never stops Riffle: the last valid settings stay in force and one neutral notice is posted. Arrays replace unless marked x-riffle-merge: union. Keys marked x-riffle-org-only are ignored in repo files. Every key has a default, so a file with only schema_version is valid.",
+  "description": "How the app behaves. Settings never change what the model sees or learns; those live in contracts/org_rules.schema.json and are pinned into model_version. Files: .github/riffle.yml in the org's .github repo (org defaults) and in each repo. Loading: built-in defaults, then org file, then repo file (repo wins), then organization.locked_keys restored from the org file. Files are read from the default branch only, so a PR cannot change the settings it is judged by. An invalid file never stops Riffle: the last valid settings stay in force and one neutral notice is posted. Arrays replace unless marked x-riffle-merge: union. Keys marked x-riffle-org-only are ignored in repo files. Every key has a default, so a file with only schema_version is valid.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -665,7 +665,7 @@
               "default": true
             }
           },
-          "description": "Mined evidence the narrator may cite (contracts/mined-features.schema.json)"
+          "description": "Mined evidence the narrator may cite (contracts/mined_features.schema.json)"
         }
       }
     },

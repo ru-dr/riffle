@@ -1,5 +1,5 @@
 # our-org/our-repo  →  .github/riffle.yml
-# yaml-language-server: $schema=../../contracts/org-config.schema.json
+# yaml-language-server: $schema=../../contracts/org_config.schema.json
 schema_version: "5.0"
 mode: active
 scope:

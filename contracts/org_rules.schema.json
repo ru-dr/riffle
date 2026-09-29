@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://riffle.dev/contracts/org-rules.schema.json",
+  "$id": "https://riffle.dev/contracts/org_rules.schema.json",
   "title": "Riffle rules",
   "description": "How an organisation manages its code, as flat typed rules (kind + match + value). Orgs may write any number of rules, but the compiler always reduces them to the fixed column set in x-riffle-model-columns. Undeclared means null, never 0. Adding a column is a schema version bump, a retrain, and a decision record. Rules are read point-in-time from git history of the rules file, and the compiled hash is pinned into model_version. Read from the default branch only; an invalid file keeps the last valid compiled rules and posts a notice. Org file: riffle/rules.yml in the org's .github repo. Repo file: .github/riffle/rules.yml, appended after org rules and limited to that repo.",
   "type": "object",
@@ -84,7 +84,7 @@
       }
     },
     "mining": {
-      "description": "Parameters for the mined, repo-local features in contracts/mined-features.schema.json. They change model inputs, so they are part of the compiled rules hash pinned into model_version. Every value has a default; most repos never set this block.",
+      "description": "Parameters for the mined, repo-local features in contracts/mined_features.schema.json. They change model inputs, so they are part of the compiled rules hash pinned into model_version. Every value has a default; most repos never set this block.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -386,7 +386,7 @@
           }
         },
         "outcome_import": {
-          "description": "Lets an org push outcomes Riffle cannot see (internal incidents, internal reverts) to POST /v1/outcomes, keyed by commit SHA or PR. Contract: contracts/outcome-import.schema.json.",
+          "description": "Lets an org push outcomes Riffle cannot see (internal incidents, internal reverts) to POST /v1/outcomes, keyed by commit SHA or PR. Contract: contracts/outcome_import.schema.json.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -563,8 +563,8 @@
       "unevaluatedProperties": false,
       "x-riffle-sink": "feature",
       "x-riffle-compiles-to": [
-        "max_path_tier",
-        "share_critical_lines"
+        "max_criticality",
+        "frac_lines_in_critical"
       ]
     },
     "path_class": {
@@ -761,8 +761,8 @@
       "unevaluatedProperties": false,
       "x-riffle-sink": "feature",
       "x-riffle-compiles-to": [
-        "author_owns_paths_share",
-        "owning_teams_touched"
+        "author_is_owner",
+        "owning_teams_touched (extractor, not a declared column)"
       ]
     },
     "pattern": {
@@ -1069,10 +1069,8 @@
       "unevaluatedProperties": false,
       "x-riffle-sink": "feature",
       "x-riffle-compiles-to": [
-        "agent_authored",
-        "author_is_maintainer",
-        "author_is_external",
-        "author_is_new"
+        "agent_in_critical",
+        "author_is_maintainer, author_is_external, author_is_new (extractor)"
       ]
     },
     "ci_check": {
@@ -1226,7 +1224,7 @@
       "unevaluatedProperties": false,
       "x-riffle-sink": "feature | label",
       "x-riffle-compiles-to": [
-        "target_branch_class"
+        "targets_release_branch"
       ]
     },
     "stack": {
@@ -1541,5 +1539,5 @@
     "label_priority": "0-3 from pr_label priority, null if unlabeled",
     "is_safe_change_only": "every changed line falls in a declared safe_change kind"
   },
-  "x-riffle-mined-columns": "See contracts/mined-features.schema.json. Mined columns are always present for every repo, including training repos; declared columns (x-riffle-model-columns) are null unless an org writes rules."
+  "x-riffle-mined-columns": "See contracts/mined_features.schema.json. Mined columns are always present for every repo, including training repos; declared columns (x-riffle-model-columns) are null unless an org writes rules."
 }
