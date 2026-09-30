@@ -20,5 +20,5 @@ const markLoaded = (img: HTMLImageElement | null) => {
 export const fadeIn = {
   ref: markLoaded,
   onLoad: (e: { currentTarget: HTMLImageElement }) => e.currentTarget.classList.add("is-loaded"),
-  className: "v2-fade",
+  className: "rf-fade",
 } as const;

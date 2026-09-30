@@ -41,7 +41,7 @@ export function Spacer({ dark = false }: { dark?: boolean }) {
     <section
       aria-hidden="true"
       data-surface={dark ? "dark" : undefined}
-      className="v2-wrapper v2-ticks h-16 border-t sm:h-[7.5rem]"
+      className="rf-wrapper rf-ticks h-16 border-t sm:h-[7.5rem]"
       style={{ borderColor: dark ? T.nickel : T.stroke }}
     />
   );
@@ -51,7 +51,7 @@ export function Spacer({ dark = false }: { dark?: boolean }) {
 export function Provenance() {
   return (
     <section
-      className="v2-wrapper v2-ticks flex flex-col items-center justify-center gap-6 border-t pt-10 pb-10 md:pt-14"
+      className="rf-wrapper rf-ticks flex flex-col items-center justify-center gap-6 border-t pt-10 pb-10 md:pt-14"
       style={{ borderColor: T.stroke }}
     >
       <p data-anim="rise" className="text-center font-geist text-[16px] text-balance" style={{ color: T.nickel }}>
@@ -77,7 +77,7 @@ const LANG_DOMAIN: Record<string, string> = {
 export function ServicesBlock() {
   return (
     <div data-surface="dark" style={{ backgroundColor: T.darkBg }}>
-      <section className="v2-wrapper px-6 py-5 md:px-10">
+      <section className="rf-wrapper px-6 py-5 md:px-10">
         <p className="font-geist text-[16px] font-medium" style={{ color: T.darkInk }}>
           Services
         </p>
@@ -85,7 +85,7 @@ export function ServicesBlock() {
 
       <section
         id="architecture"
-        className="v2-wrapper v2-ticks border-t px-6 py-16 md:px-10 md:py-24"
+        className="rf-wrapper rf-ticks border-t px-6 py-16 md:px-10 md:py-24"
         style={{ borderColor: T.nickel }}
       >
         <h2 data-anim="rise" className={H2} style={{ color: T.darkInk }}>
@@ -102,7 +102,7 @@ export function ServicesBlock() {
         </p>
       </section>
 
-      <section className="v2-wrapper v2-ticks flex flex-col border-t md:flex-row" style={{ borderColor: T.nickel }}>
+      <section className="rf-wrapper rf-ticks flex flex-col border-t md:flex-row" style={{ borderColor: T.nickel }}>
         <div className="hidden shrink-0 border-r px-6 py-10 md:block md:w-[15.5rem] md:px-10" style={{ borderColor: T.nickel }}>
           <ul className="sticky top-10 flex flex-col gap-4">
             {SERVICE_PANELS.map((s, i) => (
@@ -157,7 +157,7 @@ export function ServicesBlock() {
                   <p className="font-geist text-[16px] leading-[1.55] text-pretty" style={{ color: T.darkNickel }}>
                     {s.body}
                   </p>
-                  <a href={`${REPO}#architecture`} className="v2-btn v2-btn--sm mt-5 w-fit">
+                  <a href={`${REPO}#architecture`} className="rf-btn rf-btn--sm mt-5 w-fit">
                     Explore {s.name}
                   </a>
                 </div>
@@ -234,7 +234,7 @@ function Artwork({
           <div className="flex-1 rounded-tl-[7px] px-5 py-7 xl:px-7" style={{ backgroundColor: "#1a1b20" }}>
             {/* On phones long lines scroll sideways; the fade at the right
                 edge says so, where a hard cut would read as a clipping bug. */}
-            <pre className="v2-noscrollbar overflow-x-auto font-mono text-[11px] leading-[1.9] max-sm:[mask-image:linear-gradient(90deg,#000_82%,transparent)] xl:text-[13px] xl:leading-[2]">
+            <pre className="rf-noscrollbar overflow-x-auto font-mono text-[11px] leading-[1.9] max-sm:[mask-image:linear-gradient(90deg,#000_82%,transparent)] xl:text-[13px] xl:leading-[2]">
               {code.map((line, i) => (
                 <div key={i}>
                   {line.length === 0
@@ -281,7 +281,7 @@ function Artwork({
           <pre
             className={
               dense
-                ? "v2-noscrollbar overflow-x-auto font-mono text-[11px] leading-[1.9] xl:text-[13px] xl:leading-[2]"
+                ? "rf-noscrollbar overflow-x-auto font-mono text-[11px] leading-[1.9] xl:text-[13px] xl:leading-[2]"
                 : "overflow-hidden font-mono text-[13px] leading-[2]"
             }
           >
@@ -323,7 +323,7 @@ export function StatsBand() {
   // No top rule: coming out of the dark block the page goes straight into
   // this heading, and the first rule sits beneath it — as the reference does.
   return (
-    <section className="v2-wrapper">
+    <section className="rf-wrapper">
       <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
         <h3 data-anim="rise" className={`${H3} max-w-[28rem]`}>
           {STATS.headline}
@@ -411,7 +411,7 @@ export function StatsBand() {
               {source && (
                 <>
                   {" "}
-                  <a href={source} target="_blank" rel="noopener noreferrer" className="v2-link underline decoration-[#e5e4e7] underline-offset-[3px] whitespace-nowrap">
+                  <a href={source} target="_blank" rel="noopener noreferrer" className="rf-link underline decoration-[#e5e4e7] underline-offset-[3px] whitespace-nowrap">
                     Kamei et al., 2016&nbsp;&#8599;
                   </a>
                 </>
@@ -428,13 +428,13 @@ export function MissionPanel() {
   return (
     <>
       <section
-        className="v2-wrapper v2-ticks flex flex-col items-center gap-8 border-t px-6 py-20 text-center md:py-28"
+        className="rf-wrapper rf-ticks flex flex-col items-center gap-8 border-t px-6 py-20 text-center md:py-28"
         style={{ borderColor: T.stroke, backgroundColor: T.beige }}
       >
         <h3 data-anim="rise" className={`${H3} max-w-[44rem] md:text-[2.25rem]`}>
           {MISSION}
         </h3>
-        <a data-anim="rise" href={`${REPO}#what-riffle-does`} className="v2-btn v2-btn--sm">
+        <a data-anim="rise" href={`${REPO}#what-riffle-does`} className="rf-btn rf-btn--sm">
           Learn more
         </a>
       </section>
@@ -443,7 +443,7 @@ export function MissionPanel() {
           without one each cell falls back to the name, so the row never
           renders broken images. Labelled as research, not backing, because
           none of these organisations endorse Riffle. */}
-      <section className="v2-wrapper v2-ticks grid grid-cols-2 border-t md:grid-cols-3 lg:grid-cols-6 lg:divide-x" style={{ borderColor: T.stroke }}>
+      <section className="rf-wrapper rf-ticks grid grid-cols-2 border-t md:grid-cols-3 lg:grid-cols-6 lg:divide-x" style={{ borderColor: T.stroke }}>
         <p className="col-span-full flex items-center p-6 font-geist text-[14px] leading-[1.45] lg:col-span-1 lg:p-8" style={{ color: T.nickel }}>
           Research this
           <br className="max-lg:hidden" /> builds on
@@ -480,7 +480,7 @@ export function MissionPanel() {
 
 export function InvariantsSection() {
   return (
-    <section id="invariants" className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.stroke }}>
+    <section id="invariants" className="rf-wrapper rf-ticks border-t" style={{ borderColor: T.stroke }}>
       <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
         <p data-anim="rise" className={LABEL} style={{ color: T.grey }}>
           Invariants
@@ -562,13 +562,13 @@ const CONTRACTS = [
 export function ContractsSection() {
   return (
     <div data-surface="dark" style={{ backgroundColor: T.darkBg }}>
-      <section id="contracts" className="v2-wrapper px-6 py-5 md:px-10">
+      <section id="contracts" className="rf-wrapper px-6 py-5 md:px-10">
         <p className="font-geist text-[16px] font-medium" style={{ color: T.darkInk }}>
           Contracts
         </p>
       </section>
 
-      <section className="v2-wrapper v2-ticks border-t px-6 py-16 md:px-10 md:py-24" style={{ borderColor: T.nickel }}>
+      <section className="rf-wrapper rf-ticks border-t px-6 py-16 md:px-10 md:py-24" style={{ borderColor: T.nickel }}>
         <h2 data-anim="rise" className={H2} style={{ color: T.darkInk }}>
           Two shapes cross every boundary
         </h2>
@@ -582,7 +582,7 @@ export function ContractsSection() {
         </p>
       </section>
 
-      <section className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.nickel }}>
+      <section className="rf-wrapper rf-ticks border-t" style={{ borderColor: T.nickel }}>
         {CONTRACTS.map((c, i) => (
           <div
             key={c.id}
@@ -631,13 +631,13 @@ export function ResourcesGrid() {
   return (
     // Follows the dark contracts block, so no rule at the boundary — the edge
     // of the dark surface is the break, as after services.
-    <section className="v2-wrapper grid grid-cols-1 lg:grid-cols-10 lg:divide-x">
+    <section className="rf-wrapper grid grid-cols-1 lg:grid-cols-10 lg:divide-x">
       <div className="flex flex-col divide-y lg:col-span-4" style={{ borderColor: T.stroke }}>
         <div className="flex flex-col justify-center gap-6 p-5 md:p-10 lg:h-72 lg:justify-start lg:gap-10" style={{ borderColor: T.stroke }}>
           <h3 data-anim="rise" className={H3}>
             Reference &amp; internals
           </h3>
-          <a data-anim="rise" href={`${REPO}#readme`} className="v2-btn w-fit">
+          <a data-anim="rise" href={`${REPO}#readme`} className="rf-btn w-fit">
             All docs
           </a>
         </div>
@@ -707,7 +707,7 @@ export function ClosingBlock() {
     // At least a full viewport: the link row grows to take the slack, so the
     // copyright rule always sits on the bottom edge on any screen height.
     <footer data-surface="dark" className="flex min-h-dvh flex-col" style={{ backgroundColor: T.darkBg }}>
-      <section className="v2-wrapper flex w-full flex-1 flex-col">
+      <section className="rf-wrapper flex w-full flex-1 flex-col">
         <div className="grid grid-cols-1 items-center gap-10 px-5 py-10 text-center md:px-10 md:py-[7.5rem] lg:grid-cols-2 lg:items-start lg:gap-16 lg:text-left">
           <div className="mx-auto max-w-xl lg:mx-0">
             {/* Two lines on a fixed 60px rhythm (lg), matching the two rows on
@@ -786,7 +786,7 @@ export function ClosingBlock() {
                 <ul className="flex flex-col gap-4">
                   {links.map(([label, href]) => (
                     <li key={label}>
-                      <a href={href} className="v2-link font-geist text-[18px]" style={{ color: "#fff" }}>
+                      <a href={href} className="rf-link font-geist text-[18px]" style={{ color: "#fff" }}>
                         {label}
                       </a>
                     </li>
@@ -801,7 +801,7 @@ export function ClosingBlock() {
             </p>
             <ul className="flex flex-col gap-4">
               <li>
-                <a href={REPO} className="v2-link flex items-center gap-3 font-geist text-[18px]" style={{ color: "#fff" }}>
+                <a href={REPO} className="rf-link flex items-center gap-3 font-geist text-[18px]" style={{ color: "#fff" }}>
                   <svg viewBox="0 0 16 16" className="size-[18px]" fill="currentColor" aria-hidden="true">
                     <path d={GITHUB_PATH} />
                   </svg>
@@ -816,7 +816,7 @@ export function ClosingBlock() {
       <section
         // w-full: inside the footer's flex column an auto-margined wrapper
         // shrinks to its text, which cut the rule and ticks down to a stub.
-        className="v2-wrapper v2-ticks flex w-full flex-col items-center justify-between gap-3 border-t px-5 py-5 text-center md:flex-row md:gap-0 md:px-24 md:text-left"
+        className="rf-wrapper rf-ticks flex w-full flex-col items-center justify-between gap-3 border-t px-5 py-5 text-center md:flex-row md:gap-0 md:px-24 md:text-left"
         style={{ borderColor: T.nickel }}
       >
         <p className="font-geist text-[15px]" style={{ color: T.grey }}>

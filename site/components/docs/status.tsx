@@ -7,7 +7,7 @@ import type { DocStatus } from "./registry";
 const STYLE: Record<DocStatus, { label: string; color: string; bg: string }> = {
   accepted: { label: "Accepted", color: "#16a34a", bg: "rgba(22,163,74,0.12)" },
   proposed: { label: "Proposed", color: "#d97706", bg: "rgba(217,119,6,0.12)" },
-  planned: { label: "Planned", color: "var(--v2-nickel)", bg: "var(--v2-wash)" },
+  planned: { label: "Planned", color: "var(--rf-nickel)", bg: "var(--rf-wash)" },
   generated: { label: "Generated from schemas", color: "#3b82f6", bg: "rgba(59,130,246,0.12)" },
   draft: { label: "Draft", color: "#dc2626", bg: "rgba(220,38,38,0.1)" },
 };

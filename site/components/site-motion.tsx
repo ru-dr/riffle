@@ -18,7 +18,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 // background-clip:text, and Chromium stops painting that background through
 // descendants that get their own compositing layer — so transforming the two
 // lines individually left the headline transparent over nothing.
-export function V2Motion() {
+export function SiteMotion() {
   // Behaviour that is not decoration, so it runs whatever the motion
   // preference or the state of the page's motion gate: smooth scrolling,
   // anchor navigation, and the services rail following the row in view.
@@ -119,8 +119,8 @@ export function V2Motion() {
       // unit is the section wrapper; a dark block's own background is not
       // faded, so the light page never shows through it.
       const sections = gsap.utils
-        .toArray<HTMLElement>("[data-riffle-light] .v2-wrapper")
-        .filter((el) => !el.closest("header") && !el.classList.contains("v2-hero") && el.tagName !== "HEADER");
+        .toArray<HTMLElement>("[data-riffle-light] .rf-wrapper")
+        .filter((el) => !el.closest("header") && !el.classList.contains("rf-hero") && el.tagName !== "HEADER");
       gsap.set(sections, { opacity: 0 });
       ScrollTrigger.batch(sections, {
         // 98%, not less: the copyright bar at the page's end can never scroll

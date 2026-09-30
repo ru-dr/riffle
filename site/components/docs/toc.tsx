@@ -25,20 +25,29 @@ export function Toc({ headings }: { headings: Heading[] }) {
 
   if (!headings.length) return null;
   return (
-    <nav aria-label="On this page" className="v2-noscrollbar sticky top-0 max-h-svh overflow-y-auto py-10 pr-6 pl-6">
-      <p className="mb-3 font-mono text-[11px] tracking-[0.08em] uppercase" style={{ color: "var(--v2-grey)" }}>
+    <nav aria-label="On this page" className="rf-noscrollbar sticky top-0 max-h-svh overflow-y-auto py-10 pr-6 pl-6">
+      <p className="mb-3 flex items-center gap-2 font-mono text-[11px] tracking-[0.08em] uppercase" style={{ color: "var(--rf-grey)" }}>
+        <svg viewBox="0 0 16 16" className="size-[13px]" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+          <path d="M6 3.5h8M6 8h8M6 12.5h8" />
+          <circle cx="2.5" cy="3.5" r=".9" fill="currentColor" stroke="none" />
+          <circle cx="2.5" cy="8" r=".9" fill="currentColor" stroke="none" />
+          <circle cx="2.5" cy="12.5" r=".9" fill="currentColor" stroke="none" />
+        </svg>
         On this page
       </p>
-      <ul className="flex flex-col gap-2 border-l" style={{ borderColor: "var(--v2-stroke)" }}>
+      {/* No rail: level carries through indentation alone, and long titles
+          truncate to one line so the outline keeps its rhythm. */}
+      <ul className="flex flex-col">
         {headings.map((h) => (
           <li key={h.id}>
             <a
               href={`#${h.id}`}
-              className="-ml-px block border-l font-geist text-[13px] leading-[1.4] transition-colors"
+              title={h.text}
+              className="block truncate py-[5px] font-geist text-[13.5px] leading-[1.35] transition-colors hover:text-[var(--rf-ink)]"
               style={{
-                paddingLeft: h.depth === 3 ? "1.75rem" : "1rem",
-                borderColor: active === h.id ? "var(--v2-ink)" : "transparent",
-                color: active === h.id ? "var(--v2-ink)" : "var(--v2-grey)",
+                paddingLeft: h.depth === 3 ? "1rem" : 0,
+                color: active === h.id ? "var(--rf-ink)" : "var(--rf-grey)",
+                fontWeight: active === h.id ? 500 : 400,
               }}
             >
               {h.text}

@@ -16,14 +16,12 @@ light, so it can be refitted often and cheaply.
 
 ## How the repository layer earns its weight
 
-```text
-layer_weight
-   1.0 ┤                          ╭──────────
-       │                     ╭────╯
-       │               ╭─────╯
-       │         ╭─────╯
-   0.0 ┼─────────╯
-       └────────────────────────────────────▶ mature labels
+```mermaid
+%% caption: Illustrative shape only. How layer_weight grows is still open.
+xychart-beta
+  x-axis "mature labels" [none, ·, ·, ·, ·, ·, ·, ·, many]
+  y-axis "layer_weight" 0 --> 1
+  line [0, 0.02, 0.07, 0.2, 0.45, 0.72, 0.88, 0.96, 0.99]
 ```
 
 - `layer_weight` starts at `0.0` and grows with the number of mature labels.

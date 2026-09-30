@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeSlug from "rehype-slug";
 import remarkGfm from "remark-gfm";
 import { CopyButton } from "./copy-button";
+import { Diagram } from "./diagram";
 import { highlight } from "./highlight";
 
 // Renders a docs page's markdown in the site's own vocabulary: Geist for
@@ -40,7 +41,7 @@ function textOf(node: unknown): string {
 }
 
 const CALLOUT: Record<string, string> = {
-  planned: "var(--v2-grey)",
+  planned: "var(--rf-grey)",
   proposed: "#d97706",
   accepted: "#16a34a",
   draft: "#dc2626",
@@ -51,7 +52,7 @@ const components: Components = {
     <h2
       id={id}
       className="group mt-14 scroll-mt-24 border-t pt-8 font-geist text-[1.6rem] leading-[1.2] font-medium tracking-[-0.025em] first:mt-0"
-      style={{ borderColor: "var(--v2-stroke)", color: "var(--v2-ink)" }}
+      style={{ borderColor: "var(--rf-stroke)", color: "var(--rf-ink)" }}
     >
       <a href={`#${id}`} className="no-underline">
         {children}
@@ -59,24 +60,24 @@ const components: Components = {
     </h2>
   ),
   h3: ({ children, id }) => (
-    <h3 id={id} className="mt-10 scroll-mt-24 font-geist text-[1.2rem] font-medium tracking-[-0.015em]" style={{ color: "var(--v2-ink)" }}>
+    <h3 id={id} className="mt-10 scroll-mt-24 font-geist text-[1.2rem] font-medium tracking-[-0.015em]" style={{ color: "var(--rf-ink)" }}>
       <a href={`#${id}`} className="no-underline">
         {children}
       </a>
     </h3>
   ),
   h4: ({ children, id }) => (
-    <h4 id={id} className="mt-8 scroll-mt-24 font-mono text-[14px]" style={{ color: "var(--v2-ink)" }}>
+    <h4 id={id} className="mt-8 scroll-mt-24 font-mono text-[14px]" style={{ color: "var(--rf-ink)" }}>
       {children}
     </h4>
   ),
   p: ({ children }) => (
-    <p className="my-5 font-geist text-[16px] leading-[1.75]" style={{ color: "var(--v2-nickel)" }}>
+    <p className="my-5 font-geist text-[16px] leading-[1.75]" style={{ color: "var(--rf-nickel)" }}>
       {children}
     </p>
   ),
   strong: ({ children }) => (
-    <strong className="font-medium" style={{ color: "var(--v2-ink)" }}>
+    <strong className="font-medium" style={{ color: "var(--rf-ink)" }}>
       {children}
     </strong>
   ),
@@ -93,38 +94,38 @@ const components: Components = {
         </span>
       </a>
     ),
-  ul: ({ children }) => <ul className="my-5 space-y-2 pl-5 font-geist text-[16px] leading-[1.7] marker:text-[var(--v2-grey)] [list-style:disc]" style={{ color: "var(--v2-nickel)" }}>{children}</ul>,
-  ol: ({ children }) => <ol className="my-5 space-y-2 pl-5 font-geist text-[16px] leading-[1.7] [list-style:decimal]" style={{ color: "var(--v2-nickel)" }}>{children}</ol>,
+  ul: ({ children }) => <ul className="my-5 space-y-2 pl-5 font-geist text-[16px] leading-[1.7] marker:text-[var(--rf-grey)] [list-style:disc]" style={{ color: "var(--rf-nickel)" }}>{children}</ul>,
+  ol: ({ children }) => <ol className="my-5 space-y-2 pl-5 font-geist text-[16px] leading-[1.7] [list-style:decimal]" style={{ color: "var(--rf-nickel)" }}>{children}</ol>,
   li: ({ children }) => <li className="pl-1">{children}</li>,
   blockquote: ({ children }) => {
     // Callouts: a hairline box with an inset accent bar. The bar's colour
     // follows the note's leading label - Planned, Proposed, Accepted.
     const label = textOf(children).trim().split(/[.\s]/)[0].toLowerCase();
-    const bar = CALLOUT[label] ?? "var(--v2-accent)";
+    const bar = CALLOUT[label] ?? "var(--rf-accent)";
     return (
       <aside
         className="docs-callout relative my-7 rounded-md border py-3.5 pr-5 pl-6"
-        style={{ borderColor: "var(--v2-stroke)", backgroundColor: "var(--v2-wash)" }}
+        style={{ borderColor: "var(--rf-stroke)", backgroundColor: "var(--rf-wash)" }}
       >
         <span aria-hidden="true" className="absolute top-3 bottom-3 left-0 w-[3px] rounded-r-full" style={{ backgroundColor: bar }} />
         {children}
       </aside>
     );
   },
-  hr: () => <hr className="my-12" style={{ borderColor: "var(--v2-stroke)" }} />,
+  hr: () => <hr className="my-12" style={{ borderColor: "var(--rf-stroke)" }} />,
   table: ({ children }) => (
-    <div className="my-7 overflow-x-auto rounded-md" style={{ outline: `1px solid var(--v2-stroke)` }}>
+    <div className="my-7 overflow-x-auto rounded-md" style={{ outline: `1px solid var(--rf-stroke)` }}>
       <table className="w-full border-collapse text-left">{children}</table>
     </div>
   ),
-  thead: ({ children }) => <thead style={{ backgroundColor: "var(--v2-wash)" }}>{children}</thead>,
+  thead: ({ children }) => <thead style={{ backgroundColor: "var(--rf-wash)" }}>{children}</thead>,
   th: ({ children }) => (
-    <th className="border-b px-4 py-2.5 font-mono text-[11px] font-normal tracking-[0.06em] whitespace-nowrap uppercase" style={{ borderColor: "var(--v2-stroke)", color: "var(--v2-grey)" }}>
+    <th className="border-b px-4 py-2.5 font-mono text-[11px] font-normal tracking-[0.06em] whitespace-nowrap uppercase" style={{ borderColor: "var(--rf-stroke)", color: "var(--rf-grey)" }}>
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="border-b px-4 py-3 align-top font-geist text-[14px] leading-[1.55]" style={{ borderColor: "var(--v2-stroke)", color: "var(--v2-nickel)" }}>
+    <td className="border-b px-4 py-3 align-top font-geist text-[14px] leading-[1.55]" style={{ borderColor: "var(--rf-stroke)", color: "var(--rf-nickel)" }}>
       {children}
     </td>
   ),
@@ -133,7 +134,7 @@ const components: Components = {
     // everything reaching here without one is inline code.
     if (className?.startsWith("language-")) return <code className={className}>{children}</code>;
     return (
-      <code className="rounded-[4px] px-[0.35em] py-[0.1em] font-mono text-[0.86em]" style={{ backgroundColor: "var(--v2-wash)", color: "var(--v2-ink)" }}>
+      <code className="rounded-[4px] px-[0.35em] py-[0.1em] font-mono text-[0.86em]" style={{ backgroundColor: "var(--rf-wash)", color: "var(--rf-ink)" }}>
         {children}
       </code>
     );
@@ -142,6 +143,7 @@ const components: Components = {
     const child = Array.isArray(children) ? children[0] : children;
     const props = (child as { props?: { className?: string; children?: unknown } })?.props ?? {};
     const lang = /language-(\w+)/.exec(props.className ?? "")?.[1];
+    if (lang === "mermaid") return <Diagram source={String(props.children ?? "")} />;
     return <CodeBlock code={String(props.children ?? "")} lang={lang} />;
   },
 };

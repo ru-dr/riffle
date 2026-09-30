@@ -18,13 +18,13 @@ const DOCS_NAV = [
 
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div data-riffle-light data-docs className="min-h-dvh" style={{ backgroundColor: "var(--v2-bg)", color: "var(--v2-ink)" }}>
+    <div data-riffle-light data-docs className="min-h-dvh" style={{ backgroundColor: "var(--rf-bg)", color: "var(--rf-ink)" }}>
       <SiteHeader links={DOCS_NAV} section="Docs" actions={<ThemeSwitch />} />
       <div
-        className="v2-wrapper v2-ticks grid border-t lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_15rem]"
-        style={{ borderColor: "var(--v2-stroke)" }}
+        className="rf-wrapper rf-ticks grid border-t lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_15rem]"
+        style={{ borderColor: "var(--rf-stroke)" }}
       >
-        <aside className="hidden border-r lg:block" style={{ borderColor: "var(--v2-stroke)" }}>
+        <aside className="hidden border-r lg:block" style={{ borderColor: "var(--rf-stroke)" }}>
           <Sidebar />
         </aside>
         <div className="contents">
@@ -34,11 +34,11 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
           {children}
         </div>
       </div>
-      <footer className="v2-wrapper v2-ticks flex flex-wrap items-center justify-between gap-3 border-t px-6 py-6 md:px-10" style={{ borderColor: "var(--v2-stroke)" }}>
-        <p className="font-geist text-[13px]" style={{ color: "var(--v2-grey)" }}>
+      <footer className="rf-wrapper rf-ticks flex flex-wrap items-center justify-between gap-3 border-t px-6 py-6 md:px-10" style={{ borderColor: "var(--rf-stroke)" }}>
+        <p className="font-geist text-[13px]" style={{ color: "var(--rf-grey)" }}>
           &copy; 2026 Riffle contributors. Apache-2.0.
         </p>
-        <p className="font-mono text-[11px] tracking-[0.04em]" style={{ color: "var(--v2-grey)" }}>
+        <p className="font-mono text-[11px] tracking-[0.04em]" style={{ color: "var(--rf-grey)" }}>
           Riffle is in development. These docs track the settled design.
         </p>
       </footer>

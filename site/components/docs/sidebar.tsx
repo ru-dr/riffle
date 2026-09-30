@@ -15,11 +15,11 @@ function Item({ href, label, active, onNavigate }: { href: string; label: string
       href={href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
-      className="block rounded-md px-3 py-[7px] font-geist text-[14px] leading-[1.35] transition-colors hover:bg-[var(--v2-wash)]"
+      className="block truncate rounded-md px-3 py-[6px] font-geist text-[14px] leading-[1.35] transition-colors hover:bg-[var(--rf-wash)]"
       style={
         active
-          ? { backgroundColor: "var(--v2-surface)", outline: "1px solid var(--v2-stroke)", color: "var(--v2-ink)", fontWeight: 500 }
-          : { color: "var(--v2-nickel)" }
+          ? { backgroundColor: "var(--rf-surface)", outline: "1px solid var(--rf-stroke)", color: "var(--rf-ink)", fontWeight: 500 }
+          : { color: "var(--rf-nickel)" }
       }
     >
       {label}
@@ -36,13 +36,13 @@ function Tree({ onNavigate }: { onNavigate?: () => void }) {
       </div>
       {SECTIONS.map((s, i) => (
         <div key={s.id}>
-          <p className="mb-1.5 flex items-baseline gap-2 font-geist text-[13px] font-medium" style={{ color: "var(--v2-ink)" }}>
-            <span className="font-mono text-[10.5px] font-normal" style={{ color: "var(--v2-grey)" }}>
+          <p className="mb-1.5 flex items-baseline gap-2 font-geist text-[13px] font-medium" style={{ color: "var(--rf-ink)" }}>
+            <span className="font-mono text-[10.5px] font-normal" style={{ color: "var(--rf-grey)" }}>
               {String(i + 1).padStart(2, "0")}
             </span>
             {s.title}
           </p>
-          <ul className="-mx-3 flex flex-col gap-px">
+          <ul className="flex flex-col gap-px pl-2">
             {s.pages.map((p) => {
               const href = `/docs/${p.slug}`;
               return (
@@ -60,7 +60,7 @@ function Tree({ onNavigate }: { onNavigate?: () => void }) {
 
 export function Sidebar() {
   return (
-    <div className="v2-noscrollbar sticky top-0 max-h-svh overflow-y-auto px-7 py-10">
+    <div className="rf-noscrollbar sticky top-0 max-h-svh overflow-y-auto px-7 py-10">
       <Tree />
     </div>
   );
@@ -69,13 +69,13 @@ export function Sidebar() {
 export function MobileSections() {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border-b lg:hidden" style={{ borderColor: "var(--v2-stroke)" }}>
+    <div className="border-b lg:hidden" style={{ borderColor: "var(--rf-stroke)" }}>
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center justify-between px-6 py-3.5 font-mono text-[12px] tracking-[0.06em] uppercase"
-        style={{ color: "var(--v2-nickel)" }}
+        style={{ color: "var(--rf-nickel)" }}
       >
         Sections
         <span aria-hidden="true" style={{ transform: `rotate(${open ? 180 : 0}deg)`, transition: "transform 200ms ease" }}>

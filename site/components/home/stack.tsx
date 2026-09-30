@@ -178,6 +178,13 @@ export function Stack() {
     return () => clearInterval(id);
   }, [ready]);
 
+  // The headline's glow follows the live layer's tone.
+  useEffect(() => {
+    const hero = root.current?.closest<HTMLElement>(".rf-hero");
+    if (!hero || active < 0) return;
+    hero.style.setProperty("--rf-glow", LAYERS[active].tone[1]);
+  }, [active]);
+
   // A spark runs the live leader from the pill into the slab.
   useEffect(() => {
     if (active < 0 || !root.current) return;
@@ -213,10 +220,10 @@ export function Stack() {
         stack itself (x 280-720, y 20-520 of the 1000x600 drawing) and the
         live layer's label moves underneath. CSS sizing only: the server
         render is already correct on a phone, with no jump on hydration. */}
-    <div ref={root} className="v2-stack relative mx-auto w-full max-w-[64rem] overflow-hidden sm:overflow-visible">
+    <div ref={root} className="rf-stack relative mx-auto w-full max-w-[64rem] overflow-hidden sm:overflow-visible">
       <svg
         viewBox="0 0 1000 600"
-        className="v2-stack-svg absolute overflow-visible"
+        className="rf-stack-svg absolute overflow-visible"
         role="img"
         aria-label="Riffle's architecture as a stack: app, explainer, scorer and intake resting on shared contracts."
       >
@@ -264,7 +271,7 @@ export function Stack() {
                 <g key={l.key}>
                   {/* Dotted rest line, flowing toward the stack. */}
                   <line
-                    className={left ? "v2-flow-r" : "v2-flow-l"}
+                    className={left ? "rf-flow-r" : "rf-flow-l"}
                     x1={x1}
                     x2={x2}
                     y1={edgeY(i)}
@@ -371,7 +378,7 @@ export function Stack() {
                 even padding around a mark and a word. Live darkens the
                 outline and the ink; the drawn leader does the rest. */}
             <span
-              className="v2-pill inline-flex cursor-default items-center rounded-full font-mono leading-none tracking-[0.1em] whitespace-nowrap uppercase"
+              className="rf-pill inline-flex cursor-default items-center rounded-full font-mono leading-none tracking-[0.1em] whitespace-nowrap uppercase"
               style={{
                 backgroundColor: "#ffffff",
                 outline: `1px solid ${live ? "rgba(22,23,29,0.24)" : T.stroke}`,
@@ -389,7 +396,7 @@ export function Stack() {
                   height={12}
                   ref={fadeIn.ref}
                   onLoad={fadeIn.onLoad}
-                  className={`${fadeIn.className} v2-pill-mark rounded-[2px]`}
+                  className={`${fadeIn.className} rf-pill-mark rounded-[2px]`}
                   style={{ filter: live ? "none" : "grayscale(1)", opacity: live ? 1 : 0.6, transition: "filter 400ms ease, opacity 400ms ease" }}
                 />
               ) : (
@@ -397,7 +404,7 @@ export function Stack() {
                   viewBox="0 0 24 24"
                   width={12}
                   height={12}
-                  className="v2-pill-mark"
+                  className="rf-pill-mark"
                   fill={live ? T.ink : T.grey}
                   aria-hidden="true"
                   style={{ opacity: live ? 1 : 0.6, transition: "fill 400ms ease, opacity 400ms ease" }}
@@ -408,7 +415,7 @@ export function Stack() {
               {l.key}
             </span>
             <span
-              className="v2-pill-caption absolute top-full font-geist whitespace-nowrap"
+              className="rf-pill-caption absolute top-full font-geist whitespace-nowrap"
               style={{
                 [left ? "right" : "left"]: 0,
                 color: T.grey,

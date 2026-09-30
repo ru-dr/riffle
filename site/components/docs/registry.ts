@@ -287,8 +287,11 @@ export const SECTIONS: DocSection[] = [
   {
     id: "reference",
     title: "Reference",
-    blurb: "Terms used across the docs, defined once.",
-    pages: [{ slug: "reference/glossary", title: "Glossary", description: "Tenant, rank band, promotion, fallback, drift.", file: "glossary.md" },
+    blurb: "Terms defined once, every source cited, and what is changing.",
+    pages: [
+      { slug: "reference/glossary", title: "Glossary", description: "Tenant, rank band, promotion, fallback, drift.", file: "glossary.md" },
+      { slug: "reference/sources", title: "Sources", description: "Every figure, dataset and paper these docs rely on, and what each is used for.", file: "sources.md" },
+      { slug: "reference/diagrams", title: "Writing diagrams", description: "Draw a diagram in Mermaid; the site renders it in its own theme.", file: "diagrams.md" },
       {
         slug: "reference/changelog",
         title: "Changelog",

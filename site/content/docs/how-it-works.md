@@ -2,12 +2,15 @@ Every pull request crosses four services. Each boundary is a place where the
 failure mode changes, which is why they are separate processes rather than
 modules of one.
 
-```text
-GitHub ──webhook──▶ intake ──PrEvent──▶ scorer ──▶ app ──▶ review queue
-                     │                    │  ▲
-                 dedupe by           explain│  │ sentence, or null
-                 delivery ID                ▼  │
-                                         explainer
+```mermaid
+%% caption: One pull request through Riffle's four services
+graph LR
+  gh[GitHub] -->|webhook| intake["intake<br/>dedupe by delivery ID"]
+  intake -->|PrEvent| scorer
+  scorer --> app
+  app --> queue[Review queue]
+  scorer -.->|explain| explainer
+  explainer -.->|sentence, or null| scorer
 ```
 
 ## One pull request, end to end

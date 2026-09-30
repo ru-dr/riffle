@@ -44,8 +44,8 @@ export function ThemeSwitch() {
       onClick={toggle}
       aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
       title={dark ? "Light theme" : "Dark theme"}
-      className="v2-link flex size-8 items-center justify-center rounded-md"
-      style={{ color: "var(--v2-grey)" }}
+      className="rf-link flex size-8 items-center justify-center rounded-md"
+      style={{ color: "var(--rf-grey)" }}
     >
       <svg viewBox="0 0 24 24" className="size-[17px]" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
         {dark ? (

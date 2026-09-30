@@ -33,15 +33,15 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
     <>
       <main className="min-w-0 px-6 pt-10 pb-16 md:px-10 lg:px-14 lg:pt-14">
         <article className="max-w-[64rem]">
-          <p className="flex items-center gap-2 font-mono text-[11px] tracking-[0.08em] uppercase" style={{ color: "var(--v2-grey)" }}>
-            <Link href="/docs" className="v2-link">
+          <p className="flex items-center gap-2 font-mono text-[11px] tracking-[0.08em] uppercase" style={{ color: "var(--rf-grey)" }}>
+            <Link href="/docs" className="rf-link">
               Docs
             </Link>
             <span aria-hidden="true">/</span>
             <span>{page.section.title}</span>
           </p>
           <h1 className="mt-5 font-geist text-[2.1rem] leading-[1.1] font-medium tracking-[-0.03em] md:text-[2.6rem]">{page.title}</h1>
-          <p className="mt-4 font-geist text-[18px] leading-[1.55]" style={{ color: "var(--v2-nickel)" }}>
+          <p className="mt-4 font-geist text-[18px] leading-[1.55]" style={{ color: "var(--rf-nickel)" }}>
             {page.description}
           </p>
           {page.status && (
@@ -52,28 +52,26 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
           <div className="mt-10">{"outline" in page ? <Draft outline={page.outline} /> : <Markdown source={md} />}</div>
         </article>
 
-        {/* Pager: the previous and next pages in reading order. */}
-        <nav aria-label="Pager" className="mt-16 grid max-w-[64rem] gap-px sm:grid-cols-2" style={{ backgroundColor: "var(--v2-stroke)", outline: `1px solid var(--v2-stroke)` }}>
+        {/* Pager: the previous and next pages, as two rounded buttons. */}
+        <nav aria-label="Pager" className="mt-16 grid max-w-[64rem] gap-3 sm:grid-cols-2">
           {[prev, next].map((p, i) =>
             p ? (
               <Link
                 key={p.slug}
                 href={`/docs/${p.slug}`}
-                className={`group flex flex-col gap-1 px-5 py-4 transition-colors hover:bg-[var(--v2-surface)] ${i === 1 ? "sm:items-end sm:text-right" : ""}`}
-                style={{ backgroundColor: "var(--v2-bg)" }}
+                className={`group flex flex-col gap-1 rounded-lg border px-5 py-4 transition-colors hover:border-[var(--rf-grey)] hover:bg-[var(--rf-surface)] ${i === 1 ? "sm:col-start-2 sm:items-end sm:text-right" : ""}`}
+                style={{ borderColor: "var(--rf-stroke)" }}
               >
-                <span className="font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--v2-grey)" }}>
-                  {i === 0 ? "← Previous" : "Next →"}
+                <span className="font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--rf-grey)" }}>
+                  {i === 0 ? "\u2190 Previous" : "Next \u2192"}
                 </span>
                 <span className="font-geist text-[15px] font-medium">{p.title}</span>
               </Link>
-            ) : (
-              <span key={i} style={{ backgroundColor: "var(--v2-bg)" }} />
-            ),
+            ) : null,
           )}
         </nav>
       </main>
-      <aside className="hidden border-l xl:block" style={{ borderColor: "var(--v2-stroke)" }}>
+      <aside className="hidden border-l xl:block" style={{ borderColor: "var(--rf-stroke)" }}>
         <Toc headings={headings} />
       </aside>
     </>

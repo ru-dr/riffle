@@ -6,6 +6,9 @@ export default {
       // only: redirects run before the filesystem, so a /v2/:path* rule
       // would also swallow any public asset under that prefix.
       { source: "/v2", destination: "/", permanent: true },
+      // The first landing page lived here. Retired; old links land on the
+      // current one.
+      { source: "/v1", destination: "/", permanent: true },
     ];
   },
 };
