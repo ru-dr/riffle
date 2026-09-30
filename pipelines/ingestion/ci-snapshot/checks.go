@@ -86,10 +86,23 @@ func (c *client) runChecks(worker int, repo string) {
 		time.Sleep(30 * time.Second)
 	}
 
-	var failed []Line
+	// Failed PR merge commits first: those are what label_ci_fail is
+	// computed on (repo-miner's labels.py, on each PR's merge commit). Other
+	// failed commits only fill the sample if there are too few.
+	var failed, other []Line
 	for _, l := range readLines[Line](src + ".jsonl") {
 		if l.CIState != nil && (*l.CIState == "FAILURE" || *l.CIState == "ERROR") {
-			failed = append(failed, l)
+			if l.PR != nil {
+				failed = append(failed, l)
+			} else {
+				other = append(other, l)
+			}
+		}
+	}
+	if len(failed) < c.cfg.sample {
+		sort.Slice(other, func(i, j int) bool { return other[i].CommittedAt < other[j].CommittedAt })
+		for i := 0; i < len(other) && len(failed) < c.cfg.sample; i++ {
+			failed = append(failed, other[i*len(other)/min(len(other), c.cfg.sample-len(failed)+i)])
 		}
 	}
 	sort.Slice(failed, func(i, j int) bool { return failed[i].CommittedAt < failed[j].CommittedAt })
