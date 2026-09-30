@@ -93,7 +93,7 @@ const criticalCss = `
 html,body{height:100%;margin:0;background:#14100c}
 body{color:#f4f5f7}
 /* /v2 is a light document; set here so it cannot flash dark pre-stylesheet */
-body:has([data-riffle-light]){background:#f4f3ec;color:#16171d}
+body:has([data-riffle-light]){background:#fbfaf7;color:#16171d}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
 

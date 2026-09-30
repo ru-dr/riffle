@@ -15,11 +15,11 @@ import { T } from "./tokens";
 // two layers instead of eyeballed twice.
 
 const CX = 500;
-const HALF_W = 170; // rhombus half-width — the x of the left/right vertices
-const HALF_D = 84; // half-depth, the y of the near/far vertices
-const TOP_Y = 170;
-const STEP = 34; // vertical gap between plates
-const THICK = 20; // extrusion on the base plate only
+const HALF_W = 186; // rhombus half-width — the x of the left/right vertices
+const HALF_D = 92; // half-depth, the y of the near/far vertices
+const TOP_Y = 150;
+const STEP = 46; // vertical gap between plates
+const THICK = 22; // extrusion on the base plate only
 
 const LEVELS = [
   { key: "app", side: "right", label: "app", lang: "TS" },
@@ -81,18 +81,37 @@ export function Stack() {
           opacity="0.16"
         />
 
-        {/* Plates, far to near. Opacity climbs toward the base so the stack
-            reads as resting on something rather than floating. */}
+        {/* A soft pool under the base, so the stack sits in light rather
+            than hanging in white space. */}
+        <ellipse
+          data-anim="plate"
+          cx={CX}
+          cy={y(base) + HALF_D + THICK + 16}
+          rx={HALF_W * 0.92}
+          ry="16"
+          fill={T.accent}
+          opacity="0.1"
+        />
+
+        {/* Plates, far to near. Each gets a thin extrusion so the stack has
+            edges to count; without it the rhombuses read as flat diamonds. */}
         {LEVELS.map((l, i) => (
+          <g key={l.key} data-anim="plate">
+            {i !== base && (
+              <path
+                d={`M${CX - HALF_W} ${y(i)} L${CX} ${y(i) + HALF_D} L${CX + HALF_W} ${y(i)} L${CX + HALF_W} ${y(i) + 4} L${CX} ${y(i) + HALF_D + 4} L${CX - HALF_W} ${y(i) + 4} Z`}
+                fill={T.stroke}
+                fillOpacity="0.9"
+              />
+            )}
           <path
-            key={l.key}
-            data-anim="plate"
             d={plate(i)}
             fill={i === base ? T.accent : T.paper}
             fillOpacity={i === base ? 0.1 : 0.72}
             stroke={i === base ? T.accent : T.stroke}
             strokeWidth={i === base ? 1.25 : 1}
           />
+          </g>
         ))}
 
         {/* The mark, centred on the lit base: what all of it is for. */}

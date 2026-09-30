@@ -2,6 +2,14 @@ import type { Metadata } from "next";
 import { LockupBlack } from "@/components/brand";
 import { V2Motion } from "@/components/v2-motion";
 import { Stack } from "./stack";
+import {
+  AnnounceBar,
+  ClosingBlock,
+  MissionPanel,
+  ResourcesGrid,
+  ServicesBlock,
+  StatsBand,
+} from "./sections";
 import { T } from "./tokens";
 import {
   BANDS,
@@ -94,6 +102,7 @@ function Section({
 export default function Page() {
   return (
     <div data-riffle-light style={{ backgroundColor: T.beige, color: T.ink }}>
+      <AnnounceBar />
       <div className="v2-wrapper">
       {/* Sticky rail: mark, anchors, live status. The status chip is the one
           place on their page where monospace is doing signalling work rather
@@ -158,7 +167,7 @@ export default function Page() {
                 aria-hidden="true"
                 data-anim="pulse"
                 className="block size-[6px] rounded-[1.1px]"
-                style={{ backgroundColor: T.accent }}
+                style={{ backgroundColor: T.live }}
               />
             </span>
             <span style={{ color: T.grey }}>main</span>
@@ -236,144 +245,9 @@ export default function Page() {
         </div>
       </section>
 
-      {/* The output, stated once: three bands and what each one means. */}
-      <Section>
-        <SectionLabel>the output</SectionLabel>
-        <h2
-          data-anim="rise"
-          className="mt-5 max-w-[34rem] font-geist text-[clamp(1.5rem,3.4vw,2.35rem)] leading-[1.15] font-medium tracking-[-0.025em]"
-        >
-          Every pull request lands in one of three bands.
-        </h2>
-        <div className="mt-11 grid gap-px sm:grid-cols-3" style={{ backgroundColor: T.stroke }}>
-          {BANDS.map(([band, meaning]) => (
-            <div
-              key={band}
-              data-anim="rise"
-              className="px-5 py-6"
-              style={{ backgroundColor: T.beige }}
-            >
-              <p className="font-mono text-[12.5px]" style={{ color: T.accent }}>
-                {band}
-              </p>
-              <p
-                className="mt-2.5 font-geist text-[13.5px] leading-[1.5]"
-                style={{ color: T.nickel }}
-              >
-                {meaning}
-              </p>
-            </div>
-          ))}
-        </div>
-        <p data-anim="rise" className="mt-7 font-geist text-[14px]" style={{ color: T.grey }}>
-          Nothing is auto-approved and nothing is hidden. Riffle reorders the
-          queue; it never merges, and it never removes a PR from review.
-        </p>
-      </Section>
-
-      {/* Evidence. Oversized numerals that count up on entry — the one piece
-          of motion their page spends real attention on. */}
-      <Section>
-        <SectionLabel id="problem">the problem</SectionLabel>
-        <h2
-          data-anim="rise"
-          className="mt-5 max-w-[34rem] font-geist text-[clamp(1.5rem,3.4vw,2.35rem)] leading-[1.15] font-medium tracking-[-0.025em]"
-        >
-          Writing code got cheap. Reviewing it did not.
-        </h2>
-        <div
-          className="mt-12 grid gap-px lg:grid-cols-3"
-          style={{ backgroundColor: T.stroke }}
-        >
-          {EVIDENCE.map((e) => (
-            <div
-              key={e.source}
-              data-anim="rise"
-              className="px-6 py-8"
-              style={{ backgroundColor: T.beige }}
-            >
-              <p className="font-geist text-[clamp(2.2rem,5vw,3.1rem)] leading-none font-medium tracking-[-0.04em]">
-                <span data-count={e.stat}>{e.stat}</span>
-                <span style={{ color: T.accent }}>{e.unit}</span>
-              </p>
-              <p className="mt-3 font-geist text-[14px] leading-[1.45]" style={{ color: T.ink }}>
-                {e.claim}
-              </p>
-              <p
-                className="mt-3 font-geist text-[13px] leading-[1.5]"
-                style={{ color: T.nickel }}
-              >
-                {e.detail}
-              </p>
-              <p className="mt-4 font-mono text-[10.5px] tracking-[0.04em] uppercase" style={{ color: T.grey }}>
-                {e.source}
-              </p>
-            </div>
-          ))}
-        </div>
-      </Section>
-
-      {/* Services. Their product sections are one row each: name, a line of
-          what it is, and the numbers that matter. Here the numbers are
-          replaced by the failure mode, which is what actually distinguishes
-          these four from each other. */}
-      <Section>
-        <SectionLabel id="architecture">architecture</SectionLabel>
-        <h2
-          data-anim="rise"
-          className="mt-5 max-w-[38rem] font-geist text-[clamp(1.5rem,3.4vw,2.35rem)] leading-[1.15] font-medium tracking-[-0.025em]"
-        >
-          Four services. Each boundary is a place where the failure mode
-          changes.
-        </h2>
-        <div className="mt-12" style={{ borderTop: `1px solid ${T.stroke}` }}>
-          {SERVICES.map((s) => (
-            <div
-              key={s.name}
-              data-anim="rise"
-              className="grid grid-cols-1 gap-3 border-b py-7 sm:grid-cols-12 sm:gap-6"
-              style={{ borderColor: T.stroke }}
-            >
-              <div className="sm:col-span-3">
-                <p className="font-mono text-[15px]" style={{ color: T.ink }}>
-                  {s.name}
-                </p>
-                <p className="mt-1.5 font-mono text-[11px] tracking-[0.03em]" style={{ color: T.grey }}>
-                  {s.lang}
-                </p>
-              </div>
-              <p
-                className="font-geist text-[14px] leading-[1.55] sm:col-span-6"
-                style={{ color: T.nickel }}
-              >
-                {s.job}
-              </p>
-              <div className="sm:col-span-3">
-                <p
-                  className="inline-flex rounded-[5px] px-2 py-1 font-mono text-[11px]"
-                  style={{
-                    color: s.constraint === "Allowed to fail" ? T.accent : T.nickel,
-                    backgroundColor:
-                      s.constraint === "Allowed to fail" ? T.accentSoft : "rgba(22,23,29,0.045)",
-                  }}
-                >
-                  {s.constraint}
-                </p>
-                <p className="mt-2 font-geist text-[12.5px] leading-[1.45]" style={{ color: T.grey }}>
-                  {s.reason}
-                </p>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p
-          data-anim="rise"
-          className="mt-8 font-geist text-[15px]"
-          style={{ color: T.ink }}
-        >
-          The LLM is never on the correctness path.
-        </p>
-      </Section>
+      <ServicesBlock />
+      <StatsBand />
+      <MissionPanel />
 
       {/* Invariants: a numbered hairline list. No cards, no icons. */}
       <Section>
@@ -497,31 +371,8 @@ export default function Page() {
         </div>
       </Section>
 
-      <footer
-        className="border-t px-5 py-10 sm:px-8 lg:px-12"
-        style={{ borderColor: T.stroke }}
-      >
-        <div className="mx-auto flex w-full max-w-[74rem] flex-wrap items-center justify-between gap-5">
-          <LockupBlack
-            aria-hidden="true"
-            className="h-auto w-[76px]"
-            style={{ color: T.ink }}
-          />
-          <p
-            className="flex flex-wrap items-center gap-x-3 gap-y-1.5 font-mono text-[11.5px]"
-            style={{ color: T.grey }}
-          >
-            <a href={REPO} className="v2-navlink">
-              github.com/ru-dr/riffle
-            </a>
-            <span aria-hidden="true">/</span>
-            <span>Apache-2.0</span>
-            <span aria-hidden="true">/</span>
-            <span>Self-hosted</span>
-          </p>
-        </div>
-      </footer>
-
+        <ResourcesGrid />
+        <ClosingBlock />
       </div>
       <V2Motion />
     </div>

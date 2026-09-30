@@ -131,14 +131,14 @@ body:has([data-riffle-lock]) {
 
 @keyframes v2-shine {
   to {
-    background-position: 0 0;
+    background-position: 28% 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .v2-shine {
     animation: none;
-    background-position: 0 0;
+    background-position: 28% 0;
   }
 }
 
@@ -153,7 +153,7 @@ body:has([data-riffle-lock]) {
    critical CSS in layout.tsx assume a warm near-black. Scoped to the page
    that opts in, so neither has to know about the other. */
 body:has([data-riffle-light]) {
-  background-color: #f4f3ec;
+  background-color: #fbfaf7;
   color-scheme: light;
   overflow: visible;
 }
@@ -166,6 +166,7 @@ body:has([data-riffle-light]) {
   --v2-nickel: #3b3440;
   --v2-grey: #867e8e;
   --v2-accent: #0f7a4f;
+  --v2-live: #00b442;
 }
 
 @layer components {
@@ -175,6 +176,13 @@ body:has([data-riffle-light]) {
   }
   .v2-navlink:hover {
     color: #16171d;
+  }
+  .v2-navlink-dark {
+    transition: color 140ms ease;
+    text-decoration: none;
+  }
+  .v2-navlink-dark:hover {
+    color: #fbfaf7;
   }
 }
 
