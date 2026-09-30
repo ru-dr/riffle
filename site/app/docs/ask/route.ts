@@ -1,11 +1,12 @@
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { prompt, retrieve } from "@/components/docs/ask";
 
 // "Ask AI" for the docs. POST { question } -> a text stream: the first line
 // is the JSON list of sources, the rest is the answer as it is generated.
 // The key stays on the server; the model sees only retrieved doc excerpts.
 
-export const maxDuration = 30;
+// Gemma thinks before it answers, and first text can take 10s or more.
+export const maxDuration = 60;
 
 const MODEL = process.env.DOCS_ASK_MODEL ?? "gemma-4-26b-a4b-it";
 const MAX_QUESTION = 400;
@@ -43,14 +44,17 @@ export async function POST(req: Request) {
   const { sources, context } = await retrieve(question);
   const ai = new GoogleGenAI({ apiKey: key });
 
-  let stream: AsyncGenerator<{ text?: string }>;
+  type Chunk = { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[] };
+  let stream: AsyncGenerator<Chunk>;
   try {
     stream = await ai.models.generateContentStream({
       model: MODEL,
       contents: [{ role: "user", parts: [{ text: prompt(question, context) }] }],
+      // No thinkingConfig: Gemma rejects both thinking level and budget, and
+      // always thinks. Its thoughts count against maxOutputTokens, so the
+      // limit leaves room for thinking and a short answer.
       config: {
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        maxOutputTokens: 1024,
+        maxOutputTokens: 4096,
         temperature: 0.2,
         abortSignal: req.signal,
       },
@@ -64,8 +68,20 @@ export async function POST(req: Request) {
   const body = new ReadableStream({
     async start(controller) {
       controller.enqueue(enc.encode(JSON.stringify(sources) + "\n"));
+      let wrote = false;
+      let finish = "";
       try {
-        for await (const chunk of stream) if (chunk.text) controller.enqueue(enc.encode(chunk.text));
+        for await (const chunk of stream) {
+          const cand = chunk.candidates?.[0];
+          finish = cand?.finishReason ?? finish;
+          for (const part of cand?.content?.parts ?? []) {
+            // Thoughts stay on the server; the reader gets the answer only.
+            if (part.thought || !part.text) continue;
+            controller.enqueue(enc.encode(part.text));
+            wrote = true;
+          }
+        }
+        if (!wrote) controller.enqueue(enc.encode(finish === "MAX_TOKENS" ? "_The model ran out of room before answering. Try a narrower question._" : "_No answer came back. Try again, or use search._"));
       } catch (err) {
         if (!req.signal.aborted) {
           console.error("docs ask stream:", err);

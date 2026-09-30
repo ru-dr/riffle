@@ -32,7 +32,13 @@ function plain(md: string) {
     .trim();
 }
 
-export async function buildIndex(): Promise<SearchRecord[]> {
+/**
+ * `raw` keeps each section's markdown (minus diagrams) instead of plain text:
+ * Ask AI needs code, globs and keys exactly as written - `src/auth/**`, not
+ * `src/auth/`. The browser index stays plain, which is smaller.
+ */
+export async function buildIndex({ raw = false } = {}): Promise<SearchRecord[]> {
+  const body = raw ? (md: string) => md.replace(/```mermaid[\s\S]*?```/g, "").replace(/\n{3,}/g, "\n\n").trim() : plain;
   const out: SearchRecord[] = [];
   for (const page of ALL_PAGES) {
     const base = `/docs/${page.slug}`;
@@ -62,7 +68,7 @@ export async function buildIndex(): Promise<SearchRecord[]> {
         page: page.title,
         section: page.section.title,
         heading: p.heading,
-        text: plain(p.lines.join("\n")),
+        text: body(p.lines.join("\n")),
       });
     }
   }

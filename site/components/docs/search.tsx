@@ -380,7 +380,7 @@ function AskView({ ask, onNavigate, onBack }: { ask: Ask; onNavigate: () => void
           <Answer text={ask.text} sources={ask.sources} onNavigate={onNavigate} />
         ) : (
           <p className="docs-thinking font-geist text-[14px]" style={{ color: "var(--rf-grey)" }}>
-            Reading the docs…
+            Reading the docs and thinking. This can take a few seconds…
           </p>
         )}
       </div>

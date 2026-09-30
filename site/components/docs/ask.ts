@@ -9,7 +9,7 @@ export type Source = { n: number; title: string; href: string };
 
 let ready: Promise<MiniSearch<SearchRecord>> | null = null;
 function index() {
-  ready ??= buildIndex().then((docs) => {
+  ready ??= buildIndex({ raw: true }).then((docs) => {
     const ms = new MiniSearch<SearchRecord>({
       fields: ["page", "heading", "text"],
       storeFields: ["href", "page", "section", "heading", "text"],
