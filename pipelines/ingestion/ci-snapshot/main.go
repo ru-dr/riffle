@@ -42,7 +42,9 @@ const query = `query($owner:String!,$name:String!,$since:GitTimestamp!,$until:Gi
     history(first:$n,since:$since,until:$until,after:$after){totalCount pageInfo{hasNextPage endCursor}
       nodes{oid committedDate messageHeadline statusCheckRollup{state}}}}}}}}`
 
-var prNumber = regexp.MustCompile(`\(#(\d+)\)\s*$`)
+// The PR number a merge put in the commit headline: squash and rebase merges
+// end with "(#123)"; merge commits start "Merge pull request #123 from".
+var prNumber = regexp.MustCompile(`\(#(\d+)\)\s*$|^Merge pull request #(\d+)`)
 
 type config struct {
 	repos, out, since, until, token, mode, from string
@@ -219,7 +221,7 @@ func (c *client) fetch(repo, after string, n int) (*page, error) {
 			l := Line{Repo: repo, Branch: ref.Name, OID: node.Oid, CommittedAt: node.CommittedDate, Headline: node.MessageHeadline, CapturedAt: now}
 			if m := prNumber.FindStringSubmatch(node.MessageHeadline); m != nil {
 				var n int
-				fmt.Sscan(m[1], &n)
+				fmt.Sscan(m[1]+m[2], &n)
 				l.PR = &n
 			}
 			if node.StatusCheckRollup != nil {

@@ -190,21 +190,23 @@ const prQuery = `query($owner:String!,$name:String!,$after:String,$n:Int!){
   rateLimit{cost remaining resetAt}
   repository(owner:$owner,name:$name){pullRequests(first:$n,after:$after,states:[MERGED,CLOSED],orderBy:{field:CREATED_AT,direction:DESC}){
     pageInfo{hasNextPage endCursor}
-    nodes{number state createdAt closedAt mergedAt baseRefName isDraft author{login}
+    nodes{number state createdAt closedAt mergedAt baseRefName isDraft author{login} mergeCommit{oid}
       commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}}}}}`
 
 type PRLine struct {
-	Repo       string  `json:"repo"`
-	Number     int     `json:"number"`
-	State      string  `json:"state"`
-	CreatedAt  string  `json:"created_at"`
-	ClosedAt   string  `json:"closed_at"`
-	MergedAt   *string `json:"merged_at"`
-	Base       string  `json:"base"`
-	Author     *string `json:"author"`
-	HeadOID    *string `json:"head_oid"`
-	HeadCI     *string `json:"head_ci_state"`
-	CapturedAt string  `json:"captured_at"`
+	Repo      string  `json:"repo"`
+	Number    int     `json:"number"`
+	State     string  `json:"state"`
+	CreatedAt string  `json:"created_at"`
+	ClosedAt  string  `json:"closed_at"`
+	MergedAt  *string `json:"merged_at"`
+	Base      string  `json:"base"`
+	Author    *string `json:"author"`
+	// The commit repo-miner computes label_ci_fail on (merge_commit_sha).
+	MergeCommit *string `json:"merge_commit_sha"`
+	HeadOID     *string `json:"head_oid"`
+	HeadCI      *string `json:"head_ci_state"`
+	CapturedAt  string  `json:"captured_at"`
 }
 
 func (c *client) runPRs(worker int, repo string) {
@@ -245,6 +247,7 @@ func (c *client) runPRs(worker int, repo string) {
 						MergedAt                   *string
 						BaseRefName                string
 						Author                     *struct{ Login string }
+						MergeCommit                *struct{ Oid string }
 						Commits                    struct {
 							Nodes []struct {
 								Commit struct {
@@ -295,6 +298,9 @@ func (c *client) runPRs(worker int, repo string) {
 			l := PRLine{Repo: repo, Number: p.Number, State: p.State, CreatedAt: p.CreatedAt, ClosedAt: p.ClosedAt, MergedAt: p.MergedAt, Base: p.BaseRefName, CapturedAt: now}
 			if p.Author != nil {
 				l.Author = &p.Author.Login
+			}
+			if p.MergeCommit != nil {
+				l.MergeCommit = &p.MergeCommit.Oid
 			}
 			if len(p.Commits.Nodes) > 0 {
 				cm := p.Commits.Nodes[0].Commit
