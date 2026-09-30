@@ -483,7 +483,7 @@ func main() {
 		if cfg.mode == "checks" {
 			// Hand out repositories as the commits run finishes them, in
 			// whatever order that is, instead of queueing behind the giants.
-			pending := append([]string(nil), repos...)
+			pending := append([]string(nil), repos...) // commits .done gates each one
 			for len(pending) > 0 {
 				var rest []string
 				for _, r := range pending {

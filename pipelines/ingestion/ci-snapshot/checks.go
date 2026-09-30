@@ -69,9 +69,16 @@ func readLines[T any](path string) []T {
 func (c *client) runChecks(worker int, repo string) {
 	name := strings.ReplaceAll(repo, "/", "__")
 	base := filepath.Join(c.cfg.out, name)
-	if _, err := os.Stat(base + ".done"); err == nil {
-		c.send(repoDoneMsg{repo: repo, commits: countLines(base + ".jsonl"), skipped: true})
-		return
+	// .done records the sample size it finished at; a bigger -sample tops
+	// the repository up. The spread is even, so the 50-commit sample is a
+	// subset of the 100 one and only the new commits are fetched.
+	if b, err := os.ReadFile(base + ".done"); err == nil {
+		var at int
+		fmt.Sscan(strings.TrimSpace(strings.SplitN(string(b), " ", 2)[0]), &at)
+		if at >= c.cfg.sample || (at == 0 && c.cfg.sample <= 50) {
+			c.send(repoDoneMsg{repo: repo, commits: countLines(base + ".jsonl"), skipped: true})
+			return
+		}
 	}
 	// Wait for the commits mode to finish this repository.
 	src := filepath.Join(c.cfg.from, name)
@@ -183,6 +190,6 @@ func (c *client) runChecks(worker int, repo string) {
 		done++
 		c.send(progressMsg{worker: worker, repo: repo, done: (i + 1) * 1000 / len(sample), total: 1000, pageSize: 100, records: done})
 	}
-	os.WriteFile(base+".done", []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
+	os.WriteFile(base+".done", []byte(fmt.Sprintf("%d %s\n", c.cfg.sample, time.Now().UTC().Format(time.RFC3339))), 0o644)
 	c.send(repoDoneMsg{repo: repo, commits: done})
 }

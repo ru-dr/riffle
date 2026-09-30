@@ -70,6 +70,9 @@ tmux new -s ci
 # Ctrl+b then c  ->  window 2 (REST): per-check results for 50 failed
 # PR merge commits per repository, from window 1's output as it finishes
 ./ci-snapshot -mode checks
+# ...when it finishes (~8:15 PM), in the same window: top up to 100 per
+# repository (fetches only the 50 new commits in each)
+./ci-snapshot -mode checks -sample 100
 
 # Ctrl+b then d to detach; `tmux attach -t ci` to come back
 ```
@@ -118,9 +121,8 @@ terminal windows instead of tmux:
 | PC 2 | 1 | `./ci-snapshot -mode prs -shard 2/2`, then `-mode commits` for the last 90 days | GraphQL | `prs/`, then `pass2/` |
 | PC 2 | 2 | `./ci-snapshot -mode runs` | REST | `runs/` |
 
-If quota is left over (tonight or tomorrow), a bigger per-check sample goes
-in its own folder, since finished repositories are skipped:
-`./ci-snapshot -mode checks -sample 200 -out ~/proyecto/riffle-data/ci-snapshot/checks-more`
+`checks` tops up in place: rerun it with a bigger `-sample` (100, 200 …) and
+each repository fetches only the commits it does not have yet.
 
 Output lives under `~/proyecto/riffle-data/ci-snapshot/` (on PC 2 too, unless
 `-out` is given).
