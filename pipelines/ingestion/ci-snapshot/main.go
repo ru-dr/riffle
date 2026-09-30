@@ -45,10 +45,11 @@ const query = `query($owner:String!,$name:String!,$since:GitTimestamp!,$until:Gi
 var prNumber = regexp.MustCompile(`\(#(\d+)\)\s*$`)
 
 type config struct {
-	repos, out, since, until, token, mode string
-	shardI, shardN                        int
-	workers                               int
-	plain                                 bool
+	repos, out, since, until, token, mode, from string
+	sample                                      int
+	shardI, shardN                              int
+	workers                                     int
+	plain                                       bool
 }
 
 // Line is one commit in the output: the combined CI result as GitHub
@@ -345,7 +346,9 @@ func main() {
 	home, _ := os.UserHomeDir()
 	cfg := config{}
 	flag.StringVar(&cfg.repos, "repos", "repos.txt", "file with one owner/name per line")
-	flag.StringVar(&cfg.mode, "mode", "commits", "commits (default-branch CI per commit), prs (CI on each PR's last commit), or runs (Actions runs on default-branch pushes, REST)")
+	flag.StringVar(&cfg.mode, "mode", "commits", "commits (default-branch CI per commit), prs (CI on each PR's last commit), runs (Actions runs on default-branch pushes, REST), or checks (per-check results for sampled failed commits, REST)")
+	flag.IntVar(&cfg.sample, "sample", 50, "checks mode: failed commits sampled per repository")
+	flag.StringVar(&cfg.from, "from", "", "checks mode: the commits mode's output directory (default ~/proyecto/riffle-data/ci-snapshot/pass1)")
 	flag.StringVar(&cfg.out, "out", "", "output directory (default ~/proyecto/riffle-data/ci-snapshot/<pass1|prs|runs>)")
 	shard := flag.String("shard", "1/1", "i/n: take every n-th repository, starting at i, to split the work across machines")
 	flag.StringVar(&cfg.since, "since", "2025-08-26T00:00:00Z", "oldest commit date to capture")
@@ -357,13 +360,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-shard must look like 1/2")
 		os.Exit(1)
 	}
-	if cfg.mode != "commits" && cfg.mode != "prs" && cfg.mode != "runs" {
-		fmt.Fprintln(os.Stderr, "-mode must be commits, prs or runs")
+	if cfg.mode != "commits" && cfg.mode != "prs" && cfg.mode != "runs" && cfg.mode != "checks" {
+		fmt.Fprintln(os.Stderr, "-mode must be commits, prs, runs or checks")
 		os.Exit(1)
 	}
 	if cfg.out == "" {
-		dir := map[string]string{"commits": "pass1", "prs": "prs", "runs": "runs"}[cfg.mode]
+		dir := map[string]string{"commits": "pass1", "prs": "prs", "runs": "runs", "checks": "checks"}[cfg.mode]
 		cfg.out = filepath.Join(home, "proyecto", "riffle-data", "ci-snapshot", dir)
+	}
+	if cfg.from == "" {
+		cfg.from = filepath.Join(home, "proyecto", "riffle-data", "ci-snapshot", "pass1")
 	}
 
 	cfg.token = os.Getenv("GITHUB_TOKEN")
@@ -464,14 +470,36 @@ func main() {
 						c.runPRs(w, r)
 					case "runs":
 						c.runRuns(w, r)
+					case "checks":
+						c.runChecks(w, r)
 					default:
 						c.run(w, r)
 					}
 				}
 			}(w)
 		}
-		for _, r := range repos {
-			jobs <- r
+		if cfg.mode == "checks" {
+			// Hand out repositories as the commits run finishes them, in
+			// whatever order that is, instead of queueing behind the giants.
+			pending := append([]string(nil), repos...)
+			for len(pending) > 0 {
+				var rest []string
+				for _, r := range pending {
+					_, done := os.Stat(filepath.Join(cfg.from, strings.ReplaceAll(r, "/", "__")+".done"))
+					if done == nil {
+						jobs <- r
+					} else {
+						rest = append(rest, r)
+					}
+				}
+				if pending = rest; len(pending) > 0 {
+					time.Sleep(20 * time.Second)
+				}
+			}
+		} else {
+			for _, r := range repos {
+				jobs <- r
+			}
 		}
 		close(jobs)
 		wg.Wait()

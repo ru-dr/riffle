@@ -220,7 +220,7 @@ func (m *model) View() string {
 	} else if m.perRepo != nil {
 		totalS = "?"
 	}
-	unit := map[string]string{"commits": "commits", "prs": "PRs", "runs": "runs"}[m.cfg.mode]
+	unit := map[string]string{"commits": "commits", "prs": "PRs", "runs": "runs", "checks": "failed commits"}[m.cfg.mode]
 	b.WriteString(fmt.Sprintf("%s %s  %s / %s    %s repos  %d / %d    %s %s    %s %s\n",
 		dim.Render("captured"), unit, bold.Render(fmt.Sprint(captured)), totalS,
 		dim.Render("·"), m.reposDone, m.repos,
@@ -234,7 +234,7 @@ func (m *model) View() string {
 			style = warn
 		}
 		api := "GraphQL"
-		if m.cfg.mode == "runs" {
+		if m.cfg.mode == "runs" || m.cfg.mode == "checks" {
 			api = "REST"
 		}
 		q = fmt.Sprintf("%s %s  %s / 5000   %s %s", dim.Render("quota"), api, style.Render(fmt.Sprint(m.remaining)), dim.Render("resets in"), dur(time.Until(m.reset)))
