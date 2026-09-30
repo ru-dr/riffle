@@ -133,6 +133,7 @@ export default function Page() {
       <ContractsSection />
       <Spacer />
       <ResourcesGrid />
+      <Spacer />
       <ClosingBlock />
 
       <V2Motion />

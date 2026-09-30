@@ -162,7 +162,7 @@ export const SERVICE_PANELS = [
     code: [
       [["$ ", "dim"], ["riffle score ", "cmd"], ["--delivery ", "dim"], ["8f2c…a91", "val"]],
       [],
-      [["features       ", "key"], ["69 engineered", "dim"]],
+      [["features       ", "key"], ["100–300 ", "val"], ["planned", "dim"]],
       [["model          ", "key"], ["tenant:4192 ", "val"], ["v7", "str"]],
       [["fallback       ", "key"], ["global base", "dim"]],
       [],
@@ -212,17 +212,39 @@ export const SERVICE_PANELS = [
   },
 ] as const;
 
-// Their statistics band, with numbers that are real and cited.
+// Statistics from the dataset plan (PR counts measured from each repository's
+// Pull Requests tab, July-September 2026). Every figure carries the plan's
+// own status, so a target is never shown as if it were a result.
+export type Status = "measured" | "derived" | "estimate" | "decision" | "target";
+
 export const STATS = {
-  headline: "Trained on defect history, not on opinions",
-  big: 106674,
-  bigLabel: "commits in ApacheJIT, the bootstrap corpus",
+  headline: "Planned on fifty public repositories",
+  big: 1899996,
+  bigLabel: "pull requests measured across 48 repositories, open and closed",
+  bigStatus: "measured" as Status,
+  // Measured subtotals per domain; the bar is drawn to these proportions.
+  domains: [
+    ["Systems & dev tools", 437114],
+    ["Web frameworks", 259494],
+    ["Data systems", 425940],
+    ["Cloud & infra", 272176],
+    ["ML & end-user", 505272],
+  ] as const,
   cells: [
-    ["28,239", "labelled bug-inducing commits"],
-    ["8.1M", "pull requests in the LinearB benchmark"],
-    ["69", "engineered features per change (MSR 2020)"],
-  ],
+    ["40 / 10", "repositories for training / unseen-repo validation", "decision"],
+    ["100–300", "feature columns per pull request", "estimate"],
+    ["0.65+", "ROC-AUC target on repositories never trained on", "target"],
+  ] as const,
 } as const;
+
+export const CORPUS_SAMPLE = [
+  "kubernetes/kubernetes",
+  "python/cpython",
+  "llvm/llvm-project",
+  "facebook/react",
+  "apache/spark",
+  "pytorch/pytorch",
+] as const;
 
 export const MISSION =
   "Our claim is narrower than a verdict: the next incident follows the seams your repository has already broken along, and its own history is where they are written.";

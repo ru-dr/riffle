@@ -308,6 +308,22 @@ html[data-motion="on"] [data-anim] {
   opacity: 0;
 }
 
+/* Hero stack before hydration: while motion is on, the server-rendered
+   page must show the opening cube, not the finished stack, or the intro
+   would start by un-showing something the reader already saw. Without the
+   gate (no JS, reduced motion, failsafe) the cube stays hidden and the
+   stack shows as-is. */
+[data-cube] {
+  opacity: 0;
+}
+html[data-motion="on"] [data-cube] {
+  opacity: 1;
+}
+html[data-motion="on"] [data-slab],
+html[data-motion="on"] [data-leads] {
+  opacity: 0;
+}
+
 /* /v2 tags its above-fold nodes separately so the hero timeline does not
    have to guess which of forty revealed elements are visible on load. */
 html[data-motion="on"] [data-anim="hero-rise"] {

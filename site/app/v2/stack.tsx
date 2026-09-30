@@ -1,53 +1,69 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import gsap from "gsap";
 import { LangIcon, type Lang } from "./lang-icon";
 import { T } from "./tokens";
 
-// The hero stack, rebuilt from the reference render rather than guessed at.
+// The hero stack.
 //
-// Each layer is a solid slab: a rounded isometric top face, two visible side
-// faces giving it thickness, white fill, thin ink outline. They rest one on
-// another with a small gap. One slab at a time is lifted out of the stack —
-// everything above it rises with it, opening a gap underneath — and its side
-// faces fill with that service's colour. The lift walks the stack on a timer,
-// so the diagram explains the architecture one layer at a time instead of all
-// at once.
+// Sequence, taken from the reference: it opens as a single cube carrying the
+// mark, then a springy wave splits the cube into the five slabs of the
+// architecture, and only then does the lift start walking the stack. The
+// cube is the product as one thing; the wave is the claim that it is made of
+// separable layers; the walk explains each layer in turn.
 //
-// Geometry is computed as sampled polylines so the top face, the visible lower
-// half of the side faces, and the outlines all come from one shape and cannot
-// drift apart.
+// Each slab is solid: a rounded isometric top face, visible side thickness,
+// white fill, thin ink outline. The lifted slab takes everything above it
+// with it, opening a gap underneath where its textured sides show.
+//
+// Geometry is sampled polylines so every face and outline derives from one
+// shape. Two transform layers per slab: the outer <g> belongs to the GSAP
+// intro, the inner one to the lift, so the two never fight over the same
+// attribute.
 
 const CX = 500;
-const W = 200; // half-width of the top face
-const H = W * Math.tan(Math.PI / 6); // isometric half-depth
-const D = 30; // slab thickness
-const STEP = 46; // top-to-top distance between resting slabs
+const W = 200;
+const TAN30 = Math.tan(Math.PI / 6);
+const D = 30;
+const STEP = 46;
 const TOP = 176;
-const R = 26; // corner radius along each edge
-const LIFT = 42;
+const R = 26;
+const LIFT = 28;
 const CYCLE_MS = 2800;
 
-const LAYERS = [
-  { key: "app", icon: "typescript" as Lang, art: "/v2/art/streak-orange.webp", lang: "TS", side: "left", caption: "the only human surface", tone: ["#7dd3a0", "#2f6f52"] },
-  { key: "explainer", icon: "python" as Lang, art: "/v2/art/streak-violet.webp", lang: "PY", side: "right", caption: "allowed to fail", tone: ["#c4b5fd", "#6d4fb8"] },
-  { key: "scorer", icon: "python" as Lang, art: "/v2/art/streak-indigo.webp", lang: "PY", side: "left", caption: "one model per repository", tone: ["#a5b4fc", "#4453b5"] },
-  { key: "intake", icon: "go" as Lang, art: "/v2/art/streak-green.webp", lang: "GO", side: "right", caption: "inside a 10s budget", tone: ["#e0a45e", "#8a5326"] },
-  { key: "contracts", icon: "json" as Lang, art: "/v2/art/streak-teal.webp", lang: "{}", side: "left", caption: "the source of truth", tone: ["#7dd3a0", "#2f6f52"] },
-] as const;
+const CUBE_W = 124; // half-width of the cube's top face
+const CUBE_EDGE = CUBE_W / Math.cos(Math.PI / 6); // vertical edge = top-face edge
+const CUBE_Y = 262; // y of the cube's top-face centre
+
+type Layer = {
+  key: string;
+  icon: Lang;
+  side: "left" | "right";
+  caption: string;
+  tone: readonly [string, string];
+  art: string;
+};
+
+const LAYERS: readonly Layer[] = [
+  { key: "app", icon: "typescript", side: "left", caption: "the only human surface", tone: ["#e0a45e", "#8a5326"], art: "/v2/art/streak-orange.webp" },
+  { key: "explainer", icon: "python", side: "right", caption: "allowed to fail", tone: ["#c4b5fd", "#6d4fb8"], art: "/v2/art/streak-violet.webp" },
+  { key: "scorer", icon: "python", side: "left", caption: "one model per repository", tone: ["#a5b4fc", "#4453b5"], art: "/v2/art/streak-indigo.webp" },
+  { key: "intake", icon: "go", side: "right", caption: "inside a 10s budget", tone: ["#7dd3a0", "#2f6f52"], art: "/v2/art/streak-green.webp" },
+  { key: "contracts", icon: "json", side: "left", caption: "the source of truth", tone: ["#6ee7d8", "#1f7a70"], art: "/v2/art/streak-teal.webp" },
+];
 
 type Pt = [number, number];
 
-/** Rounded isometric diamond, clockwise from the left vertex, as points. */
-function roundedDiamond(y: number): { pts: Pt[]; leftMid: number; rightMid: number } {
+function roundedDiamond(cx: number, y: number, w: number, r: number) {
+  const h = w * TAN30;
   const V: Pt[] = [
-    [CX - W, y],
-    [CX, y - H],
-    [CX + W, y],
-    [CX, y + H],
+    [cx - w, y],
+    [cx, y - h],
+    [cx + w, y],
+    [cx, y + h],
   ];
-  const edge = Math.hypot(W, H);
-  const t = R / edge;
+  const t = r / Math.hypot(w, h);
   const SAMPLES = 10;
   const pts: Pt[] = [];
   const mids: number[] = [];
@@ -59,189 +75,283 @@ function roundedDiamond(y: number): { pts: Pt[]; leftMid: number; rightMid: numb
     const b: Pt = [v[0] + (next[0] - v[0]) * t, v[1] + (next[1] - v[1]) * t];
     for (let s = 0; s <= SAMPLES; s++) {
       const u = s / SAMPLES;
-      const x = (1 - u) ** 2 * a[0] + 2 * (1 - u) * u * v[0] + u ** 2 * b[0];
-      const yy = (1 - u) ** 2 * a[1] + 2 * (1 - u) * u * v[1] + u ** 2 * b[1];
       if (s === SAMPLES / 2) mids.push(pts.length);
-      pts.push([x, yy]);
+      pts.push([
+        (1 - u) ** 2 * a[0] + 2 * (1 - u) * u * v[0] + u ** 2 * b[0],
+        (1 - u) ** 2 * a[1] + 2 * (1 - u) * u * v[1] + u ** 2 * b[1],
+      ]);
     }
   }
   return { pts, leftMid: mids[0], rightMid: mids[2] };
 }
 
-const d = (pts: Pt[], close = false) =>
+const path = (pts: Pt[], close = false) =>
   pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ") + (close ? " Z" : "");
 
-/** The part of the outline visible from the front: right extreme → bottom → left extreme. */
-function lowerHalf(y: number): Pt[] {
-  const { pts, leftMid, rightMid } = roundedDiamond(y);
+function lowerHalf(cx: number, y: number, w: number, r: number): Pt[] {
+  const { pts, leftMid, rightMid } = roundedDiamond(cx, y, w, r);
   return [...pts.slice(rightMid), ...pts.slice(0, leftMid + 1)];
 }
 
-function Slab({ y, active, tone, id, label, art }: { y: number; active: boolean; tone: readonly string[]; id: string; label: string; art: string }) {
-  const top = roundedDiamond(y);
-  const upper = lowerHalf(y);
-  const lower = lowerHalf(y + D);
-  const side = [...upper, ...[...lower].reverse()];
+/** A rounded isometric box: top face, visible sides, outline. */
+function Box({
+  y,
+  w,
+  depth,
+  r,
+  sideFill,
+  stroke,
+  ghost = false,
+}: {
+  y: number;
+  w: number;
+  depth: number;
+  r: number;
+  sideFill: string;
+  stroke: string;
+  /** Wireframe: no fill, dashed thin outline — how inactive layers read
+   *  while another one is live. */
+  ghost?: boolean;
+}) {
+  const top = roundedDiamond(CX, y, w, r);
+  const upper = lowerHalf(CX, y, w, r);
+  const lower = lowerHalf(CX, y + depth, w, r);
   const [lx] = upper[upper.length - 1];
   const [rx] = upper[0];
-  const stroke = active ? tone[1] : T.ink;
-
+  const line = {
+    stroke: ghost ? T.grey : stroke,
+    strokeWidth: ghost ? 1 : 1.4,
+    strokeDasharray: ghost ? "2 3" : undefined,
+    strokeOpacity: ghost ? 0.75 : 1,
+    style: { transition: "stroke 400ms ease, stroke-opacity 400ms ease" },
+  } as const;
+  const faceOpacity = ghost ? 0 : 1;
   return (
-    <g>
-      <defs>
-        {/* Streaked fill for the lifted slab's sides, drawn from the service
-            colour: bands at uneven offsets read as brushed light. */}
-        <pattern id={`tex-${id}`} patternUnits="objectBoundingBox" width="1" height="1">
-          <image href={art} width="420" height="140" preserveAspectRatio="xMidYMid slice" />
-        </pattern>
-        <linearGradient id={`side-${id}`} x1="0" y1="0" x2="1" y2="0.35">
-          <stop offset="0" stopColor={tone[1]} />
-          <stop offset="0.18" stopColor={tone[0]} />
-          <stop offset="0.27" stopColor={tone[1]} />
-          <stop offset="0.46" stopColor="#ffffff" stopOpacity="0.85" />
-          <stop offset="0.52" stopColor={tone[0]} />
-          <stop offset="0.71" stopColor={tone[1]} />
-          <stop offset="0.82" stopColor={tone[0]} />
-          <stop offset="1" stopColor={tone[1]} />
-        </linearGradient>
-      </defs>
+    <>
       <path
-        d={d(side, true)}
-        fill={active ? `url(#tex-${id})` : "#ffffff"}
-        style={{ transition: "fill 400ms ease" }}
+        d={path([...upper, ...[...lower].reverse()], true)}
+        fill={sideFill}
+        fillOpacity={faceOpacity}
+        style={{ transition: "fill 400ms ease, fill-opacity 400ms ease" }}
       />
-      <path d={d(lower)} fill="none" stroke={stroke} strokeWidth="1.4" strokeLinejoin="round" />
-      <line x1={lx} y1={y} x2={lx} y2={y + D} stroke={stroke} strokeWidth="1.4" />
-      <line x1={rx} y1={y} x2={rx} y2={y + D} stroke={stroke} strokeWidth="1.4" />
-      <path d={d(top.pts, true)} fill="#ffffff" stroke={stroke} strokeWidth="1.4" strokeLinejoin="round" />
-      {/* Service name laid flat on the top face via the isometric matrix. */}
-      <text
-        transform={`matrix(0.866 0.5 -0.866 0.5 ${CX} ${y})`}
-        textAnchor="middle"
-        dominantBaseline="middle"
-        className="font-mono"
-        fontSize="22"
-        letterSpacing="1"
-        fill={active ? tone[1] : T.grey}
-        style={{ opacity: active ? 1 : 0.55, transition: "opacity 400ms ease, fill 400ms ease" }}
-      >
-        {label}
-      </text>
-    </g>
+      <path d={path(lower)} fill="none" strokeLinejoin="round" {...line} />
+      <line x1={lx} y1={y} x2={lx} y2={y + depth} {...line} />
+      <line x1={rx} y1={y} x2={rx} y2={y + depth} {...line} />
+      <path
+        d={path(top.pts, true)}
+        fill="#ffffff"
+        fillOpacity={ghost ? 0.35 : 1}
+        strokeLinejoin="round"
+        {...line}
+        style={{ transition: "fill-opacity 400ms ease, stroke 400ms ease" }}
+      />
+    </>
   );
 }
 
 export function Stack() {
-  const [active, setActive] = useState(0);
+  const root = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState(-1); // -1: nothing lifted yet
+  const [ready, setReady] = useState(false); // intro finished, labels may show
 
+  // Intro. Runs before the page's motion gate is dropped (this component
+  // sits earlier in the tree than V2Motion), so its start state is written
+  // inline before anything can paint the finished stack.
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const motion = document.documentElement.dataset.motion === "on";
+    if (!motion) {
+      gsap.set(el.querySelector("[data-cube]"), { opacity: 0 });
+      setReady(true);
+      return;
+    }
+
+    const ctx = gsap.context(() => {
+      const slabs = gsap.utils.toArray<SVGGElement>("[data-slab]", el);
+      // Every slab starts folded into the cube's volume: pulled to the
+      // cube's centre line and shrunk to its footprint.
+      slabs.forEach((s, i) => {
+        const rest = TOP + i * STEP + D / 2;
+        gsap.set(s, {
+          opacity: 0,
+          y: CUBE_Y + CUBE_EDGE / 2 - rest,
+          scale: CUBE_W / W,
+          transformOrigin: `${CX}px ${rest}px`,
+        });
+      });
+      gsap.set("[data-cube]", { opacity: 1, scale: 1, transformOrigin: `${CX}px ${CUBE_Y + CUBE_EDGE / 2}px` });
+      gsap.set("[data-leads]", { opacity: 0 });
+
+      gsap
+        .timeline({ delay: 0.5 })
+        // A breath on the cube before it opens.
+        .to("[data-cube]", { y: -6, duration: 0.5, ease: "sine.inOut", yoyo: true, repeat: 1 })
+        .to("[data-cube]", { opacity: 0, scale: 0.96, duration: 0.25, ease: "power1.in" }, ">-0.05")
+        // The wave: slabs spring out top to bottom, overshoot, settle.
+        .to(
+          slabs,
+          {
+            opacity: 1,
+            y: 0,
+            scale: 1,
+            duration: 1.05,
+            ease: "back.out(2.1)",
+            stagger: { each: 0.075, from: "start" },
+          },
+          "<",
+        )
+        .to("[data-leads]", { opacity: 1, duration: 0.5, ease: "power1.out" }, "-=0.35")
+        .add(() => {
+          setReady(true);
+          setActive(0);
+        });
+    }, el);
+
+    return () => ctx.revert();
+  }, []);
+
+  // The walk. Starts only once the intro has handed over.
   useEffect(() => {
+    if (!ready) return;
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const id = setInterval(() => setActive((a) => (a + 1) % LAYERS.length), CYCLE_MS);
     return () => clearInterval(id);
-  }, []);
+  }, [ready]);
 
-  // Everything at or above the active layer rises by LIFT, opening a gap
-  // beneath it so its lit sides show.
-  const offset = (i: number) => (i <= active ? -LIFT : 0);
+  const offset = (i: number) => (active >= 0 && i <= active ? -LIFT : 0);
   const restY = (i: number) => TOP + i * STEP;
   const edgeY = (i: number) => restY(i) + offset(i) + D / 2;
 
   return (
-    <div className="relative mx-auto w-full max-w-[60rem]" style={{ aspectRatio: "1000 / 600" }}>
+    <div ref={root} className="relative mx-auto w-full max-w-[60rem]" style={{ aspectRatio: "1000 / 600" }}>
       <svg
         viewBox="0 0 1000 600"
         className="absolute inset-0 h-full w-full overflow-visible"
         role="img"
         aria-label="Riffle's architecture as a stack: app, explainer, scorer and intake resting on shared contracts."
       >
-        {/* Leader lines under the slabs. Dotted at rest, solid colour when live. */}
-        {LAYERS.map((l, i) => {
-          const live = i === active;
-          const x1 = l.side === "left" ? 190 : 810;
-          const x2 = l.side === "left" ? CX - W - 6 : CX + W + 6;
-          return (
-            <g key={`lead-${l.key}`} data-anim="lead">
-              <defs>
-                <linearGradient id={`lead-${l.key}`} x1={l.side === "left" ? "0" : "1"} x2={l.side === "left" ? "1" : "0"}>
-                  <stop offset="0" stopColor={l.tone[0]} />
-                  <stop offset="1" stopColor={l.tone[1]} />
-                </linearGradient>
-              </defs>
+        <defs>
+          {LAYERS.map((l) => (
+            <pattern key={l.key} id={`tex-${l.key}`} patternUnits="objectBoundingBox" width="1" height="1">
+              <image href={l.art} width="420" height="140" preserveAspectRatio="xMidYMid slice" />
+            </pattern>
+          ))}
+        </defs>
+
+        {/* Leader lines: dotted at rest, a hairline of the layer's colour when
+            live. Drawn first so slabs paint over their inner ends. */}
+        <g data-leads>
+          {LAYERS.map((l, i) => {
+            const live = i === active;
+            const left = l.side === "left";
+            return (
               <line
-                x1={x1}
-                x2={x2}
+                key={l.key}
+                x1={left ? 196 : 804}
+                x2={left ? CX - W - 8 : CX + W + 8}
                 y1={edgeY(i)}
                 y2={edgeY(i)}
-                stroke={live ? `url(#lead-${l.key})` : T.grey}
-                strokeWidth={live ? 1.6 : 1.1}
-                strokeDasharray={live ? undefined : "2 4"}
-                style={{ transition: "all 500ms cubic-bezier(.2,.8,.2,1)", opacity: live ? 1 : 0.7 }}
+                stroke={live ? l.tone[1] : T.grey}
+                strokeWidth={live ? 1.3 : 1}
+                strokeDasharray={live ? undefined : "1.5 3.5"}
+                strokeLinecap="round"
+                style={{ transition: "all 600ms cubic-bezier(.2,.8,.2,1)", opacity: live ? 1 : 0.55 }}
               />
+            );
+          })}
+        </g>
+
+        {[...LAYERS.keys()].reverse().map((i) => {
+          const l = LAYERS[i];
+          const live = i === active;
+          return (
+            <g key={l.key} data-slab>
+              <g style={{ transform: `translateY(${offset(i)}px)`, transition: "transform 700ms cubic-bezier(.2,.8,.2,1)" }}>
+                <Box
+                  y={restY(i)}
+                  w={W}
+                  depth={D}
+                  r={R}
+                  sideFill={live ? `url(#tex-${l.key})` : "#ffffff"}
+                  stroke={live ? l.tone[1] : T.ink}
+                  ghost={active >= 0 && !live}
+                />
+                <text
+                  transform={`matrix(0.866 0.5 -0.866 0.5 ${CX} ${restY(i)})`}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  className="font-mono"
+                  fontSize="20"
+                  letterSpacing="1"
+                  fill={live ? l.tone[1] : T.grey}
+                  style={{ opacity: live ? 1 : active >= 0 ? 0 : 0.5, transition: "opacity 400ms ease, fill 400ms ease" }}
+                >
+                  {l.key}
+                </text>
+              </g>
             </g>
           );
         })}
 
-        {/* Paint bottom slab first so each one above occludes the one below. */}
-        {[...LAYERS.keys()].reverse().map((i) => (
-          <g
-            key={LAYERS[i].key}
-            data-anim="plate"
-            style={{
-              transform: `translateY(${offset(i)}px)`,
-              transition: "transform 700ms cubic-bezier(.2,.8,.2,1)",
-            }}
+        {/* The opening cube: one volume, the mark on its left face. */}
+        <g data-cube>
+          <Box y={CUBE_Y} w={CUBE_W} depth={CUBE_EDGE} r={14} sideFill="#ffffff" stroke={T.ink} />
+          {/* Left-face plane: x along the L→B edge, y straight down. */}
+          <text
+            transform={`matrix(0.866 0.5 0 1 ${CX - CUBE_W + 26} ${CUBE_Y + CUBE_EDGE * 0.62})`}
+            className="font-mono"
+            fontSize="26"
+            fontWeight="600"
+            fill={T.ink}
           >
-            <Slab y={restY(i)} active={i === active} tone={LAYERS[i].tone} id={LAYERS[i].key} label={LAYERS[i].key} art={LAYERS[i].art} />
-          </g>
-        ))}
+            (riffle)
+          </text>
+        </g>
       </svg>
 
-      {/* Pills as HTML so they use the page's fonts; positioned from the
-          same geometry as the leader lines. */}
+      {/* Pills: HTML for real fonts, centred exactly on their line's y. The
+          caption hangs off the pill absolutely, so it never shifts the pill
+          off the line — the misalignment the first version had. */}
       {LAYERS.map((l, i) => {
         const live = i === active;
         const left = l.side === "left";
         return (
           <div
-            key={`pill-${l.key}`}
-            data-anim="lead"
-            className="absolute flex flex-col gap-2"
+            key={l.key}
+            className="absolute"
             style={{
-              left: left ? "19%" : "81%",
+              left: left ? "19.6%" : "80.4%",
               top: `${(edgeY(i) / 600) * 100}%`,
               transform: left ? "translate(-100%, -50%)" : "translate(0, -50%)",
-              alignItems: left ? "flex-end" : "flex-start",
-              transition: "top 700ms cubic-bezier(.2,.8,.2,1)",
+              opacity: ready ? 1 : 0,
+              transition: "top 700ms cubic-bezier(.2,.8,.2,1), opacity 500ms ease",
             }}
           >
             <span
-              className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 font-mono text-[12px] tracking-[0.12em] whitespace-nowrap uppercase"
+              className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-[3px] font-mono text-[10.5px] leading-none tracking-[0.1em] whitespace-nowrap uppercase"
               style={{
-                backgroundColor: "#fff",
-                outline: `1px solid ${live ? l.tone[1] : T.stroke}`,
-                color: live ? T.ink : T.nickel,
-                transition: "outline-color 400ms ease, color 400ms ease",
+                outline: `1px solid ${live ? "rgba(22,23,29,0.18)" : T.stroke}`,
+                backgroundColor: "rgba(255,255,255,0.7)",
+                color: live ? T.ink : T.grey,
+                transition: "color 400ms ease, outline-color 400ms ease",
               }}
             >
               <span
                 className="flex items-center"
-                style={{
-                  color: T.grey,
-                  filter: live ? "none" : "grayscale(1)",
-                  opacity: live ? 1 : 0.7,
-                  transition: "filter 400ms ease, opacity 400ms ease",
-                }}
+                style={{ filter: live ? "none" : "grayscale(1)", opacity: live ? 1 : 0.6, transition: "filter 400ms ease, opacity 400ms ease" }}
               >
-                (<LangIcon lang={l.icon} className="mx-[2px] size-[13px]" />)
+                (<LangIcon lang={l.icon} className="mx-px size-[10px]" />)
               </span>
               {l.key}
             </span>
             <span
-              className="font-geist text-[14px] whitespace-nowrap"
+              className="absolute top-full mt-2 font-geist text-[13px] whitespace-nowrap"
               style={{
+                [left ? "right" : "left"]: 0,
                 color: T.grey,
                 opacity: live ? 1 : 0,
-                transform: `translateY(${live ? 0 : -4}px)`,
+                transform: `translateY(${live ? 0 : -3}px)`,
                 transition: "opacity 400ms ease, transform 400ms ease",
               }}
             >

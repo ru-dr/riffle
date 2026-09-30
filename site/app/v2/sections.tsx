@@ -9,6 +9,7 @@ const LOGO_DEV_TOKEN = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN;
 import {
   FOOTER_LINKS,
   INVARIANTS,
+  CORPUS_SAMPLE,
   MISSION,
   PRIOR_WORK,
   PR_EVENT,
@@ -79,21 +80,22 @@ export function Provenance() {
       className="v2-wrapper v2-ticks flex flex-col items-center justify-center border-t pt-10 pb-10 md:gap-2 md:pt-14"
       style={{ borderColor: T.stroke }}
     >
+      {/* Repositories named as slugs, not logos: they are the training corpus,
+          not customers, and a logo wall would say otherwise. */}
       <p data-anim="rise" className="text-center font-geist text-[16px] text-balance" style={{ color: T.nickel }}>
-        Trained on public defect history, then on yours
+        Planned training corpus: 50 public repositories, then yours
       </p>
       <div data-anim="rise" className="mt-6 flex items-center gap-6">
         <Paren />
-        <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
-          {["AIDev", "ApacheJIT", "MSR 2020", "Your revert history"].map((src, i) => (
-            <span
-              key={src}
-              className="font-geist text-[17px] font-medium tracking-[-0.02em]"
-              style={{ color: T.ink, opacity: i === 3 ? 1 : 0.42 }}
-            >
-              {src}
+        <div className="flex max-w-[52rem] flex-wrap items-center justify-center gap-x-8 gap-y-3">
+          {CORPUS_SAMPLE.map((repo) => (
+            <span key={repo} className="font-mono text-[14px]" style={{ color: T.ink, opacity: 0.5 }}>
+              {repo}
             </span>
           ))}
+          <span className="font-mono text-[14px]" style={{ color: T.ink }}>
+            +44 more
+          </span>
         </div>
         <Paren flip />
       </div>
@@ -247,8 +249,10 @@ function Artwork({ tone, code, art }: { tone: readonly string[]; code: readonly 
           own; around it runs a 1px transparent gap where the texture shows
           through; around that, a thin light rim with a soft glow. */}
       <div
-        className="absolute top-1/2 right-0 left-6 -translate-y-1/2 rounded-l-[9px] p-px md:left-10"
+        className="absolute top-1/2 right-0 left-6 -translate-y-1/2 rounded-l-[9px] py-px pr-0 pl-px md:left-10"
         style={{
+          // No right rim and no right gap: the card runs straight into the
+          // section's wall, so no sliver of texture shows at that edge.
           border: "1px solid rgba(255,255,255,0.55)",
           borderRight: "none",
           boxShadow: "0 0 14px rgba(255,255,255,0.22), 0 24px 50px -20px rgba(0,0,0,0.6)",
@@ -274,9 +278,23 @@ function Artwork({ tone, code, art }: { tone: readonly string[]; code: readonly 
   );
 }
 
-/* Statistics: heading, then a 4/6 split of big figure and chart, then three
-   cells — each divided by hairlines, as theirs are. */
+/* Statistics: heading, a 4/6 split of headline figure and a chart, then
+   three cells. Every value shows its status from the dataset plan. */
+function StatusTag({ status }: { status: string }) {
+  return (
+    <span
+      className="rounded px-1.5 py-0.5 font-mono text-[10.5px] tracking-[0.06em] uppercase"
+      style={{ outline: `1px solid ${T.stroke}`, color: T.grey }}
+    >
+      {status}
+    </span>
+  );
+}
+
+const DOMAIN_COLORS = ["#16171d", "#3b3440", "#867e8e", "#b9b3bf", "#00b442"];
+
 export function StatsBand() {
+  const total = STATS.domains.reduce((n, [, v]) => n + v, 0);
   return (
     <section className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.stroke }}>
       <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
@@ -285,40 +303,66 @@ export function StatsBand() {
         </h3>
       </div>
       <div className="grid border-t md:grid-cols-10 md:divide-x" style={{ borderColor: T.stroke }}>
-        <div data-anim="rise" className="flex flex-col justify-between gap-16 p-6 md:col-span-4 md:p-10" style={{ borderColor: T.stroke }}>
-          <p className="font-geist text-[15px]" style={{ color: T.nickel }}>
-            Bootstrap corpus
-          </p>
+        <div data-anim="rise" className="flex flex-col justify-between gap-16 p-6 md:col-span-4 md:p-10">
+          <div className="flex items-center gap-3">
+            <p className="font-geist text-[15px]" style={{ color: T.nickel }}>
+              Pull requests in the corpus
+            </p>
+            <StatusTag status={STATS.bigStatus} />
+          </div>
           <div>
             <p className="font-geist text-[2.75rem] leading-none font-medium tracking-[-0.04em] md:text-[3.5rem]">
               <span data-count={STATS.big}>{STATS.big.toLocaleString("en-US")}</span>
             </p>
-            <p className="mt-3 font-geist text-[14px]" style={{ color: T.grey }}>
+            <p className="mt-3 max-w-[20rem] font-geist text-[14px] leading-[1.5]" style={{ color: T.grey }}>
               {STATS.bigLabel}
             </p>
           </div>
         </div>
-        <div data-anim="rise" className="flex flex-col justify-between gap-8 border-t p-6 md:col-span-6 md:border-t-0 md:p-10" style={{ borderColor: T.stroke }}>
-          <p className="w-fit rounded px-2 py-1 font-mono text-[12px]" style={{ outline: `1px solid ${T.stroke}`, color: T.nickel }}>
-            ApacheJIT · labelled share
-          </p>
+
+        {/* By domain, to scale — the measured subtotals, not an illustration. */}
+        <div
+          data-anim="rise"
+          className="flex flex-col justify-between gap-8 border-t p-6 md:col-span-6 md:border-t-0 md:p-10"
+          style={{ borderColor: T.stroke }}
+        >
+          <div className="flex items-center gap-3">
+            <p className="w-fit rounded px-2 py-1 font-mono text-[12px]" style={{ outline: `1px solid ${T.stroke}`, color: T.nickel }}>
+              By domain
+            </p>
+            <StatusTag status="measured" />
+          </div>
           <div>
-            <div className="flex h-24 items-end gap-2">
-              <div className="h-full w-[26.5%] rounded-sm" style={{ backgroundColor: T.live }} />
-              <div className="h-full flex-1 rounded-sm" style={{ backgroundColor: T.stroke }} />
+            <div className="flex h-24 w-full gap-[3px]">
+              {STATS.domains.map(([name, v], i) => (
+                <div
+                  key={name}
+                  className="h-full rounded-[3px]"
+                  style={{ width: `${(v / total) * 100}%`, backgroundColor: DOMAIN_COLORS[i] }}
+                  title={`${name}: ${v.toLocaleString("en-US")}`}
+                />
+              ))}
             </div>
-            <div className="mt-3 flex justify-between font-mono text-[12px]">
-              <span style={{ color: T.accent }}>26.5% bug-inducing</span>
-              <span style={{ color: T.grey }}>73.5% clean</span>
-            </div>
+            <ul className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
+              {STATS.domains.map(([name, v], i) => (
+                <li key={name} className="flex items-center gap-2 font-mono text-[11.5px]">
+                  <span className="size-2 shrink-0 rounded-[2px]" style={{ backgroundColor: DOMAIN_COLORS[i] }} />
+                  <span style={{ color: T.nickel }}>{name}</span>
+                  <span style={{ color: T.grey }}>{Math.round((v / total) * 100)}%</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       </div>
       <div className="grid border-t sm:grid-cols-3 sm:divide-x" style={{ borderColor: T.stroke }}>
-        {STATS.cells.map(([value, label]) => (
-          <div key={label} data-anim="rise" className="p-6 md:p-10" style={{ borderColor: T.stroke }}>
-            <p className="font-geist text-[2rem] leading-none font-medium tracking-[-0.03em]">{value}</p>
-            <p className="mt-3 font-geist text-[14px]" style={{ color: T.grey }}>
+        {STATS.cells.map(([value, label, status]) => (
+          <div key={label} data-anim="rise" className="flex flex-col gap-3 p-6 md:p-10">
+            <div className="flex items-center gap-3">
+              <p className="font-geist text-[2rem] leading-none font-medium tracking-[-0.03em]">{value}</p>
+              <StatusTag status={status} />
+            </div>
+            <p className="font-geist text-[14px]" style={{ color: T.grey }}>
               {label}
             </p>
           </div>
@@ -524,108 +568,117 @@ export function ResourcesGrid() {
   );
 }
 
-/* Dark footer, to the reference render: a two-column CTA row, a banner flush
-   to the wrapper's edges with the mark centred, a compact cluster of link
-   columns with Social pushed right, deliberate empty space, then a ticked
-   rule over the copyright line.
+/* Dark footer, to the reference's markup: one wrapper holding the CTA grid,
+   the banner at a 6.4:1 aspect, and the link row; then a ticked wrapper for
+   the copyright. Its screen-filling height comes from the padding (py-30
+   around the CTA, pb-40 under the links), not from a viewport unit.
 
    Their right-hand column is a newsletter form. Riffle has no list, so the
-   same bordered field-plus-button shape holds the repository address and a
-   Watch button — it looks like theirs and says something true. */
+   same bordered box holds the repository address and a button that goes
+   there — the shape of theirs, saying something true. */
+const GITHUB_PATH =
+  "M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.19c0 .21.14.46.55.38A8 8 0 0 0 8 0Z";
+
 export function ClosingBlock() {
   return (
-    // A full viewport tall, as the reference's is: the link section takes the
-    // slack so the copyright rule always lands on the bottom edge.
-    <footer data-surface="dark" className="flex min-h-dvh flex-col" style={{ backgroundColor: T.darkBg }}>
-      <section className="v2-wrapper grid w-full gap-10 px-6 pt-14 pb-20 md:grid-cols-2 md:px-6 md:pt-16 md:pb-24 lg:px-6">
-        <h3
-          data-anim="rise"
-          className="max-w-[28rem] font-geist text-[1.875rem] leading-[1.12] font-medium tracking-[-0.025em] md:text-[2.25rem]"
-          style={{ color: T.darkInk }}
-        >
-          Interested in where your repository breaks?
-        </h3>
-        <div data-anim="rise" className="flex flex-col gap-4 md:items-end md:pt-1">
-          <p className="w-full max-w-[17.5rem] font-geist text-[17px] md:max-w-[17.5rem] md:self-end lg:max-w-[17.5rem]" style={{ color: T.darkInk }}>
-            Follow the build on GitHub
-          </p>
+    <footer data-surface="dark" style={{ backgroundColor: T.darkBg }}>
+      <section className="v2-wrapper">
+        <div className="grid grid-cols-1 items-center gap-10 px-5 py-10 text-center md:px-10 md:py-[7.5rem] lg:grid-cols-2 lg:items-start lg:gap-16 lg:text-left">
+          <div className="mx-auto max-w-xl lg:mx-0">
+            <h2 data-anim="rise" className={`${H2} text-center lg:text-left`} style={{ color: "#fff" }}>
+              Interested in where your repository breaks?
+            </h2>
+          </div>
           <div
-            className="flex w-full max-w-[17.5rem] items-center justify-between gap-3 rounded-[4px] py-1.5 pr-1.5 pl-3 md:w-[17.5rem] lg:w-[17.5rem]"
-            style={{ outline: `1px solid ${T.nickel}` }}
+            data-anim="rise"
+            className="mx-auto flex w-full max-w-md flex-col items-center gap-4 lg:mx-0 lg:items-stretch lg:justify-self-end"
           >
-            <span className="truncate font-geist text-[14px]" style={{ color: T.darkGrey }}>
-              github.com/ru-dr/riffle
-            </span>
-            <a
-              href={REPO}
-              className="rounded-[3px] px-3 py-1.5 font-geist text-[14px] font-medium whitespace-nowrap transition-transform hover:scale-105"
-              style={{ backgroundColor: "#fff", color: T.ink }}
+            <h3 className="text-center font-geist text-[20px] font-normal md:text-[24px] lg:text-left" style={{ color: "#fff" }}>
+              Follow the build on GitHub
+            </h3>
+            <div
+              className="relative flex items-center overflow-hidden rounded border transition-colors hover:bg-white/10"
+              style={{ borderColor: "rgba(255,255,255,0.2)" }}
             >
-              Watch repo
-            </a>
+              <span
+                className="flex-1 truncate px-3 py-3 text-left font-geist text-[14px] sm:px-5 sm:py-4 sm:text-[16px]"
+                style={{ color: "rgba(255,255,255,0.55)" }}
+              >
+                github.com/ru-dr/riffle
+              </span>
+              <a
+                href={REPO}
+                className="mr-1.5 shrink-0 rounded px-3 py-2 font-geist text-[14px] font-medium whitespace-nowrap transition-colors hover:bg-white/90 sm:mr-2 sm:px-6"
+                style={{ backgroundColor: "#fff", color: T.ink }}
+              >
+                Watch repo
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div
+          data-anim="rise"
+          className="relative flex aspect-[4] w-full items-center justify-center md:aspect-[6.4]"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/v2/art/rays-purple.webp"
+            alt=""
+            loading="lazy"
+            className="absolute inset-0 z-0 h-full w-full object-cover"
+          />
+          <span
+            className="relative flex size-12 items-center justify-center rounded-[12px] md:size-20 md:rounded-[18px]"
+            style={{ backgroundColor: "#0d0c10", boxShadow: "0 12px 30px -8px rgba(0,0,0,0.6)" }}
+          >
+            <Mark aria-hidden="true" className="h-auto w-7 md:w-11" style={{ color: "#fff" }} />
+          </span>
+        </div>
+
+        <div className="flex flex-col items-center justify-center gap-10 px-5 pt-10 pb-16 text-center md:flex-row md:items-start md:justify-between md:gap-0 md:px-24 md:pt-16 md:pb-40 md:text-left">
+          <div className="flex flex-col items-center gap-10 md:flex-row md:items-start md:gap-20">
+            {FOOTER_LINKS.map(([heading, links]) => (
+              <div key={heading}>
+                <p className="mb-8 font-mono text-[12px] tracking-[0.025em] uppercase" style={{ color: T.grey }}>
+                  {heading}
+                </p>
+                <ul className="flex flex-col gap-3">
+                  {links.map(([label, href]) => (
+                    <li key={label}>
+                      <a href={href} className="v2-link font-geist text-[16px]" style={{ color: "#fff" }}>
+                        {label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-col items-center md:items-start">
+            <p className="mb-8 font-mono text-[12px] tracking-[0.025em] uppercase" style={{ color: T.grey }}>
+              Social
+            </p>
+            <ul className="flex flex-col gap-3">
+              <li>
+                <a href={REPO} className="v2-link flex items-center gap-3 font-geist text-[16px]" style={{ color: "#fff" }}>
+                  <svg viewBox="0 0 16 16" className="size-4" fill="currentColor" aria-hidden="true">
+                    <path d={GITHUB_PATH} />
+                  </svg>
+                  GitHub
+                </a>
+              </li>
+            </ul>
           </div>
         </div>
       </section>
 
-      <section className="v2-wrapper w-full">
-        <div
-          data-anim="rise"
-          className="flex h-36 items-center justify-center md:h-[8.75rem]"
-          style={{
-            backgroundColor: "#3a1e8c",
-            backgroundImage: "url(/v2/art/rays-purple.webp)",
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
-        >
-          <span
-            className="flex size-12 items-center justify-center rounded-[10px]"
-            style={{ backgroundColor: "#0d0c10", boxShadow: "0 10px 26px -8px rgba(0,0,0,0.6)" }}
-          >
-            <Mark aria-hidden="true" className="h-auto w-7" style={{ color: T.darkInk }} />
-          </span>
-        </div>
-      </section>
-
-      <section className="v2-wrapper flex w-full flex-1 flex-col justify-between gap-12 px-6 pt-11 pb-24 sm:flex-row sm:items-start sm:px-14 md:pb-28">
-        <div className="flex flex-wrap gap-x-12 gap-y-10 sm:gap-x-12">
-          {FOOTER_LINKS.map(([heading, links]) => (
-            <div key={heading}>
-              <p className="font-mono text-[12px] tracking-[0.06em] uppercase" style={{ color: T.darkGrey }}>
-                {heading}
-              </p>
-              <ul className="mt-7 flex flex-col gap-4">
-                {links.map(([label, href]) => (
-                  <li key={label}>
-                    <a href={href} className="v2-link font-geist text-[14px]" style={{ color: T.darkInk }}>
-                      {label}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-        <div className="sm:pr-8">
-          <p className="font-mono text-[12px] tracking-[0.06em] uppercase" style={{ color: T.darkGrey }}>
-            Social
-          </p>
-          <ul className="mt-7 flex flex-col gap-3">
-            <li>
-              <a href={REPO} className="v2-link flex items-center gap-2 font-geist text-[14px]" style={{ color: T.darkInk }}>
-                <svg viewBox="0 0 16 16" className="size-[15px]" fill="currentColor" aria-hidden="true">
-                  <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.19c0 .21.14.46.55.38A8 8 0 0 0 8 0Z" />
-                </svg>
-                GitHub
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <section className="v2-wrapper v2-ticks w-full border-t px-6 py-5 sm:px-14" style={{ borderColor: T.nickel }}>
-        <p className="font-geist text-[13px]" style={{ color: T.darkGrey }}>
-          &copy; 2026 Riffle contributors. Apache-2.0.
+      <section
+        className="v2-wrapper v2-ticks flex flex-col items-center justify-between gap-3 border-t px-5 py-5 text-center md:flex-row md:gap-0 md:px-24 md:text-left"
+        style={{ borderColor: T.nickel }}
+      >
+        <p className="font-geist text-[14px]" style={{ color: T.grey }}>
+          &copy; 2026 Riffle contributors. <span className="hidden sm:inline">Apache-2.0.</span>
         </p>
       </section>
     </footer>
