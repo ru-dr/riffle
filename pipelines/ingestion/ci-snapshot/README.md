@@ -21,7 +21,7 @@ last 90 days stay on GitHub for now; see "Pass 2" below.)
 | --- | --- | --- | --- |
 | `commits` | A commit on the default branch | sha, date, PR number (from `(#N)`), **combined CI result** | The `ci_fail` label: did CI fail on the merge commit |
 | `prs` | A PR closed in the window | number, merged or closed, created / closed / merged dates, author, base branch, last commit's sha and **combined CI result** | Pre-merge signal: was the PR merged while CI was red |
-| `checks` | A sampled failed commit (50 per repository) | every check run on it (name, app, conclusion, timings; each Actions job is one) and every commit status (Prow and other third-party CI) | Which checks make a commit red: tells chronically failing or optional checks from real failures, to clean `ci_fail` across all commits |
+| `checks` | A sampled failed commit (100 per repository: 50 first, then 50 more) | every check run on it (name, app, conclusion, timings; each Actions job is one) and every commit status (Prow and other third-party CI) | Which checks make a commit red: tells chronically failing or optional checks from real failures, to clean `ci_fail` across all commits |
 | `runs` | A GitHub Actions run on a push to the default branch | workflow name and file, sha, **conclusion**, **attempt** (reruns), run number, created / started / updated times | Which workflow failed, reruns as a flakiness signal, durations |
 
 The combined CI result is GitHub's `statusCheckRollup`: `SUCCESS`, `FAILURE`,
@@ -43,6 +43,59 @@ Actions and third-party CI (Prow, Buildkite, …). `runs` covers Actions only.
 | Third-party check details (Prow, Buildkite runs) | Only their combined result, via `commits` and `prs` |
 | Logs and artifacts | Gigabytes per run, and already on their own 90-day retention |
 | Commits on other branches (release branches) | Labels are defined on the default branch; backports inherit their PR's label |
+
+## Your GitHub token (each machine, your own account)
+
+The tool reads the token from the `GITHUB_TOKEN` environment variable. If
+that is not set, it uses the GitHub CLI's login (`gh auth token`). Use **your
+own** account on your own machine; never share a token or use someone
+else's.
+
+**Option A: GitHub CLI (simplest).** Install `gh` (https://cli.github.com),
+then:
+
+```bash
+gh auth login        # GitHub.com → HTTPS → log in with a web browser
+```
+
+Nothing else is needed; the tool picks the login up.
+
+**Option B: a personal access token (PAT).**
+
+1. Go to https://github.com/settings/personal-access-tokens/new (Settings →
+   Developer settings → Personal access tokens → Fine-grained tokens →
+   Generate new token).
+2. Name it `riffle-ci-snapshot`, expiry 7 days.
+3. **Repository access: Public repositories (read-only).** No other
+   permissions are needed; everything the tool reads is public.
+4. Generate, and copy the token (it starts with `github_pat_`).
+
+A classic token (Tokens (classic) → Generate new token, **no scopes
+ticked**) works too.
+
+Pass it in the same terminal you run the tool from:
+
+```bash
+# Linux / macOS
+export GITHUB_TOKEN=github_pat_xxxxxxxx
+./ci-snapshot -mode prs -shard 2/2
+```
+
+```powershell
+# Windows PowerShell
+$env:GITHUB_TOKEN = "github_pat_xxxxxxxx"
+.\ci-snapshot-windows-amd64.exe -mode prs -shard 2/2
+```
+
+```bat
+:: Windows cmd
+set GITHUB_TOKEN=github_pat_xxxxxxxx
+ci-snapshot-windows-amd64.exe -mode prs -shard 2/2
+```
+
+In tmux, each new window inherits the variable if it was exported before
+`tmux new`; otherwise run the `export` line in each window. Delete the token
+at https://github.com/settings/tokens once the run is finished.
 
 ## Who runs what: exact commands
 
@@ -67,21 +120,18 @@ tmux new -s ci
 # ...when it finishes (~7:10 PM), in the same window: half of the PRs
 ./ci-snapshot -mode prs -shard 1/2
 
-# Ctrl+b then c  ->  window 2 (REST): per-check results for 50 failed
-# PR merge commits per repository, from window 1's output as it finishes
+# Ctrl+b then c  ->  window 2 (REST): per-check results for 100 failed
+# PR merge commits per repository, in two rounds: 50 for every repository
+# first (before the deadline), then topped up to 100
 ./ci-snapshot -mode checks
-# ...when it finishes (~8:15 PM), in the same window: top up to 100 per
-# repository (fetches only the 50 new commits in each)
-./ci-snapshot -mode checks -sample 100
 
 # Ctrl+b then d to detach; `tmux attach -t ci` to come back
 ```
 
 ### PC 2 (friend)
 
-Log in once as **your own** GitHub account: `gh auth login` (or set
-`GITHUB_TOKEN` to your own token). Then, with the repository checked out on
-branch `pipelines/ci-snapshot`:
+Set up **your own** token first (see "Your GitHub token" above). Then, with
+the repository checked out on branch `pipelines/ci-snapshot`:
 
 ```bash
 cd riffle/pipelines/ingestion/ci-snapshot
@@ -135,7 +185,8 @@ Measured on 30 September 2026. Both machines in parallel, started around
 | Run | Machine | Volume | Expected time | Done by |
 | --- | --- | --- | --- | --- |
 | `commits` | PC 1 | ~500,000 commits, ~5,000 GraphQL points | 60–80 min | ~7:00–7:20 PM |
-| `checks` | PC 1 | ~5,000 commits × 2 requests = ~10,000 REST | ~2 h (follows `commits`) | ~8:00–8:15 PM |
+| `checks` round 1 (50 per repository) | PC 1 | ~5,000 commits × 2 requests = ~10,000 REST | ~2 h (follows `commits`) | ~8:15 PM |
+| `checks` round 2 (up to 100) | PC 1 | another ~10,000 REST | ~2 h | ~10:15 PM |
 | `prs` | PC 2 half, then PC 1 half | ~300,000–450,000 PRs walked, ~4,000–9,000 points | ~1 h per half | ~7:00 PM (PC 2), ~8:00 PM (PC 1) |
 | `runs` | PC 2 | tens of runs a day for most repositories; ~2,000 a day for pytorch | small and medium repositories ~1.5 h; giants after 8 PM | partial by 8 PM |
 

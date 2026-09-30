@@ -66,7 +66,7 @@ func readLines[T any](path string) []T {
 	return out
 }
 
-func (c *client) runChecks(worker int, repo string) {
+func (c *client) runChecks(worker int, repo string, sampleSize int) {
 	name := strings.ReplaceAll(repo, "/", "__")
 	base := filepath.Join(c.cfg.out, name)
 	// .done records the sample size it finished at; a bigger -sample tops
@@ -75,7 +75,7 @@ func (c *client) runChecks(worker int, repo string) {
 	if b, err := os.ReadFile(base + ".done"); err == nil {
 		var at int
 		fmt.Sscan(strings.TrimSpace(strings.SplitN(string(b), " ", 2)[0]), &at)
-		if at >= c.cfg.sample || (at == 0 && c.cfg.sample <= 50) {
+		if at >= sampleSize || (at == 0 && sampleSize <= 50) {
 			c.send(repoDoneMsg{repo: repo, commits: countLines(base + ".jsonl"), skipped: true})
 			return
 		}
@@ -106,16 +106,16 @@ func (c *client) runChecks(worker int, repo string) {
 			}
 		}
 	}
-	if len(failed) < c.cfg.sample {
+	if len(failed) < sampleSize {
 		sort.Slice(other, func(i, j int) bool { return other[i].CommittedAt < other[j].CommittedAt })
-		for i := 0; i < len(other) && len(failed) < c.cfg.sample; i++ {
-			failed = append(failed, other[i*len(other)/min(len(other), c.cfg.sample-len(failed)+i)])
+		for i := 0; i < len(other) && len(failed) < sampleSize; i++ {
+			failed = append(failed, other[i*len(other)/min(len(other), sampleSize-len(failed)+i)])
 		}
 	}
 	sort.Slice(failed, func(i, j int) bool { return failed[i].CommittedAt < failed[j].CommittedAt })
 	// An even spread across the window, not just the newest.
 	sample := failed
-	if n := c.cfg.sample; len(failed) > n {
+	if n := sampleSize; len(failed) > n {
 		sample = make([]Line, 0, n)
 		for i := 0; i < n; i++ {
 			sample = append(sample, failed[i*len(failed)/n])
@@ -190,6 +190,6 @@ func (c *client) runChecks(worker int, repo string) {
 		done++
 		c.send(progressMsg{worker: worker, repo: repo, done: (i + 1) * 1000 / len(sample), total: 1000, pageSize: 100, records: done})
 	}
-	os.WriteFile(base+".done", []byte(fmt.Sprintf("%d %s\n", c.cfg.sample, time.Now().UTC().Format(time.RFC3339))), 0o644)
+	os.WriteFile(base+".done", []byte(fmt.Sprintf("%d %s\n", sampleSize, time.Now().UTC().Format(time.RFC3339))), 0o644)
 	c.send(repoDoneMsg{repo: repo, commits: done})
 }

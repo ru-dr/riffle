@@ -349,7 +349,7 @@ func main() {
 	cfg := config{}
 	flag.StringVar(&cfg.repos, "repos", "repos.txt", "file with one owner/name per line")
 	flag.StringVar(&cfg.mode, "mode", "commits", "commits (default-branch CI per commit), prs (CI on each PR's last commit), runs (Actions runs on default-branch pushes, REST), or checks (per-check results for sampled failed commits, REST)")
-	flag.IntVar(&cfg.sample, "sample", 50, "checks mode: failed commits sampled per repository")
+	flag.IntVar(&cfg.sample, "sample", 100, "checks mode: failed commits sampled per repository (taken in two rounds: 50 for every repository, then the rest)")
 	flag.StringVar(&cfg.from, "from", "", "checks mode: the commits mode's output directory (default ~/proyecto/riffle-data/ci-snapshot/pass1)")
 	flag.StringVar(&cfg.out, "out", "", "output directory (default ~/proyecto/riffle-data/ci-snapshot/<pass1|prs|runs>)")
 	shard := flag.String("shard", "1/1", "i/n: take every n-th repository, starting at i, to split the work across machines")
@@ -457,15 +457,25 @@ func main() {
 				repos[i], repos[j] = repos[j], repos[i]
 			}
 		}
-		c.send(totalsMsg{perRepo: tot, total: sum, repos: len(repos)})
+		steps := len(repos)
+		if cfg.mode == "checks" && cfg.sample > 50 {
+			steps *= 2 // two rounds; each repository finishes once per round
+		}
+		c.send(totalsMsg{perRepo: tot, total: sum, repos: steps})
 
-		jobs := make(chan string)
+		type job struct {
+			repo   string
+			sample int
+			wg     *sync.WaitGroup // the round it belongs to
+		}
+		jobs := make(chan job)
 		var wg sync.WaitGroup
 		for w := 0; w < cfg.workers; w++ {
 			wg.Add(1)
 			go func(w int) {
 				defer wg.Done()
-				for r := range jobs {
+				for j := range jobs {
+					r := j.repo
 					c.send(startMsg{worker: w, repo: r})
 					switch cfg.mode {
 					case "prs":
@@ -473,7 +483,8 @@ func main() {
 					case "runs":
 						c.runRuns(w, r)
 					case "checks":
-						c.runChecks(w, r)
+						c.runChecks(w, r, j.sample)
+						j.wg.Done()
 					default:
 						c.run(w, r)
 					}
@@ -481,26 +492,42 @@ func main() {
 			}(w)
 		}
 		if cfg.mode == "checks" {
-			// Hand out repositories as the commits run finishes them, in
-			// whatever order that is, instead of queueing behind the giants.
-			pending := append([]string(nil), repos...) // commits .done gates each one
-			for len(pending) > 0 {
-				var rest []string
-				for _, r := range pending {
-					_, done := os.Stat(filepath.Join(cfg.from, strings.ReplaceAll(r, "/", "__")+".done"))
-					if done == nil {
-						jobs <- r
-					} else {
-						rest = append(rest, r)
+			// Round one: up to 50 per repository, so every repository has a
+			// sample before the deadline. Round two tops each up to -sample;
+			// the 50 are a subset of it, so only new commits are fetched.
+			// Repositories are handed out as the commits run finishes them,
+			// in whatever order that is, not queued behind the giants.
+			rounds := []int{min(50, cfg.sample)}
+			if cfg.sample > 50 {
+				rounds = append(rounds, cfg.sample)
+			}
+			for ri, size := range rounds {
+				var round sync.WaitGroup
+				if ri > 0 {
+					c.send(eventMsg(fmt.Sprintf("round two: topping every repository up to %d", size)))
+				}
+				pending := append([]string(nil), repos...)
+				for len(pending) > 0 {
+					var rest []string
+					for _, r := range pending {
+						if _, err := os.Stat(filepath.Join(cfg.from, strings.ReplaceAll(r, "/", "__")+".done")); err == nil {
+							round.Add(1)
+							jobs <- job{r, size, &round}
+						} else {
+							rest = append(rest, r)
+						}
+					}
+					if pending = rest; len(pending) > 0 {
+						time.Sleep(20 * time.Second)
 					}
 				}
-				if pending = rest; len(pending) > 0 {
-					time.Sleep(20 * time.Second)
-				}
+				// A repository must finish round one before round two
+				// touches it, or both would write the same file.
+				round.Wait()
 			}
 		} else {
 			for _, r := range repos {
-				jobs <- r
+				jobs <- job{r, cfg.sample, nil}
 			}
 		}
 		close(jobs)
