@@ -155,7 +155,8 @@ export const STATS = {
   cells: [
     ["40 / 10", "repositories for training / unseen-repo validation", "decision"],
     ["100–300", "feature columns per pull request", "estimate"],
-    ["0.65+", "ROC-AUC target on repositories never trained on", "target"],
+    // Target from Kamei et al., cross-project JIT defect prediction (EMSE 2016).
+    ["0.65+", "ROC-AUC target on repositories never trained on", "target", "https://link.springer.com/article/10.1007/s10664-015-9400-x"],
   ] as const,
 } as const;
 
@@ -164,13 +165,14 @@ export const MISSION =
 
 // Stands in for their investor row. These are the papers and datasets the
 // approach rests on — the honest version of "backed by".
+// Every entry links to the primary source, each URL checked to resolve.
 export const PRIOR_WORK = [
-  { name: "Faros AI", domain: "faros.ai" },
-  { name: "LinearB", domain: "linearb.io" },
-  { name: "GitHub", domain: "github.com" },
-  { name: "Apache", domain: "apache.org" },
-  // A conference, not a company — no logo to fetch, so it stays as text.
-  { name: "MSR 2020", domain: null },
+  { name: "Faros AI", note: "Acceleration Whiplash, 2026", domain: "faros.ai", url: "https://www.faros.ai/research/ai-acceleration-whiplash" },
+  { name: "LinearB", note: "2026 Benchmarks", domain: "linearb.io", url: "https://linearb.io/resources/software-engineering-benchmarks-report" },
+  { name: "GitHub", note: "Agent PRs are everywhere", domain: "github.com", url: "https://github.blog/ai-and-ml/generative-ai/agent-pull-requests-are-everywhere-heres-how-to-review-them/" },
+  { name: "ApacheJIT", note: "MSR 2022", domain: "apache.org", url: "https://arxiv.org/abs/2203.00101" },
+  // A paper, not a company — no logo to fetch, so it stays as text.
+  { name: "MSR 2020", note: "On the Shoulders of Giants", domain: null, url: "https://yuyue.github.io/res/paper/newPR_MSR2020.pdf" },
 ] as const;
 
 export const RESOURCES = [

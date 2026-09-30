@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Instrument_Serif } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 // Stopgap: riffle.dev is still parked at the registrar, so absolute URLs
@@ -117,7 +118,13 @@ export default function RootLayout({
     >
       <head>
         <style dangerouslySetInnerHTML={{ __html: criticalCss }} />
-        <script dangerouslySetInnerHTML={{ __html: motionInit }} />
+        {/* next/script, not a raw <script>: React 19 refuses to render inline
+            scripts from components. beforeInteractive is injected into the
+            server HTML ahead of Next's own modules, so it still runs before
+            first paint. */}
+        <Script id="riffle-motion-init" strategy="beforeInteractive">
+          {motionInit}
+        </Script>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}

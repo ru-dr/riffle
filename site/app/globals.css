@@ -121,18 +121,19 @@ body:has([data-riffle-lock]) {
   border-right: 5px solid var(--v2-stroke);
 }
 
-/* One sweep of accent across the headline, then it stays where it lands.
-   400% background over clipped text is what makes the band narrow enough to
-   read as a highlight rather than a gradient fill. */
+/* The headline's light: a soft band of accent that crosses the words every
+   ~9s and then rests on plain ink - never parked on a letter. The band is
+   the accent mixed halfway into the ink with feathered edges, so it reads
+   as light moving across the type, not as a coloured highlight.
+   400% background over clipped text; at either end of the travel only ink
+   is in view, so the loop's snap back from 0% to 100% is invisible. */
 .v2-shine {
   background: linear-gradient(
     110deg,
     var(--v2-ink) 0%,
-    var(--v2-ink) 40%,
-    var(--v2-accent) 48%,
-    var(--v2-accent) 50%,
-    var(--v2-accent) 52%,
-    var(--v2-ink) 60%,
+    var(--v2-ink) 42%,
+    color-mix(in oklab, var(--v2-accent) 55%, var(--v2-ink)) 50%,
+    var(--v2-ink) 58%,
     var(--v2-ink) 100%
   );
   background-size: 400% 100%;
@@ -140,19 +141,22 @@ body:has([data-riffle-lock]) {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: v2-shine 4.5s ease-in-out 1.1s forwards;
+  animation: v2-shine 9s cubic-bezier(0.45, 0, 0.55, 1) 1.6s infinite;
 }
 
 @keyframes v2-shine {
-  to {
-    background-position: 28% 0;
+  0% {
+    background-position: 100% 0;
+  }
+  34%,
+  100% {
+    background-position: 0 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .v2-shine {
     animation: none;
-    background-position: 28% 0;
   }
 }
 

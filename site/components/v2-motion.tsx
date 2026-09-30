@@ -94,8 +94,10 @@ export function V2Motion() {
         // one element because it paints with background-clip:text.
         .fromTo(
           '[data-anim="title"]',
-          { opacity: 0, y: 32, clipPath: "inset(0 0 100% 0)" },
-          { opacity: 1, y: 0, clipPath: "inset(0 0 -10% 0)", duration: 1.3, ease: "power4.out", clearProps: "transform,clipPath" },
+          // Horizontal insets are negative so the wipe never clips the last
+          // glyph's overhang; the element's own padding gives the paint room.
+          { opacity: 0, y: 32, clipPath: "inset(0 -12% 100% -12%)" },
+          { opacity: 1, y: 0, clipPath: "inset(-10% -12% -10% -12%)", duration: 1.3, ease: "power4.out", clearProps: "transform,clipPath" },
           0.25,
         )
         .fromTo('[data-anim="lede"]', { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 1.1, clearProps: "transform" }, 0.5)

@@ -109,7 +109,7 @@ export default function Page() {
               the entrance can move it without breaking the clip. */}
           <h1
             data-anim="title"
-            className="v2-shine v2-hero-title pb-1 text-center font-geist text-[2.25rem] leading-[2.6rem] font-medium tracking-[-0.05em] text-balance"
+            className="v2-shine v2-hero-title px-[0.08em] pb-1 text-center font-geist text-[2.25rem] leading-[2.6rem] font-medium tracking-[-0.05em] text-balance"
           >
             Every repo
             <br />
