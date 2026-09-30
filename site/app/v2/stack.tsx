@@ -339,7 +339,9 @@ export function Stack() {
             onMouseEnter={() => take(i)}
             onMouseLeave={release}
             style={{
-              left: left ? "19.6%" : "80.4%",
+              // Lines end at x=196 / 804 (of 1000); pills sit 6 units short
+              // of that so there is air between line and pill.
+              left: left ? "19%" : "81%",
               top: `${(edgeY(i) / 600) * 100}%`,
               transform: left ? "translate(-100%, -50%)" : "translate(0, -50%)",
               transformOrigin: left ? "right center" : "left center",
@@ -348,19 +350,26 @@ export function Stack() {
                 "top 700ms cubic-bezier(.2,.8,.2,1), opacity 500ms ease, transform 450ms cubic-bezier(.34,1.56,.64,1)",
             }}
           >
-            {/* As minimal as a label gets: a mark and a word, no outline and no
-                fill. Live is carried by ink colour and the drawn leader line. */}
+            {/* A proper pill: white fill, 1px hairline, fully rounded, with
+                even padding around a mark and a word. Live darkens the
+                outline and the ink; the drawn leader does the rest. */}
             <span
-              className="inline-flex cursor-default items-center gap-[5px] font-mono text-[9.5px] leading-none tracking-[0.12em] whitespace-nowrap uppercase"
-              style={{ color: live ? T.ink : T.grey, transition: "color 400ms ease" }}
+              className="inline-flex cursor-default items-center gap-[7px] rounded-full py-[5px] pr-3 pl-2.5 font-mono text-[10px] leading-none tracking-[0.1em] whitespace-nowrap uppercase"
+              style={{
+                backgroundColor: "#ffffff",
+                outline: `1px solid ${live ? "rgba(22,23,29,0.24)" : T.stroke}`,
+                boxShadow: live ? "0 2px 6px -2px rgba(22,23,29,0.12)" : "none",
+                color: live ? T.ink : T.grey,
+                transition: "color 400ms ease, outline-color 400ms ease, box-shadow 400ms ease",
+              }}
             >
               {src ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={src}
                   alt=""
-                  width={10}
-                  height={10}
+                  width={12}
+                  height={12}
                   className="rounded-[2px]"
                   style={{ filter: live ? "none" : "grayscale(1)", opacity: live ? 1 : 0.6, transition: "filter 400ms ease, opacity 400ms ease" }}
                 />

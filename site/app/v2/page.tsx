@@ -135,7 +135,6 @@ export default function Page() {
       <Spacer />
       <InvariantsSection />
       <ContractsSection />
-      <Spacer />
       <ResourcesGrid />
       <Spacer />
       <ClosingBlock />

@@ -71,7 +71,7 @@ export const INVARIANTS = [
 ] as const;
 
 export const PR_EVENT = `{
-  "delivery_id": "string, GitHub X-GitHub-Delivery header",
+  "delivery_id": "X-GitHub-Delivery header",
   "tenant_id":   "string, installation id",
   "repo":        "string, owner/name",
   "pr_number":   0,
@@ -87,8 +87,8 @@ export const SCORE_RESULT = `{
   "risk_score":    0.0,
   "rank_band":     "review_first | standard | senior_recommended",
   "model_version": "string, pinned for this request",
-  "features":      { "...": "the vector used, for audit" },
-  "explanation":   "string or null when the explainer timed out",
+  "features":      { "...": "vector used, for audit" },
+  "explanation":   "string | null (explainer timed out)",
   "scored_at":     "RFC3339 timestamp"
 }`;
 

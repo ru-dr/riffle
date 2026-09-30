@@ -217,7 +217,64 @@ const TOKEN: Record<TokenKind, React.CSSProperties> = {
   warn: { color: "#f0b35a" },
 };
 
-function Artwork({ tone, code, art }: { tone: readonly string[]; code: readonly CodeLine[]; art: string }) {
+function Artwork({
+  tone,
+  code,
+  art,
+  dense = false,
+}: {
+  tone: readonly string[];
+  code: readonly CodeLine[];
+  art: string;
+  /** Long schema lines: smaller type below xl, and a horizontal scroll as the
+   *  last resort, so code is never clipped mid-line. */
+  dense?: boolean;
+}) {
+  if (dense) {
+    return (
+      <div
+        data-anim="rise"
+        className="flex min-h-[20rem] flex-col pt-10 pl-6 md:pl-10"
+        style={{
+          backgroundColor: tone[1],
+          backgroundImage: `url(${art})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+        }}
+      >
+        {/* Anchored to the bottom-right corner: flush with the row's floor
+            and the wall, with the same 40px of texture showing above and to
+            the left. It stretches to fill the row, so two contracts of
+            different lengths still read as the same object. Rim on the top
+            and left only — the two edges that face the texture. */}
+        <div
+          className="flex flex-1 flex-col rounded-tl-[9px] pt-px pl-px"
+          style={{
+            borderTop: "1px solid rgba(255,255,255,0.55)",
+            borderLeft: "1px solid rgba(255,255,255,0.55)",
+            boxShadow: "-10px -10px 24px -14px rgba(255,255,255,0.28)",
+          }}
+        >
+          <div className="flex-1 rounded-tl-[7px] px-5 py-7 xl:px-7" style={{ backgroundColor: "#1a1b20" }}>
+            <pre className="v2-noscrollbar overflow-x-auto font-mono text-[11px] leading-[1.9] xl:text-[13px] xl:leading-[2]">
+              {code.map((line, i) => (
+                <div key={i}>
+                  {line.length === 0
+                    ? "\u00a0"
+                    : line.map(([text, kind], j) => (
+                        <span key={j} style={TOKEN[kind]}>
+                          {text}
+                        </span>
+                      ))}
+                </div>
+              ))}
+            </pre>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       data-anim="rise"
@@ -243,7 +300,13 @@ function Artwork({ tone, code, art }: { tone: readonly string[]; code: readonly 
         }}
       >
         <div className="rounded-l-[7px] px-7 py-7" style={{ backgroundColor: "#1a1b20" }}>
-          <pre className="overflow-hidden font-mono text-[13px] leading-[2]">
+          <pre
+            className={
+              dense
+                ? "v2-noscrollbar overflow-x-auto font-mono text-[11px] leading-[1.9] xl:text-[13px] xl:leading-[2]"
+                : "overflow-hidden font-mono text-[13px] leading-[2]"
+            }
+          >
             {code.map((line, i) => (
               <div key={i}>
                 {line.length === 0
@@ -458,47 +521,117 @@ export function InvariantsSection() {
   );
 }
 
-export function ContractsSection() {
-  return (
-    <section id="contracts" className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.stroke }}>
-      <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
-        <p data-anim="rise" className={LABEL} style={{ color: T.grey }}>
-          Contracts
-        </p>
-        <h3 data-anim="rise" className={`${H3} mt-6 max-w-[34rem]`}>
-          Two shapes cross every boundary
-        </h3>
-      </div>
-      <div className="grid border-t md:grid-cols-2 md:divide-x" style={{ borderColor: T.stroke }}>
-        {[
-          ["intake → scorer", PR_EVENT],
-          ["scorer → app", SCORE_RESULT],
-        ].map(([caption, code]) => (
-          <CodeBlock key={caption} tag="json" caption={caption} code={code} />
-        ))}
-      </div>
-    </section>
-  );
+/* JSON source to highlighted lines, for the contract cards. A quoted string
+   followed by a colon is a key; any other quoted string is a value; numbers
+   are values; structure is dim. Enough for schema examples, which is all it
+   has to read. */
+function jsonLines(src: string): CodeLine[] {
+  const re = /("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?)|([{}\[\],])|(\s+)|([^\s"{}\[\],]+)/g;
+  return src.split("\n").map((line) => {
+    const out: [string, TokenKind][] = [];
+    for (const m of line.matchAll(re)) {
+      if (m[1] && m[2]) {
+        out.push([m[1], "key"]);
+        out.push([m[2], "dim"]);
+      } else if (m[1]) out.push([m[1], "str"]);
+      else if (m[3]) out.push([m[3], "val"]);
+      else if (m[4]) out.push([m[4], "dim"]);
+      else out.push([m[0], "dim"]);
+    }
+    return out;
+  });
 }
 
-/* Their code device: a small language tag pinned top-left on a faint beige
-   chip, then monospace lines at 12px. */
-function CodeBlock({ tag, caption, code }: { tag: string; caption: string; code: string }) {
+const CONTRACTS = [
+  {
+    id: "pr-event",
+    route: "intake → scorer",
+    name: "PrEvent",
+    body: "Published by intake the moment a webhook verifies — one per GitHub delivery. Its delivery_id is the idempotency key for the entire pipeline.",
+    facts: ["7 fields, all required", "delivery_id dedupes"],
+    code: PR_EVENT,
+    tone: ["#6ee7d8", "#1f7a70"] as const,
+    art: "/v2/art/streak-teal.webp",
+  },
+  {
+    id: "score-result",
+    route: "scorer → app",
+    name: "ScoreResult",
+    body: "Written by scorer, read by the app. The model version is pinned per request, and the feature vector travels with the score so every rank can be audited.",
+    facts: ["explanation is nullable", "model_version pinned"],
+    code: SCORE_RESULT,
+    tone: ["#a5b4fc", "#4453b5"] as const,
+    art: "/v2/art/streak-indigo.webp",
+  },
+] as const;
+
+/* Contracts, as a second dark block built exactly like services: starts
+   flush, a short label row with the rule beneath it, a tall header band,
+   then a two-up row per contract — copy on the left, the schema itself on
+   the right as a highlighted card anchored into its texture. */
+export function ContractsSection() {
   return (
-    <figure data-anim="rise" className="relative flex flex-col gap-4 px-6 pt-16 pb-8 md:px-10" style={{ borderColor: T.stroke }}>
-      <span
-        className="absolute top-3 left-3 rounded p-2 font-mono text-[12px]"
-        style={{ backgroundColor: "rgba(244,243,236,0.4)", color: T.ink }}
-      >
-        {tag}
-      </span>
-      <figcaption className="font-mono text-[12px]" style={{ color: T.grey }}>
-        {caption}
-      </figcaption>
-      <pre className="overflow-x-auto font-mono text-[12px] leading-[1.7]" style={{ color: T.ink }}>
-        {code}
-      </pre>
-    </figure>
+    <div data-surface="dark" style={{ backgroundColor: T.darkBg }}>
+      <section id="contracts" className="v2-wrapper px-6 py-5 md:px-10">
+        <p className="font-geist text-[16px] font-medium" style={{ color: T.darkInk }}>
+          Contracts
+        </p>
+      </section>
+
+      <section className="v2-wrapper v2-ticks border-t px-6 py-16 md:px-10 md:py-24" style={{ borderColor: T.nickel }}>
+        <h2 data-anim="rise" className={H2} style={{ color: T.darkInk }}>
+          Two shapes cross every boundary
+        </h2>
+        <p
+          data-anim="rise"
+          className="mt-6 max-w-[27rem] font-geist text-[18px] leading-[1.55] text-pretty"
+          style={{ color: T.darkNickel }}
+        >
+          Three languages read these schemas and nothing else defines the wire
+          format. Any change to one is a breaking change.
+        </p>
+      </section>
+
+      <section className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.nickel }}>
+        {CONTRACTS.map((c, i) => (
+          <div
+            key={c.id}
+            id={c.id}
+            className="grid w-full lg:grid-cols-2 lg:divide-x"
+            style={{ borderTop: i === 0 ? undefined : `1px solid ${T.nickel}` }}
+          >
+            <div data-anim="rise" className="flex flex-col justify-between gap-10 p-6 md:p-10 lg:gap-20">
+              <div className="flex max-w-[24rem] flex-col gap-5">
+                <span className="font-mono text-[14px] tracking-[0.08em] uppercase" style={{ color: T.darkGrey }}>
+                  {c.route}
+                </span>
+                <h4
+                  className="font-mono text-[1.75rem] leading-[1.15] font-medium tracking-[-0.03em]"
+                  style={{ color: T.darkInk }}
+                >
+                  {c.name}
+                </h4>
+                <p className="font-geist text-[16px] leading-[1.55] text-pretty" style={{ color: T.darkNickel }}>
+                  {c.body}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {c.facts.map((f) => (
+                  <span
+                    key={f}
+                    className="rounded-sm px-3 py-1 font-mono text-[12px]"
+                    style={{ backgroundColor: "rgba(255,255,255,0.06)", color: T.darkNickel }}
+                  >
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <Artwork tone={c.tone} code={jsonLines(c.code)} art={c.art} dense />
+          </div>
+        ))}
+      </section>
+    </div>
   );
 }
 
@@ -506,10 +639,9 @@ function CodeBlock({ tag, caption, code }: { tag: string; caption: string; code:
    .filter() device; right column is the card row. */
 export function ResourcesGrid() {
   return (
-    <section
-      className="v2-wrapper v2-ticks grid grid-cols-1 border-t md:grid-cols-10 md:divide-x"
-      style={{ borderColor: T.stroke }}
-    >
+    // Follows the dark contracts block, so no rule at the boundary — the edge
+    // of the dark surface is the break, as after services.
+    <section className="v2-wrapper grid grid-cols-1 md:grid-cols-10 md:divide-x">
       <div className="flex flex-col divide-y md:col-span-4" style={{ borderColor: T.stroke }}>
         <div className="flex flex-col justify-center gap-6 p-5 md:h-72 md:justify-start md:gap-10 md:p-10" style={{ borderColor: T.stroke }}>
           <h3 data-anim="rise" className={H3}>
@@ -582,34 +714,44 @@ const GITHUB_PATH =
 
 export function ClosingBlock() {
   return (
-    <footer data-surface="dark" style={{ backgroundColor: T.darkBg }}>
-      <section className="v2-wrapper">
+    // At least a full viewport: the link row grows to take the slack, so the
+    // copyright rule always sits on the bottom edge on any screen height.
+    <footer data-surface="dark" className="flex min-h-dvh flex-col" style={{ backgroundColor: T.darkBg }}>
+      <section className="v2-wrapper flex w-full flex-1 flex-col">
         <div className="grid grid-cols-1 items-center gap-10 px-5 py-10 text-center md:px-10 md:py-[7.5rem] lg:grid-cols-2 lg:items-start lg:gap-16 lg:text-left">
           <div className="mx-auto max-w-xl lg:mx-0">
-            <h2 data-anim="rise" className={`${H2} text-center lg:text-left`} style={{ color: "#fff" }}>
-              Interested in where your repository breaks?
+            {/* Two lines on a fixed 60px rhythm (lg), matching the two rows on
+                the right: line one sits level with the label, line two with
+                the field. */}
+            <h2 data-anim="rise" className={`${H2} text-center lg:text-left lg:!leading-[3.75rem]`} style={{ color: "#fff" }}>
+              <span className="lg:block">Interested in where </span>
+              <span className="lg:block">your repository breaks?</span>
             </h2>
           </div>
           <div
             data-anim="rise"
-            className="mx-auto flex w-full max-w-md flex-col items-center gap-4 lg:mx-0 lg:items-stretch lg:justify-self-end"
+            className="mx-auto flex w-full max-w-md flex-col items-center gap-4 lg:mx-0 lg:gap-0 lg:items-stretch lg:justify-self-end"
           >
-            <h3 className="text-center font-geist text-[20px] font-normal md:text-[24px] lg:text-left" style={{ color: "#fff" }}>
+            <h3
+              className="text-center font-geist text-[22px] font-normal md:text-[28px] lg:flex lg:h-[3.75rem] lg:items-center lg:text-left"
+              style={{ color: "#fff" }}
+            >
               Follow the build on GitHub
             </h3>
+            {/* Exactly one 60px row, so it sits level with heading line two. */}
             <div
-              className="relative flex items-center overflow-hidden rounded border transition-colors hover:bg-white/10"
+              className="relative flex items-center overflow-hidden rounded border transition-colors hover:bg-white/10 lg:h-[3.75rem]"
               style={{ borderColor: "rgba(255,255,255,0.2)" }}
             >
               <span
-                className="flex-1 truncate px-3 py-3 text-left font-geist text-[14px] sm:px-5 sm:py-4 sm:text-[16px]"
+                className="flex-1 truncate px-3 py-3 text-left font-geist text-[15px] sm:px-5 sm:py-4 sm:text-[18px]"
                 style={{ color: "rgba(255,255,255,0.55)" }}
               >
                 github.com/ru-dr/riffle
               </span>
               <a
                 href={REPO}
-                className="mr-1.5 shrink-0 rounded px-3 py-2 font-geist text-[14px] font-medium whitespace-nowrap transition-colors hover:bg-white/90 sm:mr-2 sm:px-6"
+                className="mr-1.5 shrink-0 rounded px-3 py-2 font-geist text-[15px] font-medium whitespace-nowrap transition-colors hover:bg-white/90 sm:mr-2 sm:px-6 sm:py-2.5 sm:text-[16px]"
                 style={{ backgroundColor: "#fff", color: T.ink }}
               >
                 Watch repo
@@ -637,17 +779,17 @@ export function ClosingBlock() {
           </span>
         </div>
 
-        <div className="flex flex-col items-center justify-center gap-10 px-5 pt-10 pb-16 text-center md:flex-row md:items-start md:justify-between md:gap-0 md:px-24 md:pt-16 md:pb-40 md:text-left">
+        <div className="flex flex-1 flex-col items-center justify-center gap-10 px-5 pt-10 pb-16 text-center md:flex-row md:items-start md:justify-between md:gap-0 md:px-24 md:pt-16 md:pb-24 md:text-left">
           <div className="flex flex-col items-center gap-10 md:flex-row md:items-start md:gap-20">
             {FOOTER_LINKS.map(([heading, links]) => (
               <div key={heading}>
-                <p className="mb-8 font-mono text-[12px] tracking-[0.025em] uppercase" style={{ color: T.grey }}>
+                <p className="mb-8 font-mono text-[13px] tracking-[0.03em] uppercase" style={{ color: T.grey }}>
                   {heading}
                 </p>
-                <ul className="flex flex-col gap-3">
+                <ul className="flex flex-col gap-4">
                   {links.map(([label, href]) => (
                     <li key={label}>
-                      <a href={href} className="v2-link font-geist text-[16px]" style={{ color: "#fff" }}>
+                      <a href={href} className="v2-link font-geist text-[18px]" style={{ color: "#fff" }}>
                         {label}
                       </a>
                     </li>
@@ -657,13 +799,13 @@ export function ClosingBlock() {
             ))}
           </div>
           <div className="flex flex-col items-center md:items-start">
-            <p className="mb-8 font-mono text-[12px] tracking-[0.025em] uppercase" style={{ color: T.grey }}>
+            <p className="mb-8 font-mono text-[13px] tracking-[0.03em] uppercase" style={{ color: T.grey }}>
               Social
             </p>
-            <ul className="flex flex-col gap-3">
+            <ul className="flex flex-col gap-4">
               <li>
-                <a href={REPO} className="v2-link flex items-center gap-3 font-geist text-[16px]" style={{ color: "#fff" }}>
-                  <svg viewBox="0 0 16 16" className="size-4" fill="currentColor" aria-hidden="true">
+                <a href={REPO} className="v2-link flex items-center gap-3 font-geist text-[18px]" style={{ color: "#fff" }}>
+                  <svg viewBox="0 0 16 16" className="size-[18px]" fill="currentColor" aria-hidden="true">
                     <path d={GITHUB_PATH} />
                   </svg>
                   GitHub
@@ -675,10 +817,12 @@ export function ClosingBlock() {
       </section>
 
       <section
-        className="v2-wrapper v2-ticks flex flex-col items-center justify-between gap-3 border-t px-5 py-5 text-center md:flex-row md:gap-0 md:px-24 md:text-left"
+        // w-full: inside the footer's flex column an auto-margined wrapper
+        // shrinks to its text, which cut the rule and ticks down to a stub.
+        className="v2-wrapper v2-ticks flex w-full flex-col items-center justify-between gap-3 border-t px-5 py-5 text-center md:flex-row md:gap-0 md:px-24 md:text-left"
         style={{ borderColor: T.nickel }}
       >
-        <p className="font-geist text-[14px]" style={{ color: T.grey }}>
+        <p className="font-geist text-[15px]" style={{ color: T.grey }}>
           &copy; 2026 Riffle contributors. <span className="hidden sm:inline">Apache-2.0.</span>
         </p>
       </section>

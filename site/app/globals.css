@@ -158,6 +158,14 @@ body:has([data-riffle-light]) {
   overflow: visible;
 }
 
+/* Scrollable code that should not show a scrollbar track. */
+.v2-noscrollbar {
+  scrollbar-width: none;
+}
+.v2-noscrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Services rail: inactive entries sit at 40% and desaturated, the active
    one at full colour — the reference's treatment of its product list. */
 [data-rail] {
