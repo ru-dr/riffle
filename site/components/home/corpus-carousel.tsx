@@ -124,7 +124,17 @@ export function CorpusCarousel() {
                 transition: "opacity 500ms ease, filter 500ms ease",
               }}
             >
-              <span data-content className="flex items-center gap-2.5">
+              {/* Each repository links to itself on GitHub. The two edge copies
+                  exist only to make the loop seamless, so they stay out of the
+                  tab order and the accessibility tree. */}
+              <a
+                href={`https://github.com/${repo}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                tabIndex={i < REPOS.length || i >= REPOS.length * 2 ? -1 : undefined}
+                data-content
+                className="flex items-center gap-2.5 hover:underline hover:decoration-[#e5e4e7] hover:underline-offset-4"
+              >
                 {src && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={src} alt="" width={20} height={20} loading="lazy" ref={fadeIn.ref} onLoad={fadeIn.onLoad} className={`${fadeIn.className} rounded-[4px]`} />
@@ -132,7 +142,7 @@ export function CorpusCarousel() {
                 <span className="font-mono text-[13px] whitespace-nowrap" style={{ color: T.ink }}>
                   {repo}
                 </span>
-              </span>
+              </a>
             </li>
           );
         })}

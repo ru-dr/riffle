@@ -1,5 +1,6 @@
 import { Mark } from "@/components/brand";
 import { CorpusCarousel } from "./corpus-carousel";
+import { FadeImg } from "./fade-img";
 import { logoUrl } from "./logo";
 import { T } from "./tokens";
 
@@ -397,7 +398,7 @@ export function StatsBand() {
         </div>
       </div>
       <div className="grid border-t sm:grid-cols-3 sm:divide-x" style={{ borderColor: T.stroke }}>
-        {STATS.cells.map(([value, label, status]) => (
+        {STATS.cells.map(([value, label, status, source]) => (
           <div key={label} data-anim="rise" className="flex flex-col gap-3 p-6 md:p-10">
             {/* The value never breaks (100–300 split at its dash in a narrow
                 cell); the tag wraps beneath it instead. */}
@@ -407,6 +408,14 @@ export function StatsBand() {
             </div>
             <p className="font-geist text-[14px]" style={{ color: T.grey }}>
               {label}
+              {source && (
+                <>
+                  {" "}
+                  <a href={source} target="_blank" rel="noopener noreferrer" className="v2-link underline decoration-[#e5e4e7] underline-offset-[3px] whitespace-nowrap">
+                    Kamei et al., 2016&nbsp;&#8599;
+                  </a>
+                </>
+              )}
             </p>
           </div>
         ))}
@@ -435,33 +444,35 @@ export function MissionPanel() {
           renders broken images. Labelled as research, not backing, because
           none of these organisations endorse Riffle. */}
       <section className="v2-wrapper v2-ticks grid grid-cols-2 border-t md:grid-cols-3 lg:grid-cols-6 lg:divide-x" style={{ borderColor: T.stroke }}>
-        <p className="col-span-full flex items-center p-6 font-geist text-[14px] lg:col-span-1 lg:p-8" style={{ color: T.nickel }}>
-          Research this builds on
+        <p className="col-span-full flex items-center p-6 font-geist text-[14px] leading-[1.45] lg:col-span-1 lg:p-8" style={{ color: T.nickel }}>
+          Research this
+          <br className="max-lg:hidden" /> builds on
         </p>
-        {PRIOR_WORK.map(({ name, domain }) => (
-          <div key={name} className="flex items-center justify-center gap-2.5 p-6 md:p-8">
-            {LOGO_DEV_TOKEN && domain ? (
-              <>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={`https://img.logo.dev/${domain}?token=${LOGO_DEV_TOKEN}&size=64&format=png&greyscale=true&retina=true`}
-                  alt=""
-                  width={22}
-                  height={22}
-                  loading="lazy"
-                  className="rounded-[4px] opacity-70"
-                />
-                <span className="font-geist text-[17px] font-medium tracking-[-0.02em]" style={{ color: T.ink, opacity: 0.6 }}>
+        {PRIOR_WORK.map(({ name, note, domain, url }) => {
+          const src = domain ? logoUrl(domain, { size: 64, greyscale: true }) : null;
+          return (
+            <a
+              key={name}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex flex-col items-center justify-center gap-1.5 p-6 text-center transition-colors hover:bg-white/60 md:p-8"
+            >
+              <span className="flex items-center gap-2.5">
+                {src && <FadeImg src={src} size={20} className="rounded-[4px] opacity-70 group-hover:opacity-100" />}
+                <span className="font-geist text-[17px] font-medium tracking-[-0.02em] transition-opacity group-hover:opacity-100" style={{ color: T.ink, opacity: 0.6 }}>
                   {name}
                 </span>
-              </>
-            ) : (
-              <span className="font-geist text-[18px] font-medium tracking-[-0.02em]" style={{ color: T.ink, opacity: 0.55 }}>
-                {name}
+                <span aria-hidden="true" className="font-geist text-[12px] transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" style={{ color: T.grey }}>
+                  &#8599;
+                </span>
               </span>
-            )}
-          </div>
-        ))}
+              <span className="font-mono text-[10.5px] tracking-[0.02em]" style={{ color: T.grey }}>
+                {note}
+              </span>
+            </a>
+          );
+        })}
       </section>
     </>
   );
