@@ -368,7 +368,7 @@ export function Stack() {
                 even padding around a mark and a word. Live darkens the
                 outline and the ink; the drawn leader does the rest. */}
             <span
-              className="inline-flex cursor-default items-center gap-[7px] rounded-full py-[5px] pr-3 pl-2.5 font-mono text-[10px] leading-none tracking-[0.1em] whitespace-nowrap uppercase"
+              className="v2-pill inline-flex cursor-default items-center rounded-full font-mono leading-none tracking-[0.1em] whitespace-nowrap uppercase"
               style={{
                 backgroundColor: "#ffffff",
                 outline: `1px solid ${live ? "rgba(22,23,29,0.24)" : T.stroke}`,
@@ -386,7 +386,7 @@ export function Stack() {
                   height={12}
                   ref={fadeIn.ref}
                   onLoad={fadeIn.onLoad}
-                  className={`${fadeIn.className} rounded-[2px]`}
+                  className={`${fadeIn.className} v2-pill-mark rounded-[2px]`}
                   style={{ filter: live ? "none" : "grayscale(1)", opacity: live ? 1 : 0.6, transition: "filter 400ms ease, opacity 400ms ease" }}
                 />
               ) : (
@@ -394,6 +394,7 @@ export function Stack() {
                   viewBox="0 0 24 24"
                   width={12}
                   height={12}
+                  className="v2-pill-mark"
                   fill={live ? T.ink : T.grey}
                   aria-hidden="true"
                   style={{ opacity: live ? 1 : 0.6, transition: "fill 400ms ease, opacity 400ms ease" }}
@@ -404,7 +405,7 @@ export function Stack() {
               {l.key}
             </span>
             <span
-              className="absolute top-full mt-2 font-geist text-[13px] whitespace-nowrap"
+              className="v2-pill-caption absolute top-full font-geist whitespace-nowrap"
               style={{
                 [left ? "right" : "left"]: 0,
                 color: T.grey,
