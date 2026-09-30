@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { preconnect, preload } from "react-dom";
 import gsap from "gsap";
-import { logoUrl } from "./logo";
+import { fadeIn, logoUrl } from "./logo";
 import { T } from "./tokens";
 
 // The hero stack.
@@ -384,8 +384,9 @@ export function Stack() {
                   alt=""
                   width={12}
                   height={12}
-                  onLoad={(e) => e.currentTarget.classList.add("is-loaded")}
-                  className="v2-fade rounded-[2px]"
+                  ref={fadeIn.ref}
+                  onLoad={fadeIn.onLoad}
+                  className={`${fadeIn.className} rounded-[2px]`}
                   style={{ filter: live ? "none" : "grayscale(1)", opacity: live ? 1 : 0.6, transition: "filter 400ms ease, opacity 400ms ease" }}
                 />
               ) : (

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { logoUrl } from "./logo";
+import { fadeIn, logoUrl } from "./logo";
 import { T } from "./tokens";
 
 // The corpus row, as the reference's logo carousel: repositories slide past a
@@ -127,7 +127,7 @@ export function CorpusCarousel() {
               <span data-content className="flex items-center gap-2.5">
                 {src && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={src} alt="" width={20} height={20} loading="lazy" onLoad={(e) => e.currentTarget.classList.add("is-loaded")} className="v2-fade rounded-[4px]" />
+                  <img src={src} alt="" width={20} height={20} loading="lazy" ref={fadeIn.ref} onLoad={fadeIn.onLoad} className={`${fadeIn.className} rounded-[4px]`} />
                 )}
                 <span className="font-mono text-[13px] whitespace-nowrap" style={{ color: T.ink }}>
                   {repo}
