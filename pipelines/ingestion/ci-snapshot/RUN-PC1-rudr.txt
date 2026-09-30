@@ -1,49 +1,18 @@
-RIFFLE CI SNAPSHOT  -  PC 1 (ru-dr)
-===================================
-Deadline: GitHub starts deleting CI history older than 90 days at
-8:00 PM EDT tonight (midnight UTC, 1 Oct 2026). Start now.
-Put your own token in step 2. Never commit a real token.
-Delete the token at https://github.com/settings/tokens after the run.
+cd ~/proyecto/riffle
+git checkout pipelines/ci-snapshot
+git pull
+export GITHUB_TOKEN=github_pat_YOUR_TOKEN_HERE
+cd pipelines/ingestion/ci-snapshot/bin
+tmux new -s ci
 
-1) Get the latest code
-   cd ~/proyecto/riffle
-   git checkout pipelines/ci-snapshot
-   git pull
+# window 1
+./ci-snapshot-linux-amd64 -mode commits
+./ci-snapshot-linux-amd64 -mode prs -shard 1/2
 
-2) Set your token, then start tmux (every window inherits it)
-   export GITHUB_TOKEN=github_pat_YOUR_TOKEN_HERE
-   cd ~/proyecto/riffle/pipelines/ingestion/ci-snapshot/bin
-   tmux new -s ci
+# window 2 (Ctrl+b c)
+./ci-snapshot-linux-amd64 -mode checks
 
-3) Window 1 (GraphQL quota)
-   ./ci-snapshot-linux-amd64 -mode commits
-   -> when it says "all repositories finished" (~7:10 PM), in the same window:
-   ./ci-snapshot-linux-amd64 -mode prs -shard 1/2
-
-4) Window 2 (REST quota): press Ctrl+b then c, then
-   ./ci-snapshot-linux-amd64 -mode checks
-   (100 failed PR merges per repo: 50 for every repo by ~8:15 PM, then
-    topped up to 100 by ~10:15 PM. It waits for window 1 on its own.)
-
-5) Detach and leave it running
-   Ctrl+b then d        detach       tmux attach -t ci   come back
-   Ctrl+b then 0 / 1    switch windows
-
-Expected: commits done ~7:10 PM, prs half ~8:00 PM, checks ~8:15 PM
-(round 1) and ~10:15 PM (round 2). Keep everything running after 8 PM.
-
-If anything stops (crash, closed terminal, q): run the same command again.
-It resumes where it stopped and skips finished repos. PAUSED on screen means
-it is waiting for the hourly quota reset; leave it.
-
-Output: ~/proyecto/riffle-data/ci-snapshot/  (pass1/, prs/, checks/)
-
-When everything has finished
-   - Get your friend's prs/, pass2/ and runs/ folders and copy them into
-     ~/proyecto/riffle-data/ci-snapshot/
-   - Check each run.log for FAILED lines; rerun that command if any.
-   - Archive and keep a copy off this laptop:
-       cd ~/proyecto/riffle-data
-       tar czf ci-snapshot-2026-09-30.tar.gz ci-snapshot
-       sha256sum ci-snapshot-2026-09-30.tar.gz > ci-snapshot-2026-09-30.tar.gz.sha256
-   - Delete the token.
+# after all finish
+cd ~/proyecto/riffle-data
+tar czf ci-snapshot-2026-09-30.tar.gz ci-snapshot
+sha256sum ci-snapshot-2026-09-30.tar.gz > ci-snapshot-2026-09-30.tar.gz.sha256
