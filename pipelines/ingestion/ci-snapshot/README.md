@@ -13,7 +13,7 @@ only reads from GitHub; nothing is changed there.
 
 ## What it gathers
 
-Three modes, each its own run. Window: **26 Aug 2025 → 2 Jul 2026**, the
+Four modes, each its own run. Window: **26 Aug 2025 → 2 Jul 2026**, the
 commits and PRs older than 90 days, which are the ones deleted first. (The
 last 90 days stay on GitHub for now; see "Pass 2" below.)
 
@@ -21,6 +21,7 @@ last 90 days stay on GitHub for now; see "Pass 2" below.)
 | --- | --- | --- | --- |
 | `commits` | A commit on the default branch | sha, date, PR number (from `(#N)`), **combined CI result** | The `ci_fail` label: did CI fail on the merge commit |
 | `prs` | A PR closed in the window | number, merged or closed, created / closed / merged dates, author, base branch, last commit's sha and **combined CI result** | Pre-merge signal: was the PR merged while CI was red |
+| `checks` | A sampled failed commit (50 per repository) | every check run on it (name, app, conclusion, timings; each Actions job is one) and every commit status (Prow and other third-party CI) | Which checks make a commit red: tells chronically failing or optional checks from real failures, to clean `ci_fail` across all commits |
 | `runs` | A GitHub Actions run on a push to the default branch | workflow name and file, sha, **conclusion**, **attempt** (reruns), run number, created / started / updated times | Which workflow failed, reruns as a flakiness signal, durations |
 
 The combined CI result is GitHub's `statusCheckRollup`: `SUCCESS`, `FAILURE`,
@@ -31,47 +32,102 @@ Actions and third-party CI (Prow, Buildkite, …). `runs` covers Actions only.
 
 | Not captured | Why |
 | --- | --- |
-| Individual check names and results on every commit | About 50× the query cost of the combined result (~250,000 points, ~50 hours). `runs` covers most of it for Actions |
+| Individual check results on every failed commit | One request per commit, over 150,000. `checks` takes a sample of 50 per repository instead |
+| Which checks were required at the time | GitHub only exposes today's branch protection rules |
+| Merge-queue runs (`merge_group`) | `runs` asks for push runs only |
+| Earlier attempts of a rerun run | `runs` keeps the attempt count, not each attempt |
+| Job and step detail inside Actions runs | One request per run; `checks` has job results for the sample |
+| Scheduled and manual runs | Not tied to a merge |
 | CI on every commit of every PR (each push, each failed attempt) | One query per commit on every PR branch: millions of requests |
 | Actions runs triggered by pull requests (pre-merge runs) | Several times the volume of push runs. `prs` keeps the final CI state of each PR instead |
 | Third-party check details (Prow, Buildkite runs) | Only their combined result, via `commits` and `prs` |
 | Logs and artifacts | Gigabytes per run, and already on their own 90-day retention |
 | Commits on other branches (release branches) | Labels are defined on the default branch; backports inherit their PR's label |
 
-## Who runs what
+## Who runs what: exact commands
 
-Each machine uses **its own GitHub account's token**: one token per real
-person, as the dataset plan requires. Never share or rotate tokens to get
-around limits. Each account has two separate hourly budgets: **GraphQL 5,000
-points** and **REST 5,000 requests**. Running a GraphQL mode and the REST mode
-side by side on one machine uses both, without slowing either.
+Each machine uses **its own GitHub account**: one token per real person, as
+the dataset plan requires. Never share or rotate tokens. Each account has two
+separate hourly budgets, **GraphQL 5,000 points** and **REST 5,000 requests**,
+so the two windows on a machine do not slow each other.
 
-| Machine | Window 1 | Window 2 |
-| --- | --- | --- |
-| **PC 1** (ru-dr) | `./ci-snapshot -mode commits` | `./ci-snapshot -mode runs -shard 1/2` |
-| **PC 2** (friend) | `./ci-snapshot -mode prs` | `./ci-snapshot -mode runs -shard 2/2` |
+Start both machines now. The retention change starts at 8:00 PM EDT
+(midnight UTC).
 
-`-shard 1/2` and `2/2` split the 100 repositories between the machines,
-evenly by size.
+### PC 1 (ru-dr)
+
+```bash
+cd ~/proyecto/riffle/pipelines/ingestion/ci-snapshot
+git pull                              # latest version of the branch
+go build -o ci-snapshot .
+tmux new -s ci
+
+# window 1 (GraphQL): combined CI result of every default-branch commit
+./ci-snapshot -mode commits
+
+# Ctrl+b then c  ->  window 2 (REST): per-check results for 50 failed
+# commits per repository, taken from window 1's output as it finishes
+./ci-snapshot -mode checks
+
+# Ctrl+b then d to detach; `tmux attach -t ci` to come back
+```
+
+### PC 2 (friend)
+
+Log in once as **your own** GitHub account: `gh auth login` (or set
+`GITHUB_TOKEN` to your own token). Then, with the repository checked out on
+branch `pipelines/ci-snapshot`:
+
+```bash
+cd riffle/pipelines/ingestion/ci-snapshot
+go build -o ci-snapshot .
+tmux new -s ci
+
+# window 1 (GraphQL): every PR closed in the window, with its final CI result
+./ci-snapshot -mode prs
+
+# Ctrl+b then c  ->  window 2 (REST): Actions runs on default-branch pushes,
+# all 100 repositories, smallest first
+./ci-snapshot -mode runs
+```
+
+Without the repository: use the prebuilt binary for the machine
+(`ci-snapshot-linux-amd64`, `ci-snapshot-windows-amd64.exe`,
+`ci-snapshot-darwin-arm64` or `-darwin-amd64`) with `repos.txt` in the same
+folder, e.g. `./ci-snapshot-linux-amd64 -mode prs`. On Windows, use two
+terminal windows instead of tmux:
+`ci-snapshot-windows-amd64.exe -mode prs` and
+`ci-snapshot-windows-amd64.exe -mode runs`.
+
+### Summary
+
+| Machine | Window | Command | API | Output |
+| --- | --- | --- | --- | --- |
+| PC 1 | 1 | `./ci-snapshot -mode commits` | GraphQL | `ci-snapshot/pass1/` |
+| PC 1 | 2 | `./ci-snapshot -mode checks` | REST | `ci-snapshot/checks/` |
+| PC 2 | 1 | `./ci-snapshot -mode prs` | GraphQL | `ci-snapshot/prs/` |
+| PC 2 | 2 | `./ci-snapshot -mode runs` | REST | `ci-snapshot/runs/` |
+
+Output lives under `~/proyecto/riffle-data/ci-snapshot/` (on PC 2 too, unless
+`-out` is given).
 
 ## How long
 
-Measured on 30 September 2026 against real repositories. Start everything
-by about 6:15 PM EDT; the retention change starts at midnight UTC, 8:00 PM EDT.
+Measured on 30 September 2026. Both machines in parallel, started around
+6:00 PM EDT:
 
-| Run | Volume | Quota | Expected time |
-| --- | --- | --- | --- |
-| `commits` (PC 1) | ~500,000 commits | ~5,000 GraphQL points (1 per 100 commits) | **60–80 min** |
-| `prs` (PC 2) | ~300,000–450,000 PRs walked | ~4,000–9,000 GraphQL points | **1–2 h**; may pause once for the hourly reset |
-| `runs` (PC 1 + PC 2) | Most repositories have tens of push runs a day; pytorch has ~2,000 | ~100 runs per request, REST | Small and medium repositories finish in the first hour or two; **pytorch and a few giants will not finish tonight** |
+| Run | Machine | Volume | Expected time | Done by |
+| --- | --- | --- | --- | --- |
+| `commits` | PC 1 | ~500,000 commits, ~5,000 GraphQL points | 60–80 min | ~7:00–7:20 PM |
+| `checks` | PC 1 | ~5,000 commits × 2 requests = ~10,000 REST | ~2 h (follows `commits`) | ~8:00–8:15 PM |
+| `prs` | PC 2 | ~300,000–450,000 PRs walked, ~4,000–9,000 points | 1–2 h | ~7:00–8:00 PM |
+| `runs` | PC 2 | tens of runs a day for most repositories; ~2,000 a day for pytorch | small and medium repositories ~1.5 h; giants after 8 PM | partial by 8 PM |
 
-`runs` walks the smallest repositories first, so the most repositories are
-complete by the deadline. What it does not finish, it resumes later (see
-below); anything already older than 90 days may be gone by then, which is the
-accepted loss.
-
-GitHub has not said exactly when the cleanup runs, so it may not all vanish
-at 8:00 PM. Anything captured tonight is safe.
+The progress screen shows a live ETA per run after a few minutes; trust that
+over this table. `runs` does the smallest repositories first, so the most are
+complete by the deadline; let it keep running afterwards. GitHub has not said
+exactly when the cleanup runs, so it may not all vanish at 8:00 PM, and
+anything captured is kept.
 
 ## Setup (each machine)
 
