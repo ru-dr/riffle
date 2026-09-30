@@ -243,20 +243,18 @@ function Artwork({ tone, code, art }: { tone: readonly string[]; code: readonly 
         backgroundPosition: "center",
       }}
     >
-      {/* Outer rim: a 1px gradient ring, bright at the top-left where the
-          light in the texture comes from. */}
+      {/* Dual edge, as on the reference: the dark card has no border of its
+          own; around it runs a 1px transparent gap where the texture shows
+          through; around that, a thin light rim with a soft glow. */}
       <div
-        className="absolute top-1/2 right-0 left-6 -translate-y-1/2 rounded-l-[7px] p-px md:left-10"
+        className="absolute top-1/2 right-0 left-6 -translate-y-1/2 rounded-l-[9px] p-px md:left-10"
         style={{
-          background:
-            "linear-gradient(140deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0.14) 38%, rgba(255,255,255,0.06) 70%, rgba(255,255,255,0.3) 100%)",
-          boxShadow: "0 24px 50px -20px rgba(0,0,0,0.65)",
+          border: "1px solid rgba(255,255,255,0.55)",
+          borderRight: "none",
+          boxShadow: "0 0 14px rgba(255,255,255,0.22), 0 24px 50px -20px rgba(0,0,0,0.6)",
         }}
       >
-        <div
-          className="rounded-l-[6px] px-7 py-7"
-          style={{ backgroundColor: "#1a1b20", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.55)" }}
-        >
+        <div className="rounded-l-[7px] px-7 py-7" style={{ backgroundColor: "#1a1b20" }}>
           <pre className="overflow-hidden font-mono text-[13px] leading-[2]">
             {code.map((line, i) => (
               <div key={i}>
