@@ -91,9 +91,10 @@ body {
    as light moving across the type, not as a coloured highlight.
    400% background over clipped text; at either end of the travel only ink
    is in view, so the loop's snap back from 0% to 100% is invisible. */
-/* The glow takes the colour of the stack's live layer: the stack sets
-   --rf-glow on the hero, and registering it as a colour lets it cross-fade
-   instead of snapping between tones. */
+/* The headline glow: one sweep each time the stack lifts a layer, in that
+   layer's colour. The stack sets --rf-glow on the hero and restarts
+   .rf-shine-run, so the band crosses the headline as the tile rises.
+   Registering --rf-glow as a colour lets it cross-fade between tones. */
 @property --rf-glow {
   syntax: "<color>";
   inherits: true;
@@ -101,13 +102,13 @@ body {
 }
 
 .rf-shine {
-  transition: --rf-glow 700ms ease;
+  transition: --rf-glow 500ms ease;
   background: linear-gradient(
     110deg,
     var(--rf-ink) 0%,
-    var(--rf-ink) 42%,
-    color-mix(in oklab, var(--rf-glow) 75%, var(--rf-ink)) 50%,
-    var(--rf-ink) 58%,
+    var(--rf-ink) 36%,
+    var(--rf-glow) 50%,
+    var(--rf-ink) 64%,
     var(--rf-ink) 100%
   );
   background-size: 400% 100%;
@@ -115,21 +116,22 @@ body {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: rf-shine 9s cubic-bezier(0.45, 0, 0.55, 1) 1.6s infinite;
+}
+.rf-shine.rf-shine-run {
+  animation: rf-shine 1.9s cubic-bezier(0.45, 0, 0.55, 1) both;
 }
 
 @keyframes rf-shine {
-  0% {
+  from {
     background-position: 100% 0;
   }
-  34%,
-  100% {
+  to {
     background-position: 0 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rf-shine {
+  .rf-shine.rf-shine-run {
     animation: none;
   }
 }
@@ -367,6 +369,9 @@ body:has([data-riffle-light]) {
 }
 .rf-link:hover {
   color: #16171d;
+}
+[data-docs] .rf-link:hover {
+  color: var(--rf-ink);
 }
 [data-surface="dark"] .rf-link:hover {
   color: #fff;

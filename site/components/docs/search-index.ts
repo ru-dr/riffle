@@ -1,6 +1,6 @@
 import GithubSlugger from "github-slugger";
 import { ALL_PAGES } from "./registry";
-import { loadMarkdown } from "./load";
+import { headingText, loadMarkdown } from "./load";
 
 // The docs search index: one record per page intro and per h2/h3 section,
 // as plain text. Built once at build time and served as a static file, so
@@ -49,7 +49,7 @@ export async function buildIndex(): Promise<SearchRecord[]> {
         parts[parts.length - 1].lines.push(line);
         continue;
       }
-      const text = plain(m[2]);
+      const text = headingText(m[2]);
       const id = slugger.slug(text);
       if (m[1].length === 2 || m[1].length === 3) parts.push({ heading: text, id, lines: [] });
       else parts[parts.length - 1].lines.push(text);

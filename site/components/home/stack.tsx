@@ -178,11 +178,16 @@ export function Stack() {
     return () => clearInterval(id);
   }, [ready]);
 
-  // The headline's glow follows the live layer's tone.
+  // The headline's glow: one sweep per lift, in the live layer's tone.
   useEffect(() => {
     const hero = root.current?.closest<HTMLElement>(".rf-hero");
     if (!hero || active < 0) return;
     hero.style.setProperty("--rf-glow", LAYERS[active].tone[1]);
+    const title = hero.querySelector<HTMLElement>(".rf-shine");
+    if (!title) return;
+    title.classList.remove("rf-shine-run");
+    void title.offsetWidth; // restart the animation
+    title.classList.add("rf-shine-run");
   }, [active]);
 
   // A spark runs the live leader from the pill into the slab.

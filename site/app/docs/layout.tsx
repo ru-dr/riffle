@@ -20,7 +20,7 @@ const DOCS_NAV = [
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
   return (
     <div data-riffle-light data-docs className="min-h-dvh" style={{ backgroundColor: "var(--rf-bg)", color: "var(--rf-ink)" }}>
-      <SiteHeader links={DOCS_NAV} section="Docs" actions={
+      <SiteHeader links={DOCS_NAV} section="Docs" navFrom="lg" actions={
           <>
             <DocsSearch />
             <ThemeSwitch />

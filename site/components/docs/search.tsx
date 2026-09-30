@@ -140,17 +140,27 @@ export function DocsSearch() {
         type="button"
         onClick={open}
         aria-label="Search docs"
-        className="flex h-8 items-center gap-2 rounded-md border px-2 transition-colors hover:border-[var(--rf-grey)] sm:w-52 sm:px-2.5"
+        aria-keyshortcuts="Meta+K Control+K /"
+        className="flex h-8 shrink-0 items-center gap-2 rounded-md border px-2 whitespace-nowrap transition-colors hover:border-[var(--rf-grey)] xl:w-52 xl:px-2.5"
         style={{ borderColor: "var(--rf-stroke)", color: "var(--rf-grey)", backgroundColor: "var(--rf-surface)" }}
       >
         <svg viewBox="0 0 24 24" className="size-[15px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
           <circle cx="11" cy="11" r="6.5" />
           <path d="m20 20-4.2-4.2" />
         </svg>
-        <span className="hidden font-geist text-[13px] sm:inline">Search docs</span>
-        <kbd className="ml-auto hidden rounded-[4px] border px-1.5 font-mono text-[10.5px] leading-[18px] sm:inline" style={{ borderColor: "var(--rf-stroke)" }}>
-          {mac ? "⌘K" : "Ctrl K"}
-        </kbd>
+        <span className="hidden font-geist text-[13px] leading-none xl:inline">Search docs</span>
+        {/* The shortcut as two keycaps: the modifier's symbol, then K. */}
+        <span className="ml-auto hidden shrink-0 items-center gap-0.5 xl:flex" aria-hidden="true">
+          {[mac ? "⌘" : "⌃", "K"].map((k) => (
+            <kbd
+              key={k}
+              className="flex size-[18px] items-center justify-center rounded-[4px] border font-geist text-[11px] leading-none"
+              style={{ borderColor: "var(--rf-stroke)", backgroundColor: "var(--rf-bg)" }}
+            >
+              {k}
+            </kbd>
+          ))}
+        </span>
       </button>
 
       <dialog
