@@ -139,7 +139,7 @@ export function ServicesBlock() {
               key={s.name}
               id={`svc-${s.name}`}
               data-project={s.name}
-              className="grid w-full lg:grid-cols-2"
+              className="grid w-full grid-cols-[minmax(0,1fr)] lg:grid-cols-2"
               style={{ borderTop: i === 0 ? undefined : `1px solid ${T.nickel}` }}
             >
               <div data-anim="rise" className="flex flex-col justify-between gap-10 p-6 md:p-10 lg:gap-20">
@@ -231,7 +231,9 @@ function Artwork({
           }}
         >
           <div className="flex-1 rounded-tl-[7px] px-5 py-7 xl:px-7" style={{ backgroundColor: "#1a1b20" }}>
-            <pre className="v2-noscrollbar overflow-x-auto font-mono text-[11px] leading-[1.9] xl:text-[13px] xl:leading-[2]">
+            {/* On phones long lines scroll sideways; the fade at the right
+                edge says so, where a hard cut would read as a clipping bug. */}
+            <pre className="v2-noscrollbar overflow-x-auto font-mono text-[11px] leading-[1.9] max-sm:[mask-image:linear-gradient(90deg,#000_82%,transparent)] xl:text-[13px] xl:leading-[2]">
               {code.map((line, i) => (
                 <div key={i}>
                   {line.length === 0
@@ -329,8 +331,8 @@ export function StatsBand() {
       {/* Thirds, not 4/6: the figure takes one third and the chart two, so
           this row's divider lands on the first divider of the three cells
           below and the verticals run unbroken through the band. */}
-      <div className="grid border-t md:grid-cols-3 md:divide-x" style={{ borderColor: T.stroke }}>
-        <div data-anim="rise" className="flex flex-col justify-between gap-16 p-6 md:col-span-1 md:p-10">
+      <div className="grid border-t lg:grid-cols-3 lg:divide-x" style={{ borderColor: T.stroke }}>
+        <div data-anim="rise" className="flex flex-col justify-between gap-16 p-6 md:p-10 lg:col-span-1">
           <div className="flex items-center gap-3">
             <p className="font-geist text-[15px]" style={{ color: T.nickel }}>
               Pull requests in the corpus
@@ -360,7 +362,7 @@ export function StatsBand() {
             to the far edge of the cell, away from the name they belong to. */}
         <div
           data-anim="rise"
-          className="flex flex-col justify-between gap-8 border-t p-6 md:col-span-2 md:border-t-0 md:p-10"
+          className="flex flex-col justify-between gap-8 border-t p-6 md:p-10 lg:col-span-2 lg:border-t-0"
           style={{ borderColor: T.stroke }}
         >
           <div className="flex items-center gap-3">
@@ -394,11 +396,13 @@ export function StatsBand() {
           </div>
         </div>
       </div>
-      <div className="grid border-t md:grid-cols-3 md:divide-x" style={{ borderColor: T.stroke }}>
+      <div className="grid border-t sm:grid-cols-3 sm:divide-x" style={{ borderColor: T.stroke }}>
         {STATS.cells.map(([value, label, status]) => (
           <div key={label} data-anim="rise" className="flex flex-col gap-3 p-6 md:p-10">
-            <div className="flex items-center gap-3">
-              <p className="font-geist text-[2rem] leading-none font-medium tracking-[-0.03em]">{value}</p>
+            {/* The value never breaks (100–300 split at its dash in a narrow
+                cell); the tag wraps beneath it instead. */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <p className="font-geist text-[2rem] leading-none font-medium tracking-[-0.03em] whitespace-nowrap">{value}</p>
               <StatusTag status={status} />
             </div>
             <p className="font-geist text-[14px]" style={{ color: T.grey }}>
@@ -430,8 +434,8 @@ export function MissionPanel() {
           without one each cell falls back to the name, so the row never
           renders broken images. Labelled as research, not backing, because
           none of these organisations endorse Riffle. */}
-      <section className="v2-wrapper v2-ticks grid border-t md:grid-cols-6 md:divide-x" style={{ borderColor: T.stroke }}>
-        <p className="flex items-center p-6 font-geist text-[14px] md:col-span-1 md:p-8" style={{ color: T.nickel }}>
+      <section className="v2-wrapper v2-ticks grid grid-cols-2 border-t md:grid-cols-3 lg:grid-cols-6 lg:divide-x" style={{ borderColor: T.stroke }}>
+        <p className="col-span-full flex items-center p-6 font-geist text-[14px] lg:col-span-1 lg:p-8" style={{ color: T.nickel }}>
           Research this builds on
         </p>
         {PRIOR_WORK.map(({ name, domain }) => (
@@ -572,7 +576,7 @@ export function ContractsSection() {
           <div
             key={c.id}
             id={c.id}
-            className="grid w-full lg:grid-cols-2 lg:divide-x"
+            className="grid w-full grid-cols-[minmax(0,1fr)] lg:grid-cols-2 lg:divide-x"
             style={{ borderTop: i === 0 ? undefined : `1px solid ${T.nickel}` }}
           >
             <div data-anim="rise" className="flex flex-col justify-between gap-10 p-6 md:p-10 lg:gap-20">
@@ -616,9 +620,9 @@ export function ResourcesGrid() {
   return (
     // Follows the dark contracts block, so no rule at the boundary — the edge
     // of the dark surface is the break, as after services.
-    <section className="v2-wrapper grid grid-cols-1 md:grid-cols-10 md:divide-x">
-      <div className="flex flex-col divide-y md:col-span-4" style={{ borderColor: T.stroke }}>
-        <div className="flex flex-col justify-center gap-6 p-5 md:h-72 md:justify-start md:gap-10 md:p-10" style={{ borderColor: T.stroke }}>
+    <section className="v2-wrapper grid grid-cols-1 lg:grid-cols-10 lg:divide-x">
+      <div className="flex flex-col divide-y lg:col-span-4" style={{ borderColor: T.stroke }}>
+        <div className="flex flex-col justify-center gap-6 p-5 md:p-10 lg:h-72 lg:justify-start lg:gap-10" style={{ borderColor: T.stroke }}>
           <h3 data-anim="rise" className={H3}>
             Reference &amp; internals
           </h3>
@@ -649,7 +653,7 @@ export function ResourcesGrid() {
         </div>
       </div>
 
-      <div className="grid border-t sm:grid-cols-3 md:col-span-6 md:border-t-0" style={{ borderColor: T.stroke }}>
+      <div className="grid border-t sm:grid-cols-3 lg:col-span-6 lg:border-t-0" style={{ borderColor: T.stroke }}>
         {RESOURCES.map((r) => (
           <a key={r.kind} data-anim="rise" href={r.href} className="group flex flex-col gap-4 p-5 md:p-6">
             <div
