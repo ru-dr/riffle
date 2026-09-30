@@ -3,7 +3,7 @@
 @theme {
   --font-tagline: var(--font-tagline), ui-serif, Georgia, serif;
   --font-geist: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-supply-mono), ui-monospace, monospace;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 /* Browser surfaces: the parts we didn't draw still carry the design.
@@ -329,10 +329,6 @@ body:has([data-riffle-light]) {
 /* Tokens for the primitives above. Kept on the opted-in subtree so the
    poster page's warm palette is untouched. */
 [data-riffle-light] {
-  /* /v2 is set in Geist Sans and Geist Mono and nothing else. Overriding
-     the token on the subtree retargets every font-mono utility inside it,
-     including SVG text, without touching the poster page. */
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --v2-stroke: #e5e4e7;
   --v2-ink: #16171d;
@@ -421,3 +417,74 @@ body:has([data-riffle-light]) {
   }
 }
 
+
+/* ---------------------------------------------------------------------------
+   Docs. Prose links underline in the hairline colour and go ink on hover;
+   Shiki's <pre> sits inside our own code card, so its background and margin
+   are reset; callout paragraphs sit tighter than body paragraphs.
+   --------------------------------------------------------------------------- */
+.docs-link {
+  color: #16171d;
+  text-decoration: underline;
+  text-decoration-color: #b9b3bf;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 140ms ease;
+}
+.docs-link:hover {
+  text-decoration-color: #16171d;
+}
+.docs-code-body pre {
+  margin: 0;
+  background: transparent !important;
+}
+.docs-code-body code {
+  font-family: inherit;
+}
+.docs-callout p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.docs-callout p + p {
+  margin-top: 0.5rem;
+}
+
+/* Docs themes. Light is the site's own palette; dark is built on the site's
+   dark-block charcoal. The docs follow the OS until the reader picks one
+   with the switch, which then sets data-theme and is remembered. */
+[data-riffle-light] {
+  --v2-bg: #fbfaf7;
+  --v2-surface: #ffffff;
+  --v2-wash: rgba(22, 23, 29, 0.045);
+}
+@media (prefers-color-scheme: dark) {
+  [data-docs]:not([data-theme="light"]) {
+    color-scheme: dark;
+    --v2-bg: #16171d;
+    --v2-surface: #1e1f25;
+    --v2-wash: rgba(255, 255, 255, 0.055);
+    --v2-ink: #f2f1f4;
+    --v2-nickel: rgba(242, 241, 244, 0.72);
+    --v2-grey: rgba(242, 241, 244, 0.48);
+    --v2-stroke: #2c2d34;
+    --v2-accent: #7dd3a0;
+  }
+}
+[data-docs][data-theme="dark"] {
+  color-scheme: dark;
+  --v2-bg: #16171d;
+  --v2-surface: #1e1f25;
+  --v2-wash: rgba(255, 255, 255, 0.055);
+  --v2-ink: #f2f1f4;
+  --v2-nickel: rgba(242, 241, 244, 0.72);
+  --v2-grey: rgba(242, 241, 244, 0.48);
+  --v2-stroke: #2c2d34;
+  --v2-accent: #7dd3a0;
+}
+[data-docs] .docs-link {
+  color: var(--v2-ink);
+  text-decoration-color: var(--v2-grey);
+}
+[data-docs] .docs-link:hover {
+  text-decoration-color: var(--v2-ink);
+}

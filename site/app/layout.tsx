@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import localFont from "next/font/local";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Instrument_Serif } from "next/font/google";
@@ -24,14 +23,6 @@ const tagline = Instrument_Serif({
   variable: "--font-tagline",
 });
 
-const supplyMono = localFont({
-  src: [
-    { path: "../public/fonts/PPSupplyMono-Regular.woff2", weight: "400" },
-    { path: "../public/fonts/PPSupplyMono-Ultralight.woff2", weight: "200" },
-  ],
-  display: "swap",
-  variable: "--font-supply-mono",
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL(url),
@@ -86,7 +77,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${tagline.variable} ${GeistSans.variable} ${GeistMono.variable} ${supplyMono.variable}`}
+      className={`${tagline.variable} ${GeistSans.variable} ${GeistMono.variable}`}
       // The motion script below sets data-motion on this element before
       // hydration, by design - it has to run before first paint. That makes
       // the server and client attribute sets differ, which is exactly what

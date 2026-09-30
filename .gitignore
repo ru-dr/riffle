@@ -44,3 +44,6 @@ site/assets/fonts/
 
 # Derived woff2 subsets ARE committed (see site/public/fonts) - they are
 # webfonts, not installable font files.
+
+# Docs content compiled by site/scripts/build-docs.mjs on every dev/build.
+site/components/docs/content.generated.ts

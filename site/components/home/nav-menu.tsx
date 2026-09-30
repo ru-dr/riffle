@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { T } from "./tokens";
 
 // Phone navigation. Below md the inline links are hidden, and until now
 // nothing replaced them: a phone reader had no way to the sections except
@@ -29,7 +28,7 @@ export function NavMenu({ links }: { links: readonly (readonly [string, string])
       >
         {/* Square box so the close state is a true X; the 18x8 hamburger box
             flattened it into a "><". */}
-        <svg viewBox="0 0 18 18" className="size-[18px]" aria-hidden="true" stroke={T.ink} strokeWidth="1.5">
+        <svg viewBox="0 0 18 18" className="size-[18px]" aria-hidden="true" stroke={"var(--v2-ink)"} strokeWidth="1.5">
           {open ? (
             <>
               <path d="M3.5 3.5l11 11" />
@@ -47,8 +46,8 @@ export function NavMenu({ links }: { links: readonly (readonly [string, string])
         id="v2-mobile-menu"
         className="absolute inset-x-0 top-full z-50 border-t border-b px-6 py-4"
         style={{
-          backgroundColor: T.beige,
-          borderColor: T.stroke,
+          backgroundColor: "var(--v2-bg)",
+          borderColor: "var(--v2-stroke)",
           visibility: open ? "visible" : "hidden",
           opacity: open ? 1 : 0,
           transform: `translateY(${open ? 0 : -6}px)`,
@@ -57,13 +56,13 @@ export function NavMenu({ links }: { links: readonly (readonly [string, string])
       >
         <ul className="flex flex-col">
           {links.map(([label, href]) => (
-            <li key={href} className="border-b last:border-b-0" style={{ borderColor: T.stroke }}>
+            <li key={href} className="border-b last:border-b-0" style={{ borderColor: "var(--v2-stroke)" }}>
               <a
                 href={href}
                 data-scroll-to={href.startsWith("#") ? "" : undefined}
                 onClick={() => setOpen(false)}
                 className="block py-3.5 font-geist text-[17px]"
-                style={{ color: T.ink }}
+                style={{ color: "var(--v2-ink)" }}
               >
                 {label}
               </a>
