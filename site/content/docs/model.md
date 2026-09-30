@@ -153,14 +153,14 @@ pull request counts.
 > public repositories: these 50 and 50 new ones.
 
 | | Repositories | Pull requests | Commits (approx.) |
-| --- | --- | --- | --- |
-| Current 50 | 50 | 2,045,996 | 3,482,259 |
-| New 50 | 50 | 837,766 | 1,526,983 |
-| **All 100** | **100** | **2,883,762** | **5,009,242** |
+| --- | ---: | ---: | ---: |
+| Current 50 | 50 | 1,899,996 | ~3,482,259 |
+| New 50 | 50 | 1,019,194 | ~1,526,983 |
+| **All 100** | **100** | **2,919,190** | **~5,009,242** |
 
-About 66% of the pull request total is measured; the rest, including
-`rust-lang/rust`, `envoyproxy/envoy` and most of the new 50, is estimated and
-will be measured before extraction. The plan also replaces the 40 / 10 split
-with 70 training, 15 validation and 15 final-test repositories. Every
-repository, figure and caveat is on
+Pull requests are measured on 98 of the 100 repositories; `rust-lang/rust`
+and `envoyproxy/envoy` are still pending. Most commit counts are estimates,
+replaced after cloning. The plan also replaces the 40 / 10 split with 70
+training, 15 validation and 15 final-test repositories. Every repository,
+its split, and the plan's estimates are on
 [Dataset plan: 100 repositories](/docs/reference/dataset-plan).

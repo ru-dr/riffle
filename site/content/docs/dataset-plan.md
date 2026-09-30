@@ -1,311 +1,296 @@
-The plan for the next version of the global model: 100 public repositories,
-the current 50 and 50 new ones. It is a proposal, and most of the new
-figures are estimates.
+Plan for expanding Riffle's training dataset from 50 to 100 public GitHub
+repositories.
 
-> **Proposed.** About 66% of the pull request total is measured. Every
-> Estimate below is to be measured - the Pull Requests tab's open and closed
-> counts, and `git rev-list --count HEAD` on a clone - before extraction.
+> **Proposed.** The corpus and split are proposed. Pull request counts for
+> repositories 1–50 were measured from each repository's Pull Requests tab
+> between July and September 2026; for repositories 51–100, with the GitHub
+> search API on 30 September 2026. Commit counts marked `~` are estimates, the
+> rest come from each repository's GitHub page; estimates are replaced with
+> `git rev-list --count HEAD` after cloning.
 
 ## At a glance
 
-| Scope | Repositories | Pull requests | Commits (approx.) | Status |
-| --- | --- | --- | --- | --- |
-| Current 50 | 50 | 2,045,996 | 3,482,259 | Measured, sourced and estimated |
-| New 50 | 50 | 837,766 | 1,526,983 | Mostly estimated |
-| **All 100** | **100** | **2,883,762** | **5,009,242** | Derived |
-| Measured so far | 48 | 1,899,996 (about 66%) | | Measured |
-| Largest 10 | 10 | 997,560 (about 35%) | | Derived |
+| Scope | Repositories | Total PRs | Approx. commits | Status |
+| --- | ---: | ---: | ---: | --- |
+| Current 50 | 50 | 1,899,996 | ~3,482,259 | rust and envoy PRs pending |
+| New 50 | 50 | 1,019,194 | ~1,526,983 | All measured |
+| **All 100** | **100** | **2,919,190** | **~5,009,242** | 98 repositories measured |
 
-The new 50 add six categories and more than 17 languages. Every repository
-reviews on GitHub pull requests; mirrors and projects reviewed on Gerrit,
-Phabricator or mailing lists are excluded, and no organisation has more than
-two of the new slots.
+## Current 50 repositories (v1)
 
-**Status key:** **M** measured from the Pull Requests tab, July to September
-2026. **S** sourced from the repository's GitHub page. **E** estimated from
-pull request number ranges; to be measured.
+### Systems, languages, and developer tools
 
-## Split: 70 / 15 / 15
-
-The 40 / 10 split of the first model had no untouched test set. The plan uses
-70 repositories to train, 15 unseen repositories to validate (calibration and
-tuning) and 15 unseen repositories as a final test, used once. Inside the
-training repositories, splits are time-ordered: oldest data to train, newest
-to stop early.
-
-| Split | Repositories |
-| --- | --- |
-| Validation (15) | curl/curl, pallets/flask, apache/druid, prometheus/prometheus, obsproject/obs-studio, godotengine/godot, scala/scala3, haskell/cabal, vitejs/vite, AntennaPod/AntennaPod, sigstore/cosign, pola-rs/polars, cli/cli, esphome/esphome, lightningnetwork/lnd |
-| Final test (15) | neovim/neovim, redis/redis, laravel/framework, hashicorp/vault, jupyter/notebook, elastic/elasticsearch, JuliaLang/julia, elixir-lang/elixir, sveltejs/svelte, wordpress-mobile/WordPress-iOS, bitwarden/server, delta-io/delta, helix-editor/helix, tigerbeetle/tigerbeetle, actualbudget/actual |
-| Train (70) | All other repositories |
-
-Each of the 11 categories has one or two repositories in both held-out sets,
-each set has at least four repositories under 6,000 pull requests and one
-giant (godot in validation, elasticsearch in test), and the held-out sets
-cover C, C++, Go, Rust, Java, Kotlin, Scala, Haskell, Julia, Elixir, PHP,
-Swift, C#, Zig, TypeScript and Python. The split is re-balanced once the
-estimates are measured.
-
-## The current 50
-
-### Systems, languages and developer tools
-
-| Repository | PRs | | Commits | | Since | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| [kubernetes/kubernetes](https://github.com/kubernetes/kubernetes) | 90,279 | M | 141,606 | S | 2014 | Prow/tide bot merges via the API; cherry-pick PRs |
-| [rust-lang/cargo](https://github.com/rust-lang/cargo) | 8,422 | M | ~20,000 | E | 2014 | Merge queue; a submodule of rust |
-| [python/cpython](https://github.com/python/cpython) | 77,404 | M | ~128,000 | E | 1990 | Backport bot (miss-islington) PRs |
-| [rust-lang/rust](https://github.com/rust-lang/rust) | ~113,000 | E | 341,866 | S | 2010 | bors rollups: one merge can cover up to 20 PRs; rebase-only |
-| [llvm/llvm-project](https://github.com/llvm/llvm-project) | 125,189 | M | 599,783 | S | 2001 | Squash-merge; direct pushes to main still allowed |
-| [rust-lang/rust-clippy](https://github.com/rust-lang/rust-clippy) | 7,856 | M | ~19,000 | E | 2014 | Subtree syncs with rust inflate commits |
-| [curl/curl](https://github.com/curl/curl) | 15,597 | M | ~35,000 | E | 1999 | Maintainer often rebases and pushes by hand |
-| [neovim/neovim](https://github.com/neovim/neovim) | 25,774 | M | ~34,000 | E | 2014 | vim-patch port PRs (semi-automatic) |
-| [microsoft/vscode](https://github.com/microsoft/vscode) | 67,137 | M | ~140,000 | E | 2015 | Many direct team commits |
-| [microsoft/TypeScript](https://github.com/microsoft/TypeScript) | 19,456 | M | ~37,000 | E | 2014 | typescript-bot PRs |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1 | [kubernetes/kubernetes](https://github.com/kubernetes/kubernetes) | 946 | 89,333 | 90,279 | 141,606 | Train | Stale PRs auto-closed after 90 days |
+| 2 | [rust-lang/cargo](https://github.com/rust-lang/cargo) | 82 | 8,340 | 8,422 | ~20,000 | Train | Replaces golang/go |
+| 3 | [python/cpython](https://github.com/python/cpython) | 2,717 | 74,687 | 77,404 | ~128,000 | Train | Many bot backport PRs |
+| 4 | [rust-lang/rust](https://github.com/rust-lang/rust) | — | — | — | 341,866 | Train | PRs not measured; bors rollups |
+| 5 | [llvm/llvm-project](https://github.com/llvm/llvm-project) | 10,033 | 115,156 | 125,189 | 599,783 | Train | GitHub review only since Sep 2023 |
+| 6 | [rust-lang/rust-clippy](https://github.com/rust-lang/rust-clippy) | 201 | 7,655 | 7,856 | ~19,000 | Train | Replaces git/git |
+| 7 | [curl/curl](https://github.com/curl/curl) | 53 | 15,544 | 15,597 | ~35,000 | Val | |
+| 8 | [neovim/neovim](https://github.com/neovim/neovim) | 298 | 25,476 | 25,774 | ~34,000 | Test | vim-patch port PRs |
+| 9 | [microsoft/vscode](https://github.com/microsoft/vscode) | 2,731 | 64,406 | 67,137 | ~140,000 | Train | Mostly internal-team PRs |
+| 10 | [microsoft/TypeScript](https://github.com/microsoft/TypeScript) | 130 | 19,326 | 19,456 | ~37,000 | Train | |
+| | **Subtotal** | | | **437,114** | **~1,496,255** | | |
 
 ### Web and application frameworks
 
-| Repository | PRs | | Commits | | Since | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| [facebook/react](https://github.com/facebook/react) | 19,459 | M | ~21,000 | E | 2013 | Some Meta-internal sync |
-| [nodejs/node](https://github.com/nodejs/node) | 42,628 | M | ~47,000 | E | 2009 | Lands via the commit-queue bot; PRs often closed, not merged |
-| [denoland/deno](https://github.com/denoland/deno) | 18,494 | M | ~14,500 | E | 2018 | Squash-merge |
-| [django/django](https://github.com/django/django) | 21,536 | M | ~34,500 | E | 2005 | Mergers push by hand; backports |
-| [pallets/flask](https://github.com/pallets/flask) | 2,849 | M | ~5,500 | E | 2010 | Small |
-| [rails/rails](https://github.com/rails/rails) | 39,275 | M | ~95,000 | E | 2004 | Merge commits; backports |
-| [laravel/framework](https://github.com/laravel/framework) | 35,937 | M | ~40,000 | E | 2013 | Branch merge-ups |
-| [spring-projects/spring-boot](https://github.com/spring-projects/spring-boot) | 7,851 | M | ~58,000 | E | 2013 | Most commits pushed directly; low PR-to-commit ratio |
-| [electron/electron](https://github.com/electron/electron) | 30,952 | M | ~31,000 | E | 2013 | Backport bot PRs; Chromium roll PRs |
-| [vercel/next.js](https://github.com/vercel/next.js) | 40,513 | M | ~32,000 | E | 2016 | Canary release commits |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 11 | [facebook/react](https://github.com/facebook/react) | 482 | 18,977 | 19,459 | ~21,000 | Train | Now redirects to react/react |
+| 12 | [nodejs/node](https://github.com/nodejs/node) | 584 | 42,044 | 42,628 | ~47,000 | Train | Lands via commit-queue bot |
+| 13 | [denoland/deno](https://github.com/denoland/deno) | 271 | 18,223 | 18,494 | ~14,500 | Train | |
+| 14 | [django/django](https://github.com/django/django) | 453 | 21,083 | 21,536 | ~34,500 | Train | Mergers push manually |
+| 15 | [pallets/flask](https://github.com/pallets/flask) | 3 | 2,846 | 2,849 | ~5,500 | Val | Small |
+| 16 | [rails/rails](https://github.com/rails/rails) | 1,120 | 38,155 | 39,275 | ~95,000 | Train | |
+| 17 | [laravel/framework](https://github.com/laravel/framework) | 44 | 35,893 | 35,937 | ~40,000 | Test | Fast-close culture |
+| 18 | [spring-projects/spring-boot](https://github.com/spring-projects/spring-boot) | 11 | 7,840 | 7,851 | ~58,000 | Train | Manual merges |
+| 19 | [electron/electron](https://github.com/electron/electron) | 142 | 30,810 | 30,952 | ~31,000 | Train | Backport bot PRs |
+| 20 | [vercel/next.js](https://github.com/vercel/next.js) | 2,486 | 38,027 | 40,513 | ~32,000 | Train | Large open backlog |
+| | **Subtotal** | | | **259,494** | **~378,500** | | |
 
 ### Databases and data systems
 
-| Repository | PRs | | Commits | | Since | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| [ClickHouse/ClickHouse](https://github.com/ClickHouse/ClickHouse) | 79,031 | M | ~240,000 | E | 2008 | Merge commits; backport bot PRs |
-| [redis/redis](https://github.com/redis/redis) | 8,205 | M | ~13,000 | E | 2009 | Licence changes 2024 and 2025 |
-| [pingcap/tidb](https://github.com/pingcap/tidb) | 47,046 | M | ~26,000 | E | 2015 | Bot merges and cherry-pick bot PRs |
-| [apache/airflow](https://github.com/apache/airflow) | 46,533 | M | ~30,000 | E | 2014 | Backport PRs; provider releases |
-| [elastic/elasticsearch](https://github.com/elastic/elasticsearch) | 107,155 | M | 106,421 | S | 2010 | Bot mute-test commits; backport PRs; licence changes |
-| [apache/kafka](https://github.com/apache/kafka) | 23,106 | M | ~17,500 | E | 2011 | Issues in Jira |
-| [apache/spark](https://github.com/apache/spark) | 56,921 | M | ~50,000 | E | 2010 | Merged by script; PRs closed, not merged |
-| [apache/flink](https://github.com/apache/flink) | 28,596 | M | ~37,000 | E | 2010 | Committers push by hand; Jira |
-| [apache/druid](https://github.com/apache/druid) | 15,010 | M | ~14,500 | E | 2012 | Squash-merge |
-| [duckdb/duckdb](https://github.com/duckdb/duckdb) | 14,337 | M | ~55,000 | E | 2018 | Merge commits keep PR branch commits |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 21 | [ClickHouse/ClickHouse](https://github.com/ClickHouse/ClickHouse) | 1,445 | 77,586 | 79,031 | ~240,000 | Train | Backport bot PRs |
+| 22 | [redis/redis](https://github.com/redis/redis) | 679 | 7,526 | 8,205 | ~13,000 | Test | Licence changes 2024/2025 |
+| 23 | [pingcap/tidb](https://github.com/pingcap/tidb) | 1,926 | 45,120 | 47,046 | ~26,000 | Train | Replaces mongodb/mongo |
+| 24 | [apache/airflow](https://github.com/apache/airflow) | 810 | 45,723 | 46,533 | ~30,000 | Train | Replaces apache/cassandra |
+| 25 | [elastic/elasticsearch](https://github.com/elastic/elasticsearch) | 1,241 | 105,914 | 107,155 | 106,421 | Test | |
+| 26 | [apache/kafka](https://github.com/apache/kafka) | 498 | 22,608 | 23,106 | ~17,500 | Train | |
+| 27 | [apache/spark](https://github.com/apache/spark) | 409 | 56,512 | 56,921 | ~50,000 | Train | Merged by script |
+| 28 | [apache/flink](https://github.com/apache/flink) | 362 | 28,234 | 28,596 | ~37,000 | Train | Merged by committers |
+| 29 | [apache/druid](https://github.com/apache/druid) | 119 | 14,891 | 15,010 | ~14,500 | Val | |
+| 30 | [duckdb/duckdb](https://github.com/duckdb/duckdb) | 338 | 13,999 | 14,337 | ~55,000 | Train | |
+| | **Subtotal** | | | **425,940** | **~589,421** | | |
 
-### Cloud, infrastructure and observability
+### Cloud, infrastructure, and observability
 
-| Repository | PRs | | Commits | | Since | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| [docker/compose](https://github.com/docker/compose) | 5,614 | M | ~7,000 | E | 2013 | v1 to v2 rewrite discontinuity |
-| [moby/moby](https://github.com/moby/moby) | 28,598 | M | ~52,000 | E | 2013 | Merge commits; vendoring PRs |
-| [hashicorp/terraform](https://github.com/hashicorp/terraform) | 16,468 | M | ~35,000 | E | 2014 | BSL licence since 2023 |
-| [hashicorp/vault](https://github.com/hashicorp/vault) | 25,262 | M | ~23,000 | E | 2015 | Enterprise-to-OSS sync commits; BSL since 2023 |
-| [ansible/ansible](https://github.com/ansible/ansible) | 53,359 | M | ~55,000 | E | 2012 | 2020 collections split in history |
-| [prometheus/prometheus](https://github.com/prometheus/prometheus) | 12,059 | M | ~14,000 | E | 2012 | Merge commits |
-| [grafana/grafana](https://github.com/grafana/grafana) | 82,187 | M | ~62,000 | E | 2013 | Backport bot PRs; AGPL since 2021 |
-| [open-telemetry/opentelemetry-collector](https://github.com/open-telemetry/opentelemetry-collector) | 11,133 | M | ~8,000 | E | 2019 | Heavy on dependency-bot PRs |
-| [istio/istio](https://github.com/istio/istio) | 37,496 | M | ~24,000 | E | 2016 | Prow bot merges; automator PRs |
-| [envoyproxy/envoy](https://github.com/envoyproxy/envoy) | ~33,000 | E | 28,474 | S | 2016 | Dependency bot PRs; release backports |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 31 | [docker/compose](https://github.com/docker/compose) | 45 | 5,569 | 5,614 | ~7,000 | Train | v1 to v2 rewrite |
+| 32 | [moby/moby](https://github.com/moby/moby) | 594 | 28,004 | 28,598 | ~52,000 | Train | |
+| 33 | [hashicorp/terraform](https://github.com/hashicorp/terraform) | 167 | 16,301 | 16,468 | ~35,000 | Train | BSL licence since 2023 |
+| 34 | [hashicorp/vault](https://github.com/hashicorp/vault) | 280 | 24,982 | 25,262 | ~23,000 | Test | Enterprise sync commits |
+| 35 | [ansible/ansible](https://github.com/ansible/ansible) | 342 | 53,017 | 53,359 | ~55,000 | Train | 2020 collections split |
+| 36 | [prometheus/prometheus](https://github.com/prometheus/prometheus) | 374 | 11,685 | 12,059 | ~14,000 | Val | |
+| 37 | [grafana/grafana](https://github.com/grafana/grafana) | 632 | 81,555 | 82,187 | ~62,000 | Train | Backport bot PRs |
+| 38 | [open-telemetry/opentelemetry-collector](https://github.com/open-telemetry/opentelemetry-collector) | 77 | 11,056 | 11,133 | ~8,000 | Train | Short history (2019 on) |
+| 39 | [istio/istio](https://github.com/istio/istio) | 71 | 37,425 | 37,496 | ~24,000 | Train | |
+| 40 | [envoyproxy/envoy](https://github.com/envoyproxy/envoy) | — | — | — | 28,474 | Train | PRs not measured |
+| | **Subtotal** | | | **272,176** | **~308,474** | | |
 
-### ML, science, media and end-user software
+### ML, science, media, and end-user software
 
-| Repository | PRs | | Commits | | Since | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| [pytorch/pytorch](https://github.com/pytorch/pytorch) | 136,790 | M | 111,609 | S | 2012 | Lands via a merge bot and ghstack; PRs show as closed |
-| [tensorflow/tensorflow](https://github.com/tensorflow/tensorflow) | 78,494 | M | ~195,000 | E | 2015 | Heavy internal Copybara sync; most commits not from GitHub PRs |
-| [scikit-learn/scikit-learn](https://github.com/scikit-learn/scikit-learn) | 21,218 | M | ~33,000 | E | 2010 | Squash-merge |
-| [huggingface/transformers](https://github.com/huggingface/transformers) | 27,932 | M | ~21,000 | E | 2018 | Squash-merge |
-| [jupyter/notebook](https://github.com/jupyter/notebook) | 2,641 | M | ~10,500 | E | 2015 | v7 rewrite discontinuity |
-| [obsproject/obs-studio](https://github.com/obsproject/obs-studio) | 8,023 | M | ~14,500 | E | 2013 | Maintainers rebase-merge |
-| [godotengine/godot](https://github.com/godotengine/godot) | 56,763 | M | ~80,000 | E | 2014 | Cherry-pick PRs to 4.x branches |
-| [home-assistant/core](https://github.com/home-assistant/core) | 108,031 | M | ~118,000 | E | 2013 | Default branch dev; many small integration PRs |
-| [nextcloud/server](https://github.com/nextcloud/server) | 40,253 | M | ~80,000 | E | 2016 | Backport bot PRs; ownCloud history from 2010 |
-| [bitcoin/bitcoin](https://github.com/bitcoin/bitcoin) | 25,127 | M | ~46,000 | E | 2009 | Maintainers merge locally with signed merge commits; PRs closed, not merged |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 41 | [pytorch/pytorch](https://github.com/pytorch/pytorch) | 3,514 | 133,276 | 136,790 | 111,609 | Train | Lands via merge bot; ghstack |
+| 42 | [tensorflow/tensorflow](https://github.com/tensorflow/tensorflow) | 1,963 | 76,531 | 78,494 | ~195,000 | Train | Mostly Copybara sync PRs |
+| 43 | [scikit-learn/scikit-learn](https://github.com/scikit-learn/scikit-learn) | 587 | 20,631 | 21,218 | ~33,000 | Train | |
+| 44 | [huggingface/transformers](https://github.com/huggingface/transformers) | 1,497 | 26,435 | 27,932 | ~21,000 | Train | |
+| 45 | [jupyter/notebook](https://github.com/jupyter/notebook) | 48 | 2,593 | 2,641 | ~10,500 | Test | Small; v7 rewrite |
+| 46 | [obsproject/obs-studio](https://github.com/obsproject/obs-studio) | 330 | 7,693 | 8,023 | ~14,500 | Val | |
+| 47 | [godotengine/godot](https://github.com/godotengine/godot) | 5,304 | 51,459 | 56,763 | ~80,000 | Val | Large open backlog |
+| 48 | [home-assistant/core](https://github.com/home-assistant/core) | 1,063 | 106,968 | 108,031 | ~118,000 | Train | Many dependency bumps |
+| 49 | [nextcloud/server](https://github.com/nextcloud/server) | 1,012 | 39,241 | 40,253 | ~80,000 | Train | Backport bot PRs |
+| 50 | [bitcoin/bitcoin](https://github.com/bitcoin/bitcoin) | 388 | 24,739 | 25,127 | ~46,000 | Train | Merged by maintainer script |
+| | **Subtotal** | | | **505,272** | **~709,609** | | |
 
-| Category | PRs | Commits (approx.) |
-| --- | --- | --- |
-| Systems, languages and developer tools | 550,114 | 1,496,255 |
-| Web and application frameworks | 259,494 | 378,500 |
-| Databases and data systems | 425,940 | 589,421 |
-| Cloud, infrastructure and observability | 305,176 | 308,474 |
-| ML, science, media and end-user software | 505,272 | 709,609 |
-| **Current 50** | **2,045,996** | **3,482,259** |
-
-## The new 50
+## New 50 repositories (v2)
 
 ### Languages and compilers
 
-| Repository | PRs | Commits | Language | Since | Notes | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| [swiftlang/swift](https://github.com/swiftlang/swift) | 65,547 | 211,250 | C++, Swift | 2010 | CI triggered by a bot; release-branch cherry-pick PRs | PRs S (Jan 2026 snapshot), commits S |
-| [dotnet/roslyn](https://github.com/dotnet/roslyn) | ~42,000 | 146,826 | C# | 2014 | Dependency and merge-flow bot PRs | PRs E, commits S |
-| [JuliaLang/julia](https://github.com/JuliaLang/julia) | ~28,000 | 63,162 | Julia, C | 2009 | Buildkite CI; backport labels | PRs E, commits S |
-| [scala/scala3](https://github.com/scala/scala3) | ~12,000 | ~30,000 | Scala | 2012 | Renamed from lampepfl/dotty | E |
-| [elixir-lang/elixir](https://github.com/elixir-lang/elixir) | ~5,500 | ~22,000 | Elixir | 2011 | Core team pushes much directly to main | E |
-| [haskell/cabal](https://github.com/haskell/cabal) | ~5,000 | ~17,000 | Haskell | 2004 | Mergify merges and backports | E |
-| [php/php-src](https://github.com/php/php-src) | ~11,000 | ~140,000 | C | 1999 | Many PRs merged by hand and closed; branch merge-ups | E |
-| [oven-sh/bun](https://github.com/oven-sh/bun) | ~12,000 | ~13,000 | Zig, C++, TS | 2021 | Many bot- and AI-authored PRs | E |
-| **Subtotal** | **181,047** | **643,238** | | | | |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 51 | [swiftlang/swift](https://github.com/swiftlang/swift) | 1,729 | 68,765 | 70,494 | 211,250 | Train | Moved from apple/swift (2024) |
+| 52 | [dotnet/roslyn](https://github.com/dotnet/roslyn) | 748 | 46,001 | 46,749 | 146,826 | Train | Maestro bot PRs |
+| 53 | [JuliaLang/julia](https://github.com/JuliaLang/julia) | 1,066 | 34,314 | 35,380 | 63,162 | Test | Backport labels |
+| 54 | [scala/scala3](https://github.com/scala/scala3) | 128 | 15,699 | 15,827 | ~30,000 | Val | Renamed from lampepfl/dotty |
+| 55 | [elixir-lang/elixir](https://github.com/elixir-lang/elixir) | 10 | 9,756 | 9,766 | ~22,000 | Test | Core team pushes directly |
+| 56 | [haskell/cabal](https://github.com/haskell/cabal) | 150 | 5,746 | 5,896 | ~17,000 | Val | Mergify merges |
+| 57 | [php/php-src](https://github.com/php/php-src) | 1,120 | 17,133 | 18,253 | ~140,000 | Train | GitHub canonical only since 2021 |
+| 58 | [oven-sh/bun](https://github.com/oven-sh/bun) | 5,812 | 18,681 | 24,493 | ~13,000 | Train | Many bot-authored PRs |
+| | **Subtotal** | | | **226,858** | **~643,238** | | |
 
 ### Frontend and mobile
 
-| Repository | PRs | Commits | Language | Since | Notes | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| [angular/angular](https://github.com/angular/angular) | ~32,000 | ~33,000 | TypeScript | 2014 | Merged by a merge tool; PRs show as closed | E |
-| [vuejs/core](https://github.com/vuejs/core) | ~6,500 | 7,198 | TypeScript | 2018 | Renovate bot | PRs E, commits S |
-| [sveltejs/svelte](https://github.com/sveltejs/svelte) | ~8,500 | ~11,000 | JS, TS | 2016 | Changesets release PRs | E |
-| [vitejs/vite](https://github.com/vitejs/vite) | ~11,000 | ~9,500 | TypeScript | 2020 | Renovate bot | E |
-| [withastro/astro](https://github.com/withastro/astro) | ~9,500 | ~12,000 | TypeScript | 2021 | Changesets release PRs | E |
-| [flutter/flutter](https://github.com/flutter/flutter) | 75,919 | 91,756 | Dart, C++ | 2015 | Engine merged in 2024; autoroller and autosubmit bots | PRs S (Sep 2026), commits S |
-| [expo/expo](https://github.com/expo/expo) | ~20,000 | ~30,000 | TS, Kotlin, Swift | 2016 | Monorepo; release commits | E |
-| [thunderbird/thunderbird-android](https://github.com/thunderbird/thunderbird-android) | ~4,500 | ~12,000 | Kotlin, Java | 2008 | Formerly K-9 Mail; translation bot PRs | E |
-| [AntennaPod/AntennaPod](https://github.com/AntennaPod/AntennaPod) | ~3,500 | ~6,500 | Java, Kotlin | 2012 | Small; useful for calibration | E |
-| [wordpress-mobile/WordPress-iOS](https://github.com/wordpress-mobile/WordPress-iOS) | ~17,000 | ~50,000 | Swift, ObjC | 2008 | Release-branch merges; Buildkite CI | E |
-| **Subtotal** | **188,419** | **262,954** | | | | |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 59 | [angular/angular](https://github.com/angular/angular) | 184 | 37,761 | 37,945 | ~33,000 | Train | Merged by merge tool |
+| 60 | [vuejs/core](https://github.com/vuejs/core) | 360 | 6,450 | 6,810 | 7,198 | Train | Vue 2 history in vuejs/vue |
+| 61 | [sveltejs/svelte](https://github.com/sveltejs/svelte) | 164 | 8,413 | 8,577 | ~11,000 | Test | Changesets release PRs |
+| 62 | [vitejs/vite](https://github.com/vitejs/vite) | 277 | 8,881 | 9,158 | ~9,500 | Val | Renovate bot |
+| 63 | [withastro/astro](https://github.com/withastro/astro) | 77 | 10,983 | 11,060 | ~12,000 | Train | Changesets release PRs |
+| 64 | [flutter/flutter](https://github.com/flutter/flutter) | 598 | 75,411 | 76,009 | 91,756 | Train | Engine merged in Dec 2024 |
+| 65 | [expo/expo](https://github.com/expo/expo) | 541 | 28,840 | 29,381 | ~30,000 | Train | Monorepo |
+| 66 | [thunderbird/thunderbird-android](https://github.com/thunderbird/thunderbird-android) | 27 | 5,326 | 5,353 | ~12,000 | Train | Formerly K-9 Mail |
+| 67 | [AntennaPod/AntennaPod](https://github.com/AntennaPod/AntennaPod) | 27 | 3,850 | 3,877 | ~6,500 | Val | Small |
+| 68 | [wordpress-mobile/WordPress-iOS](https://github.com/wordpress-mobile/WordPress-iOS) | 81 | 16,413 | 16,494 | ~50,000 | Test | Release-branch merges |
+| | **Subtotal** | | | **204,664** | **~262,954** | | |
 
 ### Security and networking
 
-| Repository | PRs | Commits | Language | Since | Notes | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| [openssl/openssl](https://github.com/openssl/openssl) | ~20,000 | ~36,000 | C | 1998 | Pushed by hand after approval; PRs closed, not merged | E |
-| [keycloak/keycloak](https://github.com/keycloak/keycloak) | ~25,000 | ~28,000 | Java | 2013 | Heavy on Dependabot | E |
-| [aquasecurity/trivy](https://github.com/aquasecurity/trivy) | ~5,000 | ~3,500 | Go | 2019 | Dependabot | E |
-| [sigstore/cosign](https://github.com/sigstore/cosign) | ~3,000 | ~2,800 | Go | 2021 | Small; many dependency bumps | E |
-| [bitwarden/server](https://github.com/bitwarden/server) | ~5,000 | ~5,500 | C# | 2015 | Mixed licence; Renovate | E |
-| [cilium/cilium](https://github.com/cilium/cilium) | ~32,000 | ~40,000 | Go, C (eBPF) | 2015 | Many backport PRs; Renovate | E |
-| [caddyserver/caddy](https://github.com/caddyserver/caddy) | ~3,000 | ~5,000 | Go | 2015 | v2 rewrite in 2019 | E |
-| [tailscale/tailscale](https://github.com/tailscale/tailscale) | ~9,000 | ~11,000 | Go | 2020 | Check share of commits without PRs | E |
-| **Subtotal** | **102,000** | **131,800** | | | | |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 69 | [openssl/openssl](https://github.com/openssl/openssl) | 556 | 18,740 | 19,296 | ~36,000 | Train | Manual pushes after approval |
+| 70 | [keycloak/keycloak](https://github.com/keycloak/keycloak) | 504 | 25,691 | 26,195 | ~28,000 | Train | Dependabot heavy |
+| 71 | [aquasecurity/trivy](https://github.com/aquasecurity/trivy) | 83 | 4,909 | 4,992 | ~3,500 | Train | Security incident Mar 2026 |
+| 72 | [sigstore/cosign](https://github.com/sigstore/cosign) | 46 | 3,798 | 3,844 | ~2,800 | Val | Many dependency bumps |
+| 73 | [bitwarden/server](https://github.com/bitwarden/server) | 206 | 6,725 | 6,931 | ~5,500 | Test | Mixed licence |
+| 74 | [cilium/cilium](https://github.com/cilium/cilium) | 262 | 36,110 | 36,372 | ~40,000 | Train | Backport PRs |
+| 75 | [caddyserver/caddy](https://github.com/caddyserver/caddy) | 92 | 3,042 | 3,134 | ~5,000 | Train | v2 rewrite 2019 |
+| 76 | [tailscale/tailscale](https://github.com/tailscale/tailscale) | 549 | 10,093 | 10,642 | ~11,000 | Train | |
+| | **Subtotal** | | | **111,406** | **~131,800** | | |
 
 ### Data engineering and ML infrastructure
 
-| Repository | PRs | Commits | Language | Since | Notes | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| [apache/arrow](https://github.com/apache/arrow) | ~25,000 | ~17,000 | C++, multi | 2016 | Moved from Jira to GitHub issues in 2023 | E |
-| [trinodb/trino](https://github.com/trinodb/trino) | ~15,000 | ~25,000 | Java | 2012 | Renamed from Presto in 2020 | E |
-| [pola-rs/polars](https://github.com/pola-rs/polars) | ~13,000 | ~12,000 | Rust, Python | 2020 | Squash-merge | E |
-| [dbt-labs/dbt-core](https://github.com/dbt-labs/dbt-core) | ~5,500 | ~8,000 | Python | 2016 | Changelog and backport bots | E |
-| [ray-project/ray](https://github.com/ray-project/ray) | ~38,000 | 31,787 | Python, C++ | 2016 | External Buildkite CI; flaky-test PRs | PRs E, commits S |
-| [vllm-project/vllm](https://github.com/vllm-project/vllm) | ~28,000 | 20,901 | Python, CUDA | 2023 | Over 5,000 open PRs; short history | PRs E, commits S |
-| [numpy/numpy](https://github.com/numpy/numpy) | ~17,000 | 42,003 | Python, C | 2002 | SVN-era history | PRs E, commits S |
-| [delta-io/delta](https://github.com/delta-io/delta) | ~3,500 | ~4,500 | Scala, Java | 2019 | Check for internal-sync commits | E |
-| **Subtotal** | **145,000** | **161,191** | | | | |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 77 | [apache/arrow](https://github.com/apache/arrow) | 388 | 21,634 | 22,022 | ~17,000 | Train | Jira to GitHub issues 2023 |
+| 78 | [trinodb/trino](https://github.com/trinodb/trino) | 274 | 22,131 | 22,405 | ~25,000 | Train | Renamed from prestosql |
+| 79 | [pola-rs/polars](https://github.com/pola-rs/polars) | 376 | 15,827 | 16,203 | ~12,000 | Val | |
+| 80 | [dbt-labs/dbt](https://github.com/dbt-labs/dbt) | 306 | 6,443 | 6,749 | ~8,000 | Train | Renamed from dbt-labs/dbt-core |
+| 81 | [ray-project/ray](https://github.com/ray-project/ray) | 699 | 42,357 | 43,056 | 31,787 | Train | External Buildkite CI |
+| 82 | [vllm-project/vllm](https://github.com/vllm-project/vllm) | 5,852 | 34,177 | 40,029 | 20,901 | Train | Short history (2023 on) |
+| 83 | [numpy/numpy](https://github.com/numpy/numpy) | 303 | 18,156 | 18,459 | 42,003 | Train | SVN-era history |
+| 84 | [delta-io/delta](https://github.com/delta-io/delta) | 585 | 5,172 | 5,757 | ~4,500 | Test | Check internal-sync commits |
+| | **Subtotal** | | | **174,680** | **~161,191** | | |
 
-### Developer tools, package managers and editors
+### Developer tools, package managers, and editors
 
-| Repository | PRs | Commits | Language | Since | Notes | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| [Homebrew/brew](https://github.com/Homebrew/brew) | ~14,000 | ~30,000 | Ruby | 2009 | Dependabot; split from legacy-homebrew in 2016 | E |
-| [astral-sh/uv](https://github.com/astral-sh/uv) | ~9,000 | ~7,000 | Rust | 2023 | Squash-merge; short history | E |
-| [pnpm/pnpm](https://github.com/pnpm/pnpm) | ~5,000 | ~9,000 | TypeScript | 2015 | Changesets | E |
-| [cli/cli](https://github.com/cli/cli) | ~5,500 | ~10,000 | Go | 2019 | Squash-merge | E |
-| [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) | ~800 | ~2,300 | Rust | 2016 | Very small; maintainer often re-commits PRs by hand | E |
-| [helix-editor/helix](https://github.com/helix-editor/helix) | ~6,500 | ~6,500 | Rust | 2020 |  | E |
-| [zed-industries/zed](https://github.com/zed-industries/zed) | ~25,000 | ~35,000 | Rust | 2021 | Private before January 2024, so PR data from 2024 only | E |
-| **Subtotal** | **65,800** | **99,800** | | | | |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 85 | [Homebrew/brew](https://github.com/Homebrew/brew) | 8 | 17,809 | 17,817 | ~30,000 | Train | Dependabot |
+| 86 | [astral-sh/uv](https://github.com/astral-sh/uv) | 570 | 12,044 | 12,614 | ~7,000 | Train | Short history (2023 on) |
+| 87 | [pnpm/pnpm](https://github.com/pnpm/pnpm) | 232 | 7,445 | 7,677 | ~9,000 | Train | Changesets |
+| 88 | [cli/cli](https://github.com/cli/cli) | 62 | 4,577 | 4,639 | ~10,000 | Val | |
+| 89 | [BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) | 76 | 1,088 | 1,164 | ~2,300 | Train | Very small |
+| 90 | [helix-editor/helix](https://github.com/helix-editor/helix) | 580 | 6,413 | 6,993 | ~6,500 | Test | |
+| 91 | [zed-industries/zed](https://github.com/zed-industries/zed) | 790 | 32,159 | 32,949 | ~35,000 | Train | Private before Jan 2024 |
+| | **Subtotal** | | | **83,853** | **~99,800** | | |
 
-### Embedded and IoT, games, fintech, CMS and social
+### Embedded, games, fintech, CMS, and social
 
-| Repository | PRs | Commits | Language | Since | Notes | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| [zephyrproject-rtos/zephyr](https://github.com/zephyrproject-rtos/zephyr) | ~60,000 | ~110,000 | C | 2014 | Backport bot PRs; release-team merges | E |
-| [esphome/esphome](https://github.com/esphome/esphome) | ~8,000 | ~9,000 | C++, Python | 2018 |  | E |
-| [bevyengine/bevy](https://github.com/bevyengine/bevy) | ~12,000 | ~9,000 | Rust | 2019 | Merge queue | E |
-| [luanti-org/luanti](https://github.com/luanti-org/luanti) | ~8,000 | ~17,000 | C++, Lua | 2010 | Renamed from minetest in 2024; some direct pushes | E |
-| [tigerbeetle/tigerbeetle](https://github.com/tigerbeetle/tigerbeetle) | ~2,500 | ~11,000 | Zig | 2020 | Merge queue | E |
-| [actualbudget/actual](https://github.com/actualbudget/actual) | ~3,500 | ~4,000 | TypeScript | 2022 | Small | E |
-| [lightningnetwork/lnd](https://github.com/lightningnetwork/lnd) | ~5,500 | ~18,000 | Go | 2015 | Merge commits; multi-commit PRs | E |
-| [WordPress/gutenberg](https://github.com/WordPress/gutenberg) | ~40,000 | ~30,000 | JS, TS, PHP | 2017 | Synced downstream into WordPress core | E |
-| [mastodon/mastodon](https://github.com/mastodon/mastodon) | ~16,000 | ~20,000 | Ruby, TS | 2016 | Renovate and Crowdin bots | E |
-| **Subtotal** | **155,500** | **228,000** | | | | |
+| # | Repository | Open | Closed | Total PRs | Approx. commits | Split | Notes |
+| ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 92 | [zephyrproject-rtos/zephyr](https://github.com/zephyrproject-rtos/zephyr) | 1,904 | 85,949 | 87,853 | ~110,000 | Train | Backport bot PRs |
+| 93 | [esphome/esphome](https://github.com/esphome/esphome) | 465 | 16,504 | 16,969 | ~9,000 | Val | |
+| 94 | [bevyengine/bevy](https://github.com/bevyengine/bevy) | 574 | 14,533 | 15,107 | ~9,000 | Train | Merge queue |
+| 95 | [luanti-org/luanti](https://github.com/luanti-org/luanti) | 123 | 8,356 | 8,479 | ~17,000 | Train | Renamed from minetest (2024) |
+| 96 | [tigerbeetle/tigerbeetle](https://github.com/tigerbeetle/tigerbeetle) | 29 | 3,237 | 3,266 | ~11,000 | Test | Small |
+| 97 | [actualbudget/actual](https://github.com/actualbudget/actual) | 86 | 5,224 | 5,310 | ~4,000 | Test | Small |
+| 98 | [lightningnetwork/lnd](https://github.com/lightningnetwork/lnd) | 287 | 5,876 | 6,163 | ~18,000 | Val | |
+| 99 | [WordPress/gutenberg](https://github.com/WordPress/gutenberg) | 2,678 | 47,040 | 49,718 | ~30,000 | Train | Synced into WP core |
+| 100 | [mastodon/mastodon](https://github.com/mastodon/mastodon) | 187 | 24,681 | 24,868 | ~20,000 | Train | Renovate/Crowdin bots |
+| | **Subtotal** | | | **217,733** | **~228,000** | | |
 
-## Labels
+## Totals
 
-Planning figures, derived from published rates; not results.
+| Scope | Repositories | Total PRs | Approx. commits | Status |
+| --- | ---: | ---: | ---: | --- |
+| Systems, languages, and developer tools | 10 | 437,114 | ~1,496,255 | Measured PRs |
+| Web and application frameworks | 10 | 259,494 | ~378,500 | Measured PRs |
+| Databases and data systems | 10 | 425,940 | ~589,421 | Measured PRs |
+| Cloud, infrastructure, and observability | 10 | 272,176 | ~308,474 | Measured PRs |
+| ML, science, media, and end-user software | 10 | 505,272 | ~709,609 | Measured PRs |
+| Languages and compilers | 8 | 226,858 | ~643,238 | Measured PRs |
+| Frontend and mobile | 10 | 204,664 | ~262,954 | Measured PRs |
+| Security and networking | 8 | 111,406 | ~131,800 | Measured PRs |
+| Data engineering and ML infrastructure | 8 | 174,680 | ~161,191 | Measured PRs |
+| Developer tools, package managers, and editors | 7 | 83,853 | ~99,800 | Measured PRs |
+| Embedded, games, fintech, CMS, and social | 9 | 217,733 | ~228,000 | Measured PRs |
+| **Current 50** | 50 | **1,899,996** | **~3,482,259** | rust and envoy PRs pending |
+| **New 50** | 50 | **1,019,194** | **~1,526,983** | All measured |
+| **All 100** | 100 | **2,919,190** | **~5,009,242** | 98 repositories measured |
 
-| Label basis | Base | Rate | Positives |
-| --- | --- | --- | --- |
-| Revert- or hotfix-grade, on merged PRs (about 65% of 2.88M) | ~1.87M | 1–5% | ~18,700–93,700 |
-| SZZ-grade, on merged PRs | ~1.87M | ~26% | ~487,000 |
-| SZZ positives likely correct | ~487,000 | 57–73% precision | ~278,000–356,000 |
+## Data split
 
-Open-source projects sit at the low end of the revert range: about 1% of
-commits, per [Shimagaki et al., ICSME 2016](https://posl.ait.kyushu-u.ac.jp/~kamei/publications/Shimagaki_ICSME2016.pdf).
-The SZZ rate follows [ApacheJIT](https://arxiv.org/abs/2203.00101), and R-SZZ's
-precision [Rosa et al., ICSE 2021](https://www.inf.usi.ch/faculty/bavota/papers/ICSE-2021-szz.pdf)
-means about one SZZ positive in three is wrong. SZZ is therefore a weak label:
-weighted below reverts and follow-up fixes, never used alone to evaluate the
-unseen-repository test, and hand-audited on about 200 sampled positives per
-category.
+| Purpose | Value | Status |
+| --- | --- | --- |
+| Training | 70 repositories | Decision |
+| Unseen-repository validation | 15 repositories | Decision |
+| Final unseen test | 15 repositories | Decision |
 
-From 1 October 2026 GitHub keeps check runs, workflow runs and statuses on
-public repositories for at most 90 days
-([changelog](https://github.blog/changelog/2026-08-27-actions-retention-will-cover-checks-workflow-runs-and-statuses/)).
-CI-failure labels exist only where Riffle's own archive covers them; outside
-that window the label is *missing*, never *negative*.
+Each repository's split is in the tables above. Validation tunes the
+per-repository layer and thresholds; the final test is touched once.
+Held-out sets cover every category, most languages, at least four
+repositories under 6,000 PRs, and one giant each (godot in validation,
+elasticsearch in test). Splits within each training repository are
+time-ordered.
 
-## Risks
+## Dataset estimates
 
-- **Giants dominate.** The 10 largest repositories hold about 35% of pull
-  requests; ripgrep has about 800. Training caps each repository at about
-  20,000 PRs sampled evenly over time, or weights each PR by 1/√(repo PRs),
-  and metrics are macro-averaged per repository.
-- **Merges outside the button.** rust's bors rollups, pytorch's merge bot,
-  node's commit queue, spark's merge script, bitcoin, openssl, php-src,
-  angular and django merge in ways GitHub reports as *closed*. Merges are
-  resolved by commit SHA or the `(#N)` pattern in commit messages, and rust
-  rollups are split into their member PRs before labelling.
-- **Bot PRs.** Dependency bots, autorollers, backport bots and sync bots are
-  excluded or modelled separately; a backport inherits its original PR's
-  label.
-- **History breaks.** Renames (dotty to scala3, Presto to Trino, minetest to
-  luanti, K-9 Mail to thunderbird-android), merged repositories (the flutter
-  engine in 2024), private-then-public history (zed), tracker moves (arrow)
-  and licence changes are handled per repository.
-- **GH Archive after mid-2025.** [OSSInsight](https://ossinsight.io/) reports
-  that pull request and issue events since mid-2025 were badly under-captured;
-  any backfill from it is checked against the API first.
-- **Estimates.** About 30% of the pull request total and most commit counts
-  are estimates. The swift count is a January 2026 snapshot and has probably
-  grown by 5–8% since.
-- **CI labels lean recent.** After 1 October 2026 the CI label covers only
-  what the archive holds, so CI-label rates are not compared across
-  repositories with different archive start dates.
+| Item | Value | Status |
+| --- | --- | --- |
+| Total PRs, 98 measured repositories | 2,919,190 | Measured |
+| Closed PRs, 98 measured repositories | 2,837,457 | Measured |
+| rust-lang/rust and envoyproxy/envoy PRs | Not measured yet | Pending |
+| Approx. commits, all 100 repositories | ~5,009,242 | Estimate |
+| Positive labels at 2% of closed PRs (upper bound) | 56,700 | Derived |
+| Positive labels at 3% of closed PRs (upper bound) | 85,100 | Derived |
+| Positive labels at 5% of closed PRs (upper bound) | 141,900 | Derived |
+| Revert rate in open source | 1–5% of commits | Sourced [1] |
+| SZZ bug-inducing rate, if used as a label | About 26% | Sourced [2] |
+| R-SZZ precision | 57–73% | Sourced [3] |
+| Permanent structured data | 15–61 GB without diffs or CI logs | Derived |
+| Temporary clone and SZZ scratch space | 1–1.5 TB across machines | Estimate |
+
+Positive-label counts are upper bounds before bot and backport filtering.
+Roughly one SZZ label in three is likely wrong, so SZZ is weighted below
+reverts and follow-up fixes.
+
+## Machine allocation
+
+| Item | Value | Status |
+| --- | --- | --- |
+| Machines | 8 | Estimate |
+| Repositories per machine | 3–22, balanced to ~360,000 PRs each | Estimate |
+| Parallel workers per machine | 3–4 | Estimate |
+| Recommended disk per machine | 250–500 GB | Estimate |
+
+The largest repositories (llvm-project, pytorch, swift, flutter) go on the
+machines with the most disk.
+
+## Extraction timeline
+
+| Task | Expected time | Status |
+| --- | --- | --- |
+| Clone repositories and count commits | 1–2 days | Estimate |
+| List-level PR metadata (GraphQL) | 2–3 days | Derived |
+| Full extraction with reviews and checks | 2–3 weeks | Derived |
+| Labelling (reverts, R-SZZ, follow-up fixes) and audit | 5–7 days | Estimate |
+| Global model training | Minutes to several hours | Estimate |
+| Backtesting | Hours to several days | Estimate |
+
+## Caveats
+
+- From 1 October 2026, GitHub keeps check runs, workflow runs, and statuses
+  on public repositories for at most 90 days [4]. CI-failure labels for the
+  new 50 will only cover a rolling window from the day archiving starts.
+  Missing CI data is treated as missing, not negative.
+- The 10 largest repositories hold about a third of all PRs. Each repository
+  is capped (for example 20,000 PRs, sampled across time) or reweighted, and
+  metrics are reported per repository.
+- Many repositories merge outside the GitHub button (rust, pytorch, angular,
+  openssl, php-src, spark, bitcoin, node). Merges are detected by commit SHA
+  or the PR number in commit messages.
+- Bot, backport, sync, and dependency-bump PRs are filtered, or modelled
+  separately.
+- History breaks: renames (scala3, trino, luanti, thunderbird-android, dbt),
+  repository mergers (the flutter engine), private-then-public history (zed),
+  and tracker moves (arrow).
+- GH Archive under-captured PR and issue events from mid-2025 [6]. It is
+  checked against the API before any backfill.
+- Cross-project models are weaker than within-project ones, which is why
+  unseen repositories are judged on their own target [5].
 
 ## Sources
 
-1. [GitHub Changelog, "Actions retention will cover checks, workflow runs, and statuses" (27 Aug 2026)](https://github.blog/changelog/2026-08-27-actions-retention-will-cover-checks-workflow-runs-and-statuses/)
-2. [GitHub Docs, retention period for checks, workflow runs, statuses](https://docs.github.com/en/organizations/managing-organization-settings/configuring-the-retention-period-for-github-actions-artifacts-and-logs-in-your-organization)
-3. [GitHub Docs, GraphQL rate limits](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api)
-4. [GitHub Docs, REST rate limits (incl. secondary)](https://docs.github.com/en/enterprise-cloud@latest/rest/using-the-rest-api/rate-limits-for-the-rest-api)
-5. [kubernetes/kubernetes repo page](https://github.com/kubernetes/kubernetes)
-6. [llvm/llvm-project repo page](https://github.com/llvm/llvm-project)
-7. [rust-lang/rust repo page](https://github.com/rust-lang/rust)
-8. [pytorch/pytorch repo page](https://github.com/pytorch/pytorch)
-9. [elastic/elasticsearch repo page](https://github.com/elastic/elasticsearch)
-10. [home-assistant/core fork commit count](https://github.com/allenporter/home-assistant-core)
-11. [rust-lang/rust PR #163089](https://github.com/rust-lang/rust/pull/163089)
-12. [Kobzol, "1160 PRs to improve Rust in 2025"](https://kobzol.github.io/rust/rustc/2026/01/05/my-rust-contributions-in-2025.html)
-13. [envoyproxy/envoy PR #47915](https://github.com/envoyproxy/envoy/pull/47915)
-14. [envoyproxy/envoy repo page](https://github.com/envoyproxy/envoy)
-15. [swiftlang/swift pulls](https://github.com/swiftlang/swift/pulls)
-16. [swiftlang/swift repo page](https://github.com/swiftlang/swift)
-17. [flutter/flutter repo page](https://github.com/flutter/flutter)
-18. [flutter/flutter pulls](https://github.com/flutter/flutter/pulls)
-19. [vuejs/core repo page](https://github.com/vuejs/core)
-20. [dotnet/roslyn repo page](https://github.com/dotnet/roslyn)
-21. [JuliaLang/julia repo page](https://github.com/JuliaLang/julia)
-22. [numpy/numpy repo page](https://github.com/numpy/numpy)
-23. [ray-project/ray repo page](https://github.com/ray-project/ray)
-24. [vllm-project/vllm repo page](https://github.com/vllm-project/vllm)
-25. [Keshavarz & Nagappan, ApacheJIT (MSR 2022)](https://arxiv.org/abs/2203.00101)
-26. [Rosa et al., Evaluating SZZ Implementations (ICSE 2021)](https://www.inf.usi.ch/faculty/bavota/papers/ICSE-2021-szz.pdf)
-27. [Evaluating SZZ Implementations: An Empirical Study on the Linux Kernel](https://arxiv.org/pdf/2308.05060)
-28. [Shimagaki et al., Why are Commits being Reverted? (ICSME 2016)](https://posl.ait.kyushu-u.ac.jp/~kamei/publications/Shimagaki_ICSME2016.pdf)
-29. [Kamei et al., Studying JIT defect prediction using cross-project models (EMSE 2016)](https://link.springer.com/article/10.1007/s10664-015-9400-x)
-30. [Exploratory study on JIT multi-language bug prediction (summarises Zeng et al. 2021, Kamei 2016)](https://arxiv.org/pdf/2407.10906)
-31. [OSSInsight homepage (events-feed under-capture notice)](https://ossinsight.io/)
-32. [LLVM GitHub User Guide](https://llvm.org/docs/GitHub.html)
-33. [Rust Compiler Development Guide, Using Git](https://rustc-dev-guide.rust-lang.org/git.html)
-34. [Phoronix, LLVM 2024 code activity](https://www.phoronix.com/news/LLVM-Code-Activity-2024)
+1. [Shimagaki et al., Why are commits being reverted? (ICSME 2016)](https://rebels.cs.uwaterloo.ca/confpaper/2016/10/04/why-are-commits-being-reverted.html)
+2. [Keshavarz and Nagappan, ApacheJIT (MSR 2022)](https://arxiv.org/abs/2203.00101)
+3. [Rosa et al., Evaluating SZZ Implementations Through a Developer-informed Oracle (ICSE 2021)](https://arxiv.org/pdf/2102.03300)
+4. [GitHub Changelog, Actions retention will cover checks, workflow runs, and statuses (27 Aug 2026)](https://github.blog/changelog/2026-08-27-actions-retention-will-cover-checks-workflow-runs-and-statuses/)
+5. [Kamei et al., Studying just-in-time defect prediction using cross-project models (EMSE 2016)](https://link.springer.com/article/10.1007/s10664-015-9400-x)
+6. [OSSInsight, GitHub events feed under-capture notice](https://ossinsight.io/)
