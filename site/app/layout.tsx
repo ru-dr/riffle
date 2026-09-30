@@ -3,7 +3,6 @@ import localFont from "next/font/local";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { Instrument_Serif } from "next/font/google";
-import Script from "next/script";
 import "./globals.css";
 
 // Stopgap: riffle.dev is still parked at the registrar, so absolute URLs
@@ -71,27 +70,6 @@ const schema = {
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
 
-// Runs before first paint, so the entrance never flashes finished content.
-//
-// It opts *in* to motion rather than out: the hidden initial states in
-// globals.css only apply while this attribute is set. No JS, an early error,
-// or a reduce-motion preference all leave the page fully rendered.
-//
-// The timer is the failsafe — if the GSAP timeline has not claimed the page
-// within 5s (slow hydration, chunk failure), the attribute is dropped and
-// everything becomes visible without animation.
-const motionInit = `
-try {
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    var r = document.documentElement;
-    r.dataset.motion = 'on';
-    setTimeout(function () {
-      if (!r.dataset.motionReady) r.removeAttribute('data-motion');
-    }, 5000);
-  }
-} catch (e) {}
-`;
-
 const criticalCss = `
 html,body{height:100%;margin:0;background:#14100c}
 body{color:#f4f5f7}
@@ -118,13 +96,6 @@ export default function RootLayout({
     >
       <head>
         <style dangerouslySetInnerHTML={{ __html: criticalCss }} />
-        {/* next/script, not a raw <script>: React 19 refuses to render inline
-            scripts from components. beforeInteractive is injected into the
-            server HTML ahead of Next's own modules, so it still runs before
-            first paint. */}
-        <Script id="riffle-motion-init" strategy="beforeInteractive">
-          {motionInit}
-        </Script>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}

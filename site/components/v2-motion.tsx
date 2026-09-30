@@ -7,7 +7,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 // Motion for the landing page.
 //
 // Ownership is the whole design. Before hydration, CSS hides every
-// [data-anim] node behind html[data-motion="on"] so nothing flashes. The
+// [data-anim] node (see the gate in globals.css) so nothing flashes. The
 // moment this effect runs, GSAP writes an explicit inline starting state onto
 // every node it will animate, and the CSS gate is removed. From then on
 // nothing can be left invisible by a selector that no tween covers — the
@@ -71,8 +71,13 @@ export function V2Motion() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    if (root.dataset.motion !== "on") return;
+    // Reduced motion: the CSS gate never engaged, so everything is already
+    // visible and there is nothing to animate.
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
+    // Claim the page: this lifts the CSS gate. Everything animated below
+    // gets an inline start state inside this same synchronous effect, before
+    // the browser can paint, so nothing flashes between the two.
     root.dataset.motionReady = "true";
     gsap.registerPlugin(ScrollTrigger);
 
@@ -156,10 +161,6 @@ export function V2Motion() {
         });
       });
     });
-
-    // Every animated node now carries its own inline state. Drop the gate so
-    // anything not animated is simply visible.
-    root.removeAttribute("data-motion");
 
     return () => ctx.revert();
   }, []);

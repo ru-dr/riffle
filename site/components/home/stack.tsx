@@ -213,7 +213,7 @@ export function Stack() {
         stack itself (x 280-720, y 20-520 of the 1000x600 drawing) and the
         live layer's label moves underneath. CSS sizing only: the server
         render is already correct on a phone, with no jump on hydration. */}
-    <div ref={root} className="v2-stack relative mx-auto w-full max-w-[60rem] overflow-hidden sm:overflow-visible">
+    <div ref={root} className="v2-stack relative mx-auto w-full max-w-[64rem] overflow-hidden sm:overflow-visible">
       <svg
         viewBox="0 0 1000 600"
         className="v2-stack-svg absolute overflow-visible"
@@ -352,8 +352,11 @@ export function Stack() {
           >
           <div
             className="pointer-events-auto absolute"
-            onMouseEnter={() => take(i)}
-            onMouseLeave={release}
+            // Mouse only. On a touchscreen a tap fires mouseenter and no
+            // mouseleave until the next tap elsewhere, which pinned the walk
+            // on whichever pill was touched.
+            onPointerEnter={(e) => e.pointerType === "mouse" && take(i)}
+            onPointerLeave={(e) => e.pointerType === "mouse" && release()}
             style={{
               // Lines end at x=196 / 804 (of 1000); pills sit 6 units short
               // of that so there is air between line and pill.

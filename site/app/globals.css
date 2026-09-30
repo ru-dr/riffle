@@ -84,9 +84,11 @@ body:has([data-riffle-lock]) {
     border-right: 1px solid var(--v2-stroke);
   }
 }
-@media (min-width: 90rem) {
+/* Desktop cap: 90rem in the reference, taken 15% wider (103.5rem, 1656px)
+   so large screens are not left with a narrow column. */
+@media (min-width: 103.5rem) {
   .v2-wrapper {
-    max-width: 90rem;
+    max-width: 103.5rem;
   }
 }
 /* Tablets and small laptops (48-80rem): a 1rem gutter is a sliver at this
@@ -182,35 +184,41 @@ body:has([data-riffle-light]) {
 .v2-stack {
   aspect-ratio: 1000 / 600;
 }
-/* The hero scales as one unit on short screens. --hs steps down with the
-   viewport height and drives the headline, lede and chip; the stack takes
-   the height that frees up. (Shrinking only the stack left full-size type
-   over a thumbnail.) */
+/* Hero proportions on the golden ratio (phi = 1.618), with the 17px lede
+   as the unit: headline 17 x phi^3 = 72px; vertical rhythm in phi steps
+   (chip -> headline 1.618rem, headline -> lede 1rem, lede -> stack 2.618rem,
+   top padding 4.236rem); the stack's 5:3 sits within 3% of phi.
+
+   --hs scales the whole composition down on short screens, and each step's
+   --hero-above is the measured distance from the page top to the stack plus
+   24px, so the stack fills exactly the height the heading leaves. */
 .v2-hero {
   --hs: 1;
+  --hero-above: 29.75rem;
+  gap: 0;
 }
+.v2-hero-chip { margin-bottom: calc(1.618rem * var(--hs)); }
+.v2-hero-title { margin-bottom: calc(1rem * var(--hs)); }
+.v2-hero-stack { margin-top: calc(2.618rem * var(--hs)); }
 @media (min-width: 48rem) {
-  .v2-hero-chip { font-size: calc(14px * var(--hs)); }
-  .v2-hero-title { font-size: calc(3rem * var(--hs)); line-height: calc(3.4rem * var(--hs)); }
+  .v2-hero { padding-top: calc(4.236rem * var(--hs)); }
+  .v2-hero-chip { font-size: calc(13px * var(--hs)); }
+  .v2-hero-title { font-size: calc(3.5rem * var(--hs)); line-height: calc(3.75rem * var(--hs)); }
   .v2-hero-lede { font-size: calc(17px * var(--hs)); }
 }
 @media (min-width: 64rem) {
-  .v2-hero-title { font-size: calc(3.75rem * var(--hs)); line-height: calc(4.2rem * var(--hs)); }
+  .v2-hero-title { font-size: calc(4.5rem * var(--hs)); line-height: calc(4.75rem * var(--hs)); }
 }
-/* --hero-above is the measured distance from the top of the page to the
-   stack at each step, plus 24px of air below it, so the stack fills exactly
-   the height the scaled heading leaves. */
-.v2-hero { --hero-above: 30rem; }
-@media (min-width: 48rem) and (max-height: 60rem) { .v2-hero { --hs: 0.94; --hero-above: 29rem; } }
-@media (min-width: 48rem) and (max-height: 56.25rem) { .v2-hero { --hs: 0.88; --hero-above: 24.75rem; padding-top: 2.5rem; } }
-@media (min-width: 48rem) and (max-height: 52rem) { .v2-hero { --hs: 0.82; --hero-above: 24rem; } }
-@media (min-width: 48rem) and (max-height: 49rem) { .v2-hero { --hs: 0.76; --hero-above: 23.25rem; } }
+@media (min-width: 48rem) and (max-height: 60rem) { .v2-hero { --hs: 0.94; --hero-above: 28.5rem; } }
+@media (min-width: 48rem) and (max-height: 56.25rem) { .v2-hero { --hs: 0.86; --hero-above: 26.5rem; } }
+@media (min-width: 48rem) and (max-height: 52rem) { .v2-hero { --hs: 0.8; --hero-above: 25.25rem; } }
+@media (min-width: 48rem) and (max-height: 49rem) { .v2-hero { --hs: 0.74; --hero-above: 24rem; } }
 
-/* Stack width from the height left under the (now scaled) heading block,
-   at the drawing's 5:3, capped at 60rem, floored at 34rem. */
+/* Stack width from the height left under the heading, at the drawing's 5:3,
+   capped at 64rem, floored at 34rem. */
 @media (min-width: 40rem) {
   .v2-stack {
-    max-width: max(34rem, min(60rem, calc((100svh - var(--hero-above)) * 5 / 3)));
+    max-width: max(34rem, min(64rem, calc((100svh - var(--hero-above)) * 5 / 3)));
   }
 }
 
@@ -391,47 +399,25 @@ body:has([data-riffle-light]) {
   color: #fff;
 }
 
-/* Entrance states for the GSAP timeline in components/hero-motion.tsx.
-   Gated on html[data-motion="on"], which the blocking script in layout.tsx
-   sets only when JS is running and reduced motion is not requested — so a
-   no-JS or reduce-motion reader gets the finished page, never a blank one.
-   The attribute is removed when the timeline completes. */
-html[data-motion="on"] [data-anim] {
-  opacity: 0;
-}
+/* Entrance gate, in CSS alone. Before first paint the browser already
+   knows whether scripts will run and whether reduced motion is on, so the
+   animated nodes can start hidden with no inline script racing hydration.
+   (next/script's beforeInteractive is queued for Next's runtime in the App
+   Router rather than run in <head>, so on a slow tablet the page painted
+   fully visible, then vanished and animated back in.)
 
-/* Hero stack micro-motion: dotted leaders flow toward the stack, and the
-   live slab's texture drifts. Dash offsets and transforms only. */
-@keyframes v2-flow {
+   The motion components set data-motion-ready the moment they take over,
+   which lifts this rule; from then GSAP's inline states are in charge. If
+   JS never arrives, the failsafe animation reveals everything at 6s. */
+@media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+  html:not([data-motion-ready]) [data-anim] {
+    opacity: 0;
+    animation: v2-failsafe 0.4s ease 6s forwards;
+  }
+}
+@keyframes v2-failsafe {
   to {
-    stroke-dashoffset: -11;
-  }
-}
-.v2-flow-r {
-  animation: v2-flow 1.1s linear infinite;
-}
-.v2-flow-l {
-  animation: v2-flow 1.1s linear infinite reverse;
-}
-@media (prefers-reduced-motion: reduce) {
-  .v2-flow-r,
-  .v2-flow-l {
-    animation: none;
+    opacity: 1;
   }
 }
 
-/* /v2 tags its above-fold nodes separately so the hero timeline does not
-   have to guess which of forty revealed elements are visible on load. */
-html[data-motion="on"] [data-anim="hero-rise"] {
-  opacity: 0;
-}
-
-/* Promote only what moves, and only while it is moving — the timeline clears
-   this on completion. transform/opacity only: the entrance deliberately
-   animates nothing that triggers layout or a repaint. */
-html[data-motion="on"] [data-anim="hero"],
-html[data-motion="on"] [data-anim="lockup"],
-html[data-motion="on"] [data-anim="headline-line"],
-html[data-motion="on"] [data-anim="body"] {
-  will-change: transform, opacity;
-}

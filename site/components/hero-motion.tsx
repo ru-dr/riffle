@@ -15,15 +15,20 @@ import gsap from "gsap";
 // progressive-blur stack is now left alone entirely (see `data-anim="veil"`
 // only on the cheap gradient layers) and depth is carried by scale instead.
 //
-// Initial hidden states live in CSS behind `html[data-motion="on"]`, which the
-// blocking script in `layout.tsx` sets only when motion is wanted. Without JS,
+// Initial hidden states live in the CSS gate in globals.css, which applies
+// only when scripts run and motion is wanted. Without JS,
 // or with reduced motion, nothing here runs and nothing is ever hidden.
 export function HeroMotion() {
   useLayoutEffect(() => {
     const root = document.documentElement;
-    if (root.dataset.motion !== "on") return;
+    // Reduced motion: the CSS gate never engaged, so everything is already
+    // visible and there is nothing to animate.
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     // Tells the failsafe in layout.tsx that motion took over in time.
+    // Claim the page: this lifts the CSS gate. Everything animated below
+    // gets an inline start state inside this same synchronous effect, before
+    // the browser can paint, so nothing flashes between the two.
     root.dataset.motionReady = "true";
 
     const ctx = gsap.context(() => {
@@ -34,7 +39,6 @@ export function HeroMotion() {
           // Release the compositor layers — holding promoted layers for the
           // rest of the session costs memory and buys nothing once still.
           gsap.set("[data-anim]", { clearProps: "willChange,transform" });
-          root.removeAttribute("data-motion");
         },
       });
 
