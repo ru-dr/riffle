@@ -45,9 +45,10 @@ const query = `query($owner:String!,$name:String!,$since:GitTimestamp!,$until:Gi
 var prNumber = regexp.MustCompile(`\(#(\d+)\)\s*$`)
 
 type config struct {
-	repos, out, since, until, token string
-	workers                         int
-	plain                           bool
+	repos, out, since, until, token, mode string
+	shardI, shardN                        int
+	workers                               int
+	plain                                 bool
 }
 
 // Line is one commit in the output: the combined CI result as GitHub
@@ -111,7 +112,10 @@ type client struct {
 	mu    sync.Mutex
 	rem   int
 	reset time.Time
-	send  func(tea.Msg)
+	// REST has its own quota.
+	restRem   int
+	restReset time.Time
+	send      func(tea.Msg)
 }
 
 var errTooHeavy = errors.New("query too heavy")
@@ -341,12 +345,26 @@ func main() {
 	home, _ := os.UserHomeDir()
 	cfg := config{}
 	flag.StringVar(&cfg.repos, "repos", "repos.txt", "file with one owner/name per line")
-	flag.StringVar(&cfg.out, "out", filepath.Join(home, "proyecto", "riffle-data", "ci-snapshot", "pass1"), "output directory")
+	flag.StringVar(&cfg.mode, "mode", "commits", "commits (default-branch CI per commit), prs (CI on each PR's last commit), or runs (Actions runs on default-branch pushes, REST)")
+	flag.StringVar(&cfg.out, "out", "", "output directory (default ~/proyecto/riffle-data/ci-snapshot/<pass1|prs|runs>)")
+	shard := flag.String("shard", "1/1", "i/n: take every n-th repository, starting at i, to split the work across machines")
 	flag.StringVar(&cfg.since, "since", "2025-08-26T00:00:00Z", "oldest commit date to capture")
 	flag.StringVar(&cfg.until, "until", "2026-07-02T00:00:00Z", "newest commit date to capture (pass 1: older than 90 days)")
 	flag.IntVar(&cfg.workers, "workers", 4, "repositories walked at once")
 	flag.BoolVar(&cfg.plain, "plain", false, "plain log output instead of the progress screen")
 	flag.Parse()
+	if _, err := fmt.Sscanf(*shard, "%d/%d", &cfg.shardI, &cfg.shardN); err != nil || cfg.shardN < 1 || cfg.shardI < 1 || cfg.shardI > cfg.shardN {
+		fmt.Fprintln(os.Stderr, "-shard must look like 1/2")
+		os.Exit(1)
+	}
+	if cfg.mode != "commits" && cfg.mode != "prs" && cfg.mode != "runs" {
+		fmt.Fprintln(os.Stderr, "-mode must be commits, prs or runs")
+		os.Exit(1)
+	}
+	if cfg.out == "" {
+		dir := map[string]string{"commits": "pass1", "prs": "prs", "runs": "runs"}[cfg.mode]
+		cfg.out = filepath.Join(home, "proyecto", "riffle-data", "ci-snapshot", dir)
+	}
 
 	cfg.token = os.Getenv("GITHUB_TOKEN")
 	if cfg.token == "" {
@@ -380,7 +398,7 @@ func main() {
 
 	m := newModel(cfg, len(repos))
 	var prog *tea.Program
-	c := &client{cfg: cfg, http: &http.Client{Timeout: 120 * time.Second}}
+	c := &client{cfg: cfg, http: &http.Client{Timeout: 120 * time.Second}, restRem: -1}
 	if cfg.plain {
 		c.send = func(msg tea.Msg) {
 			if s := describe(msg); s != "" {
@@ -402,14 +420,36 @@ func main() {
 	}
 
 	go func() {
-		c.send(eventMsg(fmt.Sprintf("counting commits in %d repositories, %s to %s", len(repos), cfg.since[:10], cfg.until[:10])))
+		c.send(eventMsg(fmt.Sprintf("mode %s, shard %d/%d: sizing %d repositories, %s to %s", cfg.mode, cfg.shardI, cfg.shardN, len(repos), cfg.since[:10], cfg.until[:10])))
 		tot := c.totals(repos)
 		sum := 0
 		for _, n := range tot {
 			sum += n
 		}
 		sort.SliceStable(repos, func(i, j int) bool { return tot[repos[i]] > tot[repos[j]] })
-		c.send(totalsMsg{perRepo: tot, total: sum})
+		// Sharding after sorting deals the largest repositories out evenly.
+		if cfg.shardN > 1 {
+			var mine []string
+			sum = 0
+			for i, r := range repos {
+				if i%cfg.shardN == cfg.shardI-1 {
+					mine = append(mine, r)
+					sum += tot[r]
+				}
+			}
+			repos = mine
+		}
+		if cfg.mode != "commits" {
+			sum = 0 // the commit count is no measure of PRs or runs
+		}
+		if cfg.mode == "runs" {
+			// Runs vary wildly (pytorch has ~2,000 a day): smallest first, so
+			// the most repositories are covered in the time there is.
+			for i, j := 0, len(repos)-1; i < j; i, j = i+1, j-1 {
+				repos[i], repos[j] = repos[j], repos[i]
+			}
+		}
+		c.send(totalsMsg{perRepo: tot, total: sum, repos: len(repos)})
 
 		jobs := make(chan string)
 		var wg sync.WaitGroup
@@ -419,7 +459,14 @@ func main() {
 				defer wg.Done()
 				for r := range jobs {
 					c.send(startMsg{worker: w, repo: r})
-					c.run(w, r)
+					switch cfg.mode {
+					case "prs":
+						c.runPRs(w, r)
+					case "runs":
+						c.runRuns(w, r)
+					default:
+						c.run(w, r)
+					}
 				}
 			}(w)
 		}

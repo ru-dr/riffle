@@ -15,16 +15,16 @@ import (
 // Messages from the workers to the screen.
 type (
 	totalsMsg struct {
-		perRepo map[string]int
-		total   int
+		perRepo      map[string]int
+		total, repos int
 	}
 	startMsg struct {
 		worker int
 		repo   string
 	}
 	progressMsg struct {
-		worker, done, total, pageSize, added int
-		repo                                 string
+		worker, done, total, pageSize, added, records int
+		repo                                          string
 	}
 	repoDoneMsg struct {
 		repo    string
@@ -46,7 +46,10 @@ type (
 func describe(msg tea.Msg) string {
 	switch m := msg.(type) {
 	case totalsMsg:
-		return fmt.Sprintf("%d commits to capture across %d repositories", m.total, len(m.perRepo))
+		if m.total == 0 {
+			return fmt.Sprintf("%d repositories to walk", m.repos)
+		}
+		return fmt.Sprintf("%d commits to capture across %d repositories", m.total, m.repos)
 	case repoDoneMsg:
 		switch {
 		case m.err != nil:
@@ -54,7 +57,7 @@ func describe(msg tea.Msg) string {
 		case m.skipped:
 			return fmt.Sprintf("skip %s (already done, %d commits)", m.repo, m.commits)
 		default:
-			return fmt.Sprintf("done %s: %d commits", m.repo, m.commits)
+			return fmt.Sprintf("done %s: %d records", m.repo, m.commits)
 		}
 	case pausedMsg:
 		if m.until.IsZero() {
@@ -79,6 +82,7 @@ type model struct {
 	repos, reposDone int
 	failed           []string
 	perRepo          map[string]int
+	records          map[string]int
 	total, captured  int
 	workers          map[int]*worker
 	remaining        int
@@ -92,7 +96,7 @@ type model struct {
 
 func newModel(cfg config, repos int) *model {
 	return &model{
-		cfg: cfg, repos: repos, workers: map[int]*worker{}, remaining: -1, start: time.Now(), width: 100,
+		cfg: cfg, repos: repos, workers: map[int]*worker{}, records: map[string]int{}, remaining: -1, start: time.Now(), width: 100,
 		bar: progress.New(progress.WithGradient("#0f7a4f", "#7dd3a0"), progress.WithoutPercentage()),
 	}
 }
@@ -119,10 +123,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, tick()
 	case totalsMsg:
-		m.perRepo, m.total = v.perRepo, v.total
+		m.perRepo, m.total, m.repos = v.perRepo, v.total, v.repos
 		m.event(describe(v))
 	case startMsg:
-		m.workers[v.worker] = &worker{repo: v.repo, total: m.perRepo[v.repo]}
+		total := m.perRepo[v.repo]
+		if m.cfg.mode != "commits" {
+			total = 1000 // share of the date window, in 1/1000s
+		}
+		m.workers[v.worker] = &worker{repo: v.repo, total: total}
 	case progressMsg:
 		w := m.workers[v.worker]
 		if w == nil {
@@ -134,10 +142,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w.total = v.total
 		}
 		m.captured += v.added
+		if v.records > 0 {
+			m.records[v.repo] = v.records
+		}
 	case repoDoneMsg:
 		m.reposDone++
 		if v.skipped {
-			m.captured += v.commits
+			if m.cfg.mode == "commits" {
+				m.captured += v.commits
+			} else {
+				m.records[v.repo] = v.commits
+			}
 		}
 		if v.err != nil {
 			m.failed = append(m.failed, v.repo)
@@ -180,26 +195,34 @@ func (m *model) View() string {
 	barW := min(max(m.width-30, 20), 70)
 	m.bar.Width = barW
 
-	b.WriteString(title.Render("Riffle CI snapshot") + "  " + dim.Render(fmt.Sprintf("%s → %s  ·  %s", m.cfg.since[:10], m.cfg.until[:10], m.cfg.out)) + "\n\n")
+	b.WriteString(title.Render("Riffle CI snapshot · "+m.cfg.mode) + "  " + dim.Render(fmt.Sprintf("shard %d/%d  ·  %s → %s  ·  %s", m.cfg.shardI, m.cfg.shardN, m.cfg.since[:10], m.cfg.until[:10], m.cfg.out)) + "\n\n")
 
 	// Overall
+	captured := m.captured
+	for _, n := range m.records {
+		captured += n
+	}
 	frac := 0.0
 	if m.total > 0 {
 		frac = min(1, float64(m.captured)/float64(m.total))
+	} else if m.repos > 0 {
+		frac = float64(m.reposDone) / float64(m.repos)
 	}
 	b.WriteString(m.bar.ViewAs(frac) + fmt.Sprintf("  %s %5.1f%%\n", bold.Render(""), frac*100))
 	elapsed := time.Since(m.start)
 	eta := "…"
-	if m.captured > 0 && m.total > 0 && frac < 1 {
-		rate := float64(m.captured) / elapsed.Seconds()
-		eta = dur(time.Duration(float64(m.total-m.captured)/rate) * time.Second)
+	if frac > 0.01 && frac < 1 {
+		eta = dur(time.Duration(elapsed.Seconds()/frac*(1-frac)) * time.Second)
 	}
 	totalS := "counting…"
 	if m.total > 0 {
 		totalS = fmt.Sprintf("%d", m.total)
+	} else if m.perRepo != nil {
+		totalS = "?"
 	}
-	b.WriteString(fmt.Sprintf("%s commits  %s / %s    %s repos  %d / %d    %s %s    %s %s\n",
-		dim.Render("captured"), bold.Render(fmt.Sprint(m.captured)), totalS,
+	unit := map[string]string{"commits": "commits", "prs": "PRs", "runs": "runs"}[m.cfg.mode]
+	b.WriteString(fmt.Sprintf("%s %s  %s / %s    %s repos  %d / %d    %s %s    %s %s\n",
+		dim.Render("captured"), unit, bold.Render(fmt.Sprint(captured)), totalS,
 		dim.Render("·"), m.reposDone, m.repos,
 		dim.Render("elapsed"), dur(elapsed), dim.Render("eta"), eta))
 
@@ -210,7 +233,11 @@ func (m *model) View() string {
 		if m.remaining < 1000 {
 			style = warn
 		}
-		q = fmt.Sprintf("%s  %s / 5000   %s %s", dim.Render("quota"), style.Render(fmt.Sprint(m.remaining)), dim.Render("resets in"), dur(time.Until(m.reset)))
+		api := "GraphQL"
+		if m.cfg.mode == "runs" {
+			api = "REST"
+		}
+		q = fmt.Sprintf("%s %s  %s / 5000   %s %s", dim.Render("quota"), api, style.Render(fmt.Sprint(m.remaining)), dim.Render("resets in"), dur(time.Until(m.reset)))
 	}
 	if !m.paused.IsZero() && time.Now().Before(m.paused) {
 		q += "   " + warn.Render("PAUSED until "+m.paused.Local().Format("15:04:05")+" ("+dur(time.Until(m.paused))+")")
@@ -234,7 +261,11 @@ func (m *model) View() string {
 		if w.total > 0 {
 			f = min(1, float64(w.done)/float64(w.total))
 		}
-		b.WriteString(fmt.Sprintf("  %-40s %s  %7d / %-7d %s\n", truncate(w.repo, 40), small.ViewAs(f), w.done, w.total, dim.Render(fmt.Sprintf("%d/page", w.page))))
+		if m.cfg.mode == "commits" {
+			b.WriteString(fmt.Sprintf("  %-40s %s  %7d / %-7d %s\n", truncate(w.repo, 40), small.ViewAs(f), w.done, w.total, dim.Render(fmt.Sprintf("%d/page", w.page))))
+		} else {
+			b.WriteString(fmt.Sprintf("  %-40s %s  %5.1f%% of window  %7d %s\n", truncate(w.repo, 40), small.ViewAs(f), f*100, m.records[w.repo], dim.Render(unit)))
+		}
 	}
 
 	// Events
