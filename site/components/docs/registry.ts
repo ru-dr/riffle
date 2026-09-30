@@ -290,6 +290,7 @@ export const SECTIONS: DocSection[] = [
     blurb: "Terms defined once, every source cited, and what is changing.",
     pages: [
       { slug: "reference/glossary", title: "Glossary", description: "Tenant, rank band, promotion, fallback, drift.", file: "glossary.md" },
+      { slug: "reference/dataset-plan", title: "Dataset plan: 100 repositories", description: "The next model's corpus: 100 repositories, about 2.9 million pull requests, and how they split.", status: "proposed", file: "dataset-plan.md" },
       { slug: "reference/sources", title: "Sources", description: "Every figure, dataset and paper these docs rely on, and what each is used for.", file: "sources.md" },
       { slug: "reference/diagrams", title: "Writing diagrams", description: "Draw a diagram in Mermaid; the site renders it in its own theme.", file: "diagrams.md" },
       {

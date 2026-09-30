@@ -149,12 +149,18 @@ pull request counts.
 
 ### The next model: 100 repositories
 
-> **Planned.** The next version of the global model is planned to train on
-> 100 public repositories: these 50 and 50 more, still to be chosen.
+> **Proposed.** The next version of the global model is planned on 100
+> public repositories: these 50 and 50 new ones.
 
-The extra 50 are not selected or measured yet, so their size is an estimate.
-The first 50 average about 40,000 pull requests each, and include some of the
-largest projects on GitHub. If the next 50 are smaller, they would add
-roughly 1 to 2 million, for **about 3 to 4 million pull requests across all
-100 repositories**. This is a planning estimate, to be replaced by measured
-counts once the repositories are chosen.
+| | Repositories | Pull requests | Commits (approx.) |
+| --- | --- | --- | --- |
+| Current 50 | 50 | 2,045,996 | 3,482,259 |
+| New 50 | 50 | 837,766 | 1,526,983 |
+| **All 100** | **100** | **2,883,762** | **5,009,242** |
+
+About 66% of the pull request total is measured; the rest, including
+`rust-lang/rust`, `envoyproxy/envoy` and most of the new 50, is estimated and
+will be measured before extraction. The plan also replaces the 40 / 10 split
+with 70 training, 15 validation and 15 final-test repositories. Every
+repository, figure and caveat is on
+[Dataset plan: 100 repositories](/docs/reference/dataset-plan).

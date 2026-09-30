@@ -564,3 +564,8 @@ body:has([data-riffle-light]) {
     animation: none;
   }
 }
+
+/* Repository names in docs tables stay on one line: owner/name. */
+[data-docs] td a[href^="https://github.com/"] {
+  white-space: nowrap;
+}
