@@ -7,7 +7,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 // Motion for the landing page.
 //
 // Ownership is the whole design. Before hydration, CSS hides every
-// [data-anim] node behind html[data-motion="on"] so nothing flashes. The
+// [data-anim] node (see the gate in globals.css) so nothing flashes. The
 // moment this effect runs, GSAP writes an explicit inline starting state onto
 // every node it will animate, and the CSS gate is removed. From then on
 // nothing can be left invisible by a selector that no tween covers — the
@@ -71,8 +71,13 @@ export function V2Motion() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    if (root.dataset.motion !== "on") return;
+    // Reduced motion: the CSS gate never engaged, so everything is already
+    // visible and there is nothing to animate.
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
+    // Claim the page: this lifts the CSS gate. Everything animated below
+    // gets an inline start state inside this same synchronous effect, before
+    // the browser can paint, so nothing flashes between the two.
     root.dataset.motionReady = "true";
     gsap.registerPlugin(ScrollTrigger);
 
@@ -108,22 +113,21 @@ export function V2Motion() {
           0.6,
         );
 
-      // Below the fold: batched, so elements entering together rise as one
-      // staggered group instead of dozens of tweens firing independently.
-      const rise = gsap.utils.toArray<HTMLElement>('[data-anim="rise"]');
-      gsap.set(rise, { opacity: 0, y: 40 });
-      ScrollTrigger.batch(rise, {
-        start: "top 88%",
+      // Below the fold: each section fades in as one piece - opacity only,
+      // no travel, no per-element stagger. Rising every heading, paragraph
+      // and card 40px on its own read as blocks loading one at a time. The
+      // unit is the section wrapper; a dark block's own background is not
+      // faded, so the light page never shows through it.
+      const sections = gsap.utils
+        .toArray<HTMLElement>("[data-riffle-light] .v2-wrapper")
+        .filter((el) => !el.closest("header") && !el.classList.contains("v2-hero") && el.tagName !== "HEADER");
+      gsap.set(sections, { opacity: 0 });
+      ScrollTrigger.batch(sections, {
+        // 98%, not less: the copyright bar at the page's end can never scroll
+        // above ~95% of the viewport, so a higher line left it invisible.
+        start: "top 98%",
         once: true,
-        onEnter: (els) =>
-          gsap.to(els, {
-            opacity: 1,
-            y: 0,
-            duration: 1.1,
-            ease: "power3.out",
-            stagger: 0.09,
-            clearProps: "transform",
-          }),
+        onEnter: (els) => gsap.to(els, { opacity: 1, duration: 0.9, ease: "power1.out", stagger: 0.08 }),
       });
 
       // Figures count up once. The real value stays in the markup until the
@@ -156,10 +160,6 @@ export function V2Motion() {
         });
       });
     });
-
-    // Every animated node now carries its own inline state. Drop the gate so
-    // anything not animated is simply visible.
-    root.removeAttribute("data-motion");
 
     return () => ctx.revert();
   }, []);
