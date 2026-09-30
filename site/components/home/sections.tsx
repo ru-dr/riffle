@@ -750,9 +750,16 @@ export function ClosingBlock() {
             loading="lazy"
             className="absolute inset-0 z-0 h-full w-full object-cover"
           />
+          {/* The mark tile's edge is a faint hairline on the tile itself,
+              slightly brighter along the top where light would catch it. No
+              gap, no blur: a glow that announces itself reads as cheap. */}
           <span
             className="relative flex size-12 items-center justify-center rounded-[12px] md:size-20 md:rounded-[18px]"
-            style={{ backgroundColor: "#0d0c10", boxShadow: "0 12px 30px -8px rgba(0,0,0,0.6)" }}
+            style={{
+              backgroundColor: "#0d0c10",
+              boxShadow:
+                "inset 0 0 0 1px rgba(255,255,255,0.1), inset 0 1px 0 rgba(255,255,255,0.14), 0 12px 30px -8px rgba(0,0,0,0.6)",
+            }}
           >
             <Mark aria-hidden="true" className="h-auto w-7 md:w-11" style={{ color: "#fff" }} />
           </span>

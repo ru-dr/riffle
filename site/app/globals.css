@@ -72,14 +72,24 @@ body:has([data-riffle-lock]) {
 .v2-wrapper {
   margin-inline: auto;
   position: relative;
-  max-width: 90rem;
-  border-left: 1px solid var(--v2-stroke);
-  border-right: 1px solid var(--v2-stroke);
   overflow-x: clip;
 }
+/* The reference's three states, copied exactly: full width with no side
+   rules on phones; from 48rem the rules appear with a 1rem gutter each side;
+   from 90rem the wrapper caps at 90rem. */
+@media (min-width: 48rem) {
+  .v2-wrapper {
+    max-width: calc(100vw - 2rem);
+    border-left: 1px solid var(--v2-stroke);
+    border-right: 1px solid var(--v2-stroke);
+  }
+}
+@media (min-width: 90rem) {
+  .v2-wrapper {
+    max-width: 90rem;
+  }
+}
 
-/* On phones the wrapper runs edge to edge, as the reference does — no side
-   gutter, the vertical rules sitting on the screen edges. */
 
 /* Ticks sit on the section, not the wrapper, so each rule gets its own pair. */
 .v2-ticks {
@@ -123,7 +133,7 @@ body:has([data-riffle-lock]) {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: v2-shine 4.5s ease-in-out 0.5s forwards;
+  animation: v2-shine 4.5s ease-in-out 1.1s forwards;
 }
 
 @keyframes v2-shine {
@@ -177,6 +187,35 @@ body:has([data-riffle-light]) {
     height: calc(100% * 600 / 500);
     left: calc(-100% * 280 / 440);
     top: calc(-100% * 20 / 500);
+  }
+}
+
+/* Status dot: opacity-only keyframes, so the compositor runs it with no
+   main-thread work. (A GSAP infinite tween restyled it from JS every frame.) */
+@keyframes v2-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+.v2-pulse {
+  animation: v2-pulse 2.8s ease-in-out infinite;
+}
+
+/* Remote logos fade in once decoded instead of popping. */
+.v2-fade {
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+.v2-fade.is-loaded {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-pulse {
+    animation: none;
+  }
+  .v2-fade {
+    transition: none;
   }
 }
 
@@ -327,18 +366,9 @@ html.lenis body {
 .v2-flow-l {
   animation: v2-flow 1.1s linear infinite reverse;
 }
-@keyframes v2-drift {
-  to {
-    transform: translateX(40px);
-  }
-}
-.v2-drift {
-  animation: v2-drift 9s ease-in-out infinite alternate;
-}
 @media (prefers-reduced-motion: reduce) {
   .v2-flow-r,
-  .v2-flow-l,
-  .v2-drift {
+  .v2-flow-l {
     animation: none;
   }
 }
