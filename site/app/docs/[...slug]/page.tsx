@@ -32,7 +32,7 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
   return (
     <>
       <main className="min-w-0 px-6 pt-10 pb-16 md:px-10 lg:px-14 lg:pt-14">
-        <article className="max-w-[64rem]">
+        <article className="mx-auto max-w-[64rem]">
           <p className="flex items-center gap-2 font-mono text-[11px] tracking-[0.08em] uppercase" style={{ color: "var(--rf-grey)" }}>
             <Link href="/docs" className="rf-link">
               Docs
@@ -53,7 +53,7 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
         </article>
 
         {/* Pager: the previous and next pages, as two rounded buttons. */}
-        <nav aria-label="Pager" className="mt-16 grid max-w-[64rem] gap-3 sm:grid-cols-2">
+        <nav aria-label="Pager" className="mx-auto mt-16 grid max-w-[64rem] gap-3 sm:grid-cols-2">
           {[prev, next].map((p, i) =>
             p ? (
               <Link

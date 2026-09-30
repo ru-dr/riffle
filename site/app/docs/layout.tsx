@@ -1,7 +1,9 @@
 import type { Viewport } from "next";
 import { SiteHeader } from "@/components/home/site-header";
 import { MobileSections, Sidebar } from "@/components/docs/sidebar";
+import { DocsSearch } from "@/components/docs/search";
 import { ThemeSwitch } from "@/components/docs/theme-switch";
+import { ToTop } from "@/components/docs/to-top";
 
 // The docs frame: the site header, then one bordered wrapper split by
 // hairlines into section nav | article | "On this page". The article and its
@@ -19,7 +21,12 @@ const DOCS_NAV = [
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
   return (
     <div data-riffle-light data-docs className="min-h-dvh" style={{ backgroundColor: "var(--rf-bg)", color: "var(--rf-ink)" }}>
-      <SiteHeader links={DOCS_NAV} section="Docs" actions={<ThemeSwitch />} />
+      <SiteHeader links={DOCS_NAV} section="Docs" navFrom="lg" actions={
+          <>
+            <DocsSearch />
+            <ThemeSwitch />
+          </>
+        } />
       <div
         className="rf-wrapper rf-ticks grid border-t lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_15rem]"
         style={{ borderColor: "var(--rf-stroke)" }}
@@ -42,6 +49,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
           Riffle is in development. These docs track the settled design.
         </p>
       </footer>
+      <ToTop />
     </div>
   );
 }

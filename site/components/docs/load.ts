@@ -19,6 +19,20 @@ export async function loadMarkdown(page: DocPage): Promise<string> {
   return md;
 }
 
+/**
+ * A heading's rendered text, which is what rehype-slug slugs: links reduced
+ * to their label, code and emphasis markers dropped. Underscores inside
+ * words stay - `org_rules` renders, and slugs, with its underscore.
+ */
+export function headingText(md: string) {
+  return md
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/`/g, "")
+    .replace(/\*\*|\*/g, "")
+    .replace(/(^|\s)_([^_]+)_(?=\s|$)/g, "$1$2")
+    .trim();
+}
+
 export type Heading = { depth: 2 | 3; text: string; id: string };
 
 /**
@@ -35,10 +49,7 @@ export function outline(md: string): Heading[] {
     if (inFence) continue;
     const m = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
     if (!m) continue;
-    const text = m[2]
-      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-      .replace(/[`*_]/g, "")
-      .trim();
+    const text = headingText(m[2]);
     const id = slugger.slug(text);
     const depth = m[1].length;
     if (depth === 2 || depth === 3) out.push({ depth, text, id });

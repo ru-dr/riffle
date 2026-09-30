@@ -91,9 +91,10 @@ body {
    as light moving across the type, not as a coloured highlight.
    400% background over clipped text; at either end of the travel only ink
    is in view, so the loop's snap back from 0% to 100% is invisible. */
-/* The glow takes the colour of the stack's live layer: the stack sets
-   --rf-glow on the hero, and registering it as a colour lets it cross-fade
-   instead of snapping between tones. */
+/* The headline glow: one sweep each time the stack lifts a layer, in that
+   layer's colour. The stack sets --rf-glow on the hero and restarts
+   .rf-shine-run, so the band crosses the headline as the tile rises.
+   Registering --rf-glow as a colour lets it cross-fade between tones. */
 @property --rf-glow {
   syntax: "<color>";
   inherits: true;
@@ -101,13 +102,13 @@ body {
 }
 
 .rf-shine {
-  transition: --rf-glow 700ms ease;
+  transition: --rf-glow 500ms ease;
   background: linear-gradient(
     110deg,
     var(--rf-ink) 0%,
-    var(--rf-ink) 42%,
-    color-mix(in oklab, var(--rf-glow) 75%, var(--rf-ink)) 50%,
-    var(--rf-ink) 58%,
+    var(--rf-ink) 36%,
+    var(--rf-glow) 50%,
+    var(--rf-ink) 64%,
     var(--rf-ink) 100%
   );
   background-size: 400% 100%;
@@ -115,21 +116,22 @@ body {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: rf-shine 9s cubic-bezier(0.45, 0, 0.55, 1) 1.6s infinite;
+}
+.rf-shine.rf-shine-run {
+  animation: rf-shine 1.9s cubic-bezier(0.45, 0, 0.55, 1) both;
 }
 
 @keyframes rf-shine {
-  0% {
+  from {
     background-position: 100% 0;
   }
-  34%,
-  100% {
+  to {
     background-position: 0 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rf-shine {
+  .rf-shine.rf-shine-run {
     animation: none;
   }
 }
@@ -368,6 +370,9 @@ body:has([data-riffle-light]) {
 .rf-link:hover {
   color: #16171d;
 }
+[data-docs] .rf-link:hover {
+  color: var(--rf-ink);
+}
 [data-surface="dark"] .rf-link:hover {
   color: #fff;
 }
@@ -417,6 +422,24 @@ body:has([data-riffle-light]) {
 .docs-code-body code {
   font-family: inherit;
 }
+/* Token colours: both themes ride on every span; the docs theme picks. */
+.docs-code-body span {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight);
+}
+@media (prefers-color-scheme: dark) {
+  [data-docs]:not([data-theme="light"]) .docs-code-body span {
+    color: var(--shiki-dark);
+    font-style: var(--shiki-dark-font-style);
+    font-weight: var(--shiki-dark-font-weight);
+  }
+}
+[data-docs][data-theme="dark"] .docs-code-body span {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight);
+}
 .docs-callout p {
   margin: 0;
   font-size: 15px;
@@ -433,6 +456,9 @@ body:has([data-riffle-light]) {
   --rf-bg: #fbfaf7;
   --rf-surface: #ffffff;
   --rf-wash: rgba(22, 23, 29, 0.045);
+  --rf-code-bg: #ffffff;
+  --rf-code-head: rgba(22, 23, 29, 0.025);
+  --rf-code-stroke: #e5e4e7;
 }
 @media (prefers-color-scheme: dark) {
   [data-docs]:not([data-theme="light"]) {
@@ -445,6 +471,9 @@ body:has([data-riffle-light]) {
     --rf-grey: rgba(242, 241, 244, 0.48);
     --rf-stroke: #2c2d34;
     --rf-accent: #7dd3a0;
+    --rf-code-bg: #1a1b20;
+    --rf-code-head: transparent;
+    --rf-code-stroke: rgba(255, 255, 255, 0.08);
   }
 }
 [data-docs][data-theme="dark"] {
@@ -457,6 +486,9 @@ body:has([data-riffle-light]) {
   --rf-grey: rgba(242, 241, 244, 0.48);
   --rf-stroke: #2c2d34;
   --rf-accent: #7dd3a0;
+  --rf-code-bg: #1a1b20;
+  --rf-code-head: transparent;
+  --rf-code-stroke: rgba(255, 255, 255, 0.08);
 }
 [data-docs] .docs-link {
   color: var(--rf-ink);
@@ -495,4 +527,45 @@ body:has([data-riffle-light]) {
 .docs-diagram-body .edge-label rect {
   rx: 4px;
   ry: 4px;
+}
+
+/* Docs search dialog: a soft dim behind it, and a quick settle on open. */
+.docs-search::backdrop {
+  background: rgba(22, 23, 29, 0.28);
+  backdrop-filter: blur(2px);
+}
+.docs-search[open] {
+  box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.28);
+  animation: rf-search-in 160ms ease-out;
+}
+@keyframes rf-search-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-search[open] {
+    animation: none;
+  }
+}
+
+/* Ask AI: a slow breathe while the model reads, until text arrives. */
+.docs-thinking {
+  animation: rf-thinking 1.4s ease-in-out infinite;
+}
+@keyframes rf-thinking {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-thinking {
+    animation: none;
+  }
+}
+
+/* Repository names in docs tables stay on one line: owner/name. */
+[data-docs] td a[href^="https://github.com/"] {
+  white-space: nowrap;
 }

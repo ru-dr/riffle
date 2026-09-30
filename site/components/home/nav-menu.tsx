@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 // nothing replaced them: a phone reader had no way to the sections except
 // scrolling. A two-bar button, as the reference uses, opening a panel with
 // the same links. It closes on a link tap and on Escape.
-export function NavMenu({ links }: { links: readonly (readonly [string, string])[] }) {
+export function NavMenu({ links, until = "md" }: { links: readonly (readonly [string, string])[]; until?: "md" | "lg" }) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -17,7 +17,7 @@ export function NavMenu({ links }: { links: readonly (readonly [string, string])
   }, [open]);
 
   return (
-    <div className="md:hidden">
+    <div className={until === "lg" ? "lg:hidden" : "md:hidden"}>
       <button
         type="button"
         aria-expanded={open}

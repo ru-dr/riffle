@@ -1,27 +1,68 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Heading } from "./load";
 
 // "On this page". The current heading is the last one whose top has passed
 // a line a quarter of the way down the viewport - so the highlight moves when
 // a section starts to be read, not when its heading scrolls off the top.
+//
+// Short sections at the end of a page never reach that line, so two rules
+// sit on top of it: a heading the reader picks (a click, or a #hash on
+// arrival) stays highlighted until they scroll by hand, and at the bottom
+// of the page the last heading on screen wins.
 export function Toc({ headings }: { headings: Heading[] }) {
   const [active, setActive] = useState(headings[0]?.id ?? "");
+  const pinned = useRef<string | null>(null);
 
   useEffect(() => {
     if (!headings.length) return;
     const els = headings.map((h) => document.getElementById(h.id)).filter(Boolean) as HTMLElement[];
+    const ids = new Set(els.map((e) => e.id));
+
     const onScroll = () => {
+      if (pinned.current) return;
       const line = window.innerHeight * 0.25;
       let current = els[0]?.id ?? "";
       for (const el of els) if (el.getBoundingClientRect().top <= line) current = el.id;
+      const bottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+      if (bottom) for (const el of els) if (el.getBoundingClientRect().top < window.innerHeight) current = el.id;
       setActive(current);
     };
+    const pin = (id: string) => {
+      if (!ids.has(id)) return;
+      pinned.current = id;
+      setActive(id);
+    };
+    const fromHash = () => pin(decodeURIComponent(location.hash.slice(1)));
+    // Only the reader's own scrolling releases a pin; the jump itself does not.
+    const release = () => {
+      if (!pinned.current) return;
+      pinned.current = null;
+      onScroll();
+    };
+    const onKey = (e: KeyboardEvent) => ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(e.key) && release();
+
+    fromHash();
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    window.addEventListener("hashchange", fromHash);
+    window.addEventListener("wheel", release, { passive: true });
+    window.addEventListener("touchmove", release, { passive: true });
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("hashchange", fromHash);
+      window.removeEventListener("wheel", release);
+      window.removeEventListener("touchmove", release);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [headings]);
+
+  const pick = (id: string) => {
+    pinned.current = id;
+    setActive(id);
+  };
 
   if (!headings.length) return null;
   return (
@@ -42,6 +83,8 @@ export function Toc({ headings }: { headings: Heading[] }) {
           <li key={h.id}>
             <a
               href={`#${h.id}`}
+              onClick={() => pick(h.id)}
+              aria-current={active === h.id ? "location" : undefined}
               title={h.text}
               className="block truncate py-[5px] font-geist text-[13.5px] leading-[1.35] transition-colors hover:text-[var(--rf-ink)]"
               style={{

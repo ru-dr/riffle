@@ -66,15 +66,19 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${GeistSans.variable} ${GeistMono.variable}`}
-      // The motion script below sets data-motion on this element before
-      // hydration, by design - it has to run before first paint. That makes
-      // the server and client attribute sets differ, which is exactly what
-      // this suppresses. Scoped to <html>, so mismatches anywhere else still
-      // report. Browser extensions that decorate <html> stop warning too.
+      // The motion component sets data-motion-ready here, and browser
+      // extensions decorate <html>; neither is a real mismatch. Scoped to
+      // <html>, so mismatches anywhere else still report.
       suppressHydrationWarning
     >
       <head>
-        <style dangerouslySetInnerHTML={{ __html: criticalCss }} />
+        {/* href + precedence make this a React style resource: hoisted and
+            deduplicated rather than matched tag-by-tag during hydration, so
+            an extension that prepends its own <style> to <head> (Ant Design
+            based ones do) no longer breaks hydration. */}
+        <style href="rf-critical" precedence="high">
+          {criticalCss}
+        </style>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
