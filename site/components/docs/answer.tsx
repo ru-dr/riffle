@@ -22,7 +22,7 @@ export default function Answer({ text, sources, onNavigate }: { text: string; so
   );
 
   return (
-    <div className="docs-answer font-geist text-[14.5px] leading-[1.7]" style={{ color: "var(--rf-nickel)" }}>
+    <div className="docs-answer font-geist text-[15.5px] leading-[1.75]" style={{ color: "var(--rf-nickel)" }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
