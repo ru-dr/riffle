@@ -1,9 +1,6 @@
-import type { Viewport } from "next";
-import { LockupBlack } from "@/components/brand";
-import { V2Motion } from "@/components/v2-motion";
+import { SiteMotion } from "@/components/site-motion";
 import { T } from "@/components/home/tokens";
-import { REPO } from "@/components/home/data";
-import { NavMenu } from "@/components/home/nav-menu";
+import { SiteHeader } from "@/components/home/site-header";
 import { Stack } from "@/components/home/stack";
 import {
   ClosingBlock,
@@ -18,7 +15,7 @@ import {
 } from "@/components/home/sections";
 
 // Riffle's landing page, on voidzero.dev's layout system, rebuilt from their
-// markup. The earlier poster version lives on at /v1.
+// markup.
 //
 // Structure matches theirs element for element where Riffle has something
 // true to put in the slot: every section is its own bordered .wrapper (the
@@ -29,16 +26,12 @@ import {
 // provenance where their customer logos sit, prior work where their
 // investors sit, the repository where their newsletter sits.
 
-// Title, description and social card come from the root layout. This page
-// only sets the browser chrome colour to its own light surface; the layout's
-// default is the dark poster page's.
-export const viewport: Viewport = { themeColor: "#fbfaf7" };
 
 const NAV = [
   ["Architecture", "#architecture"],
   ["Invariants", "#invariants"],
   ["Contracts", "#contracts"],
-  ["Docs", `${REPO}#readme`],
+  ["Docs", "/docs"],
 ] as const;
 
 export default function Page() {
@@ -47,56 +40,21 @@ export default function Page() {
       {/* Their header: logo and links grouped left with a 2.5rem gap, icon
           links right. Part of the wrapper, not a sticky bar — it scrolls away
           with the page. Links are sans at 16px in full ink, not mono grey. */}
-      <header data-anim="nav" className="v2-wrapper relative flex items-center justify-between px-6 py-5 lg:py-7">
-        <div className="flex items-center gap-10">
-          <a href="/" aria-label="Riffle home">
-            <LockupBlack aria-hidden="true" className="block h-[22px] w-auto" style={{ color: T.ink }} />
-          </a>
-          <nav className="hidden md:block">
-            <ul className="flex items-center">
-              {NAV.map(([label, href]) => (
-                <li key={href} className="inline-block px-5">
-                  <a
-                    href={href}
-                    data-scroll-to={href.startsWith("#") ? "" : undefined}
-                    className="font-geist text-[16px] leading-6"
-                    style={{ color: T.ink }}
-                  >
-                    {label}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        </div>
-        <div className="flex items-center gap-2">
-          <a
-            href={REPO}
-            aria-label="GitHub"
-            className="v2-link flex size-8 items-center justify-center"
-            style={{ color: T.grey }}
-          >
-            <svg viewBox="0 0 16 16" className="size-[18px]" fill="currentColor" aria-hidden="true">
-              <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.19c0 .21.14.46.55.38A8 8 0 0 0 8 0Z" />
-            </svg>
-          </a>
-          <NavMenu links={NAV} />
-        </div>
-      </header>
+      <SiteHeader links={NAV} animated />
 
       {/* Hero: chip, headline, one line of lede, then the diagram. Their hero
           has no buttons, so neither does this one — the CTA lives in the
           dark blocks and the footer. */}
-      <div className="v2-wrapper v2-hero flex flex-col items-center pt-6 pb-10">
+      <div className="rf-wrapper rf-hero flex flex-col items-center pt-6 pb-10">
         <div className="flex w-full flex-col items-center px-5 sm:w-[46rem] sm:px-0">
           <div
             data-anim="chip"
-            className="v2-chip v2-hero-chip flex items-center gap-1.5 rounded px-3 py-1 font-mono text-[13px] font-medium tracking-[-0.03em]"
+            className="rf-chip rf-hero-chip flex items-center gap-1.5 rounded px-3 py-1 font-mono text-[13px] font-medium tracking-[-0.03em]"
           >
             <span className="inline-flex rounded-sm p-0.5" style={{ backgroundColor: T.accentSoft }}>
               <span
                 aria-hidden="true"
-                className="v2-pulse block size-1.5 rounded-[1.1px]"
+                className="rf-pulse block size-1.5 rounded-[1.1px]"
                 style={{ backgroundColor: T.live }}
               />
             </span>
@@ -109,7 +67,7 @@ export default function Page() {
               the entrance can move it without breaking the clip. */}
           <h1
             data-anim="title"
-            className="v2-shine v2-hero-title px-[0.08em] pb-1 text-center font-geist text-[2.25rem] leading-[2.6rem] font-medium tracking-[-0.05em] text-balance"
+            className="rf-shine rf-hero-title px-[0.08em] pb-1 text-center font-geist text-[2.25rem] leading-[2.6rem] font-medium tracking-[-0.05em] text-balance"
           >
             Every repo
             <br />
@@ -118,7 +76,7 @@ export default function Page() {
 
           <p
             data-anim="lede"
-            className="v2-hero-lede self-stretch text-center font-geist text-[16px] leading-[1.6] text-balance"
+            className="rf-hero-lede self-stretch text-center font-geist text-[16px] leading-[1.6] text-balance"
             style={{ color: T.nickel }}
           >
             Riffle ranks your pull request queue by risk, trained on your
@@ -126,7 +84,7 @@ export default function Page() {
           </p>
         </div>
 
-        <div data-anim="stackin" className="v2-hero-stack w-full px-5">
+        <div data-anim="stackin" className="rf-hero-stack w-full px-5">
           <Stack />
         </div>
       </div>
@@ -143,7 +101,7 @@ export default function Page() {
       <Spacer />
       <ClosingBlock />
 
-      <V2Motion />
+      <SiteMotion />
     </div>
   );
 }

@@ -1,8 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import localFont from "next/font/local";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
-import { Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
 // Stopgap: riffle.dev is still parked at the registrar, so absolute URLs
@@ -14,24 +12,7 @@ const title = "Riffle — review what matters first";
 const description =
   "Riffle is an open-source GitHub App, in development, that ranks your pull request queue by risk — trained on your own repository's history.";
 
-// Display serif for the tagline. High-contrast, genuinely distinctive at
-// large sizes, and contemporary — editorial presence against the painting
-// without reading as period pastiche.
-const tagline = Instrument_Serif({
-  weight: "400",
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-tagline",
-});
 
-const supplyMono = localFont({
-  src: [
-    { path: "../public/fonts/PPSupplyMono-Regular.woff2", weight: "400" },
-    { path: "../public/fonts/PPSupplyMono-Ultralight.woff2", weight: "200" },
-  ],
-  display: "swap",
-  variable: "--font-supply-mono",
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL(url),
@@ -56,7 +37,7 @@ export const metadata: Metadata = {
   },
 };
 
-export const viewport: Viewport = { themeColor: "#14100c" };
+export const viewport: Viewport = { themeColor: "#fbfaf7" };
 
 const schema = {
   "@context": "https://schema.org",
@@ -71,10 +52,8 @@ const schema = {
 };
 
 const criticalCss = `
-html,body{height:100%;margin:0;background:#14100c}
-body{color:#f4f5f7}
-/* /v2 is a light document; set here so it cannot flash dark pre-stylesheet */
-body:has([data-riffle-light]){background:#fbfaf7;color:#16171d}
+html,body{height:100%;margin:0;background:#fbfaf7}
+body{color:#16171d}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
 
@@ -86,7 +65,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${tagline.variable} ${GeistSans.variable} ${GeistMono.variable} ${supplyMono.variable}`}
+      className={`${GeistSans.variable} ${GeistMono.variable}`}
       // The motion script below sets data-motion on this element before
       // hydration, by design - it has to run before first paint. That makes
       // the server and client attribute sets differ, which is exactly what
