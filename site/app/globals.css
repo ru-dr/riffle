@@ -336,23 +336,6 @@ html[data-motion="on"] [data-anim] {
   opacity: 0;
 }
 
-/* Lenis (smooth scrolling on /v2). Its required base styles: the document
-   must size to content while it drives scrolling, and native smooth
-   scrolling must not fight it. */
-html.lenis,
-html.lenis body {
-  height: auto;
-}
-.lenis.lenis-smooth {
-  scroll-behavior: auto !important;
-}
-.lenis.lenis-smooth [data-lenis-prevent] {
-  overscroll-behavior: contain;
-}
-.lenis.lenis-stopped {
-  overflow: clip;
-}
-
 /* Hero stack micro-motion: dotted leaders flow toward the stack, and the
    live slab's texture drifts. Dash offsets and transforms only. */
 @keyframes v2-flow {

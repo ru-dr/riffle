@@ -3,7 +3,6 @@
 import { useEffect, useLayoutEffect } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import Lenis from "lenis";
 
 // Motion for the landing page.
 //
@@ -30,19 +29,10 @@ export function V2Motion() {
     gsap.registerPlugin(ScrollTrigger);
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-    // Lenis for momentum scrolling, driven from GSAP's ticker so ScrollTrigger
-    // and the scroller agree on every frame. Reduced motion keeps native.
-    let lenis: Lenis | null = null;
-    const tick = (t: number) => lenis?.raf(t * 1000);
-    if (!reduce) {
-      lenis = new Lenis({ duration: 1.15, smoothWheel: true, autoRaf: false });
-      lenis.on("scroll", ScrollTrigger.update);
-      gsap.ticker.add(tick);
-      gsap.ticker.lagSmoothing(0);
-    }
-
-    // In-page anchors glide instead of jumping. Offset clears nothing sticky
-    // today, but keeps headings off the very top edge.
+    // Native scrolling. Lenis interpolated every wheel tick over ~1s, and
+    // that trailing catch-up is what read as lag; native scroll runs on the
+    // compositor thread. Anchors still glide, via the browser's own smooth
+    // scroll, and honour reduced motion.
     const onClick = (e: MouseEvent) => {
       const a = (e.target as HTMLElement).closest<HTMLAnchorElement>("a[data-scroll-to]");
       if (!a) return;
@@ -51,8 +41,8 @@ export function V2Motion() {
       const target = document.querySelector<HTMLElement>(hash);
       if (!target) return;
       e.preventDefault();
-      if (lenis) lenis.scrollTo(target, { offset: -24, duration: 1.4 });
-      else target.scrollIntoView({ block: "start" });
+      const y = target.getBoundingClientRect().top + window.scrollY - 24;
+      window.scrollTo({ top: y, behavior: reduce ? "auto" : "smooth" });
       history.replaceState(null, "", hash);
     };
     document.addEventListener("click", onClick);
@@ -76,8 +66,6 @@ export function V2Motion() {
     return () => {
       document.removeEventListener("click", onClick);
       triggers.forEach((t) => t.kill());
-      gsap.ticker.remove(tick);
-      lenis?.destroy();
     };
   }, []);
 
@@ -89,31 +77,49 @@ export function V2Motion() {
     gsap.registerPlugin(ScrollTrigger);
 
     const ctx = gsap.context(() => {
-      // Load: one quiet movement in reading order. Transform and opacity
-      // only, short distances, long eases — nothing lands hard, and nothing
-      // animates a property that costs a layout or a repaint.
+      // Load, in reading order. Distances are large enough to register as
+      // motion and the eases are power3/4 — expo.out finished ~90% of a
+      // small move in the first 150ms, which read as content simply
+      // appearing. Transform, opacity and one clip-path reveal only.
       gsap
-        .timeline({ defaults: { ease: "expo.out", duration: 1.1 } })
-        .fromTo('[data-anim="nav"]', { opacity: 0, y: -6 }, { opacity: 1, y: 0, duration: 0.9, clearProps: "transform" })
-        .fromTo('[data-anim="chip"]', { opacity: 0, y: 8 }, { opacity: 1, y: 0, clearProps: "transform" }, 0.12)
-        .fromTo('[data-anim="title"]', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 1.3, clearProps: "transform" }, 0.2)
-        .fromTo('[data-anim="lede"]', { opacity: 0, y: 10 }, { opacity: 1, y: 0, clearProps: "transform" }, 0.34)
-        .fromTo('[data-anim="stackin"]', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1.4, clearProps: "transform" }, 0.46);
+        .timeline({ defaults: { ease: "power3.out" } })
+        .fromTo('[data-anim="nav"]', { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.9, clearProps: "transform" })
+        .fromTo(
+          '[data-anim="chip"]',
+          { opacity: 0, y: 18, scale: 0.94 },
+          { opacity: 1, y: 0, scale: 1, duration: 0.9, clearProps: "transform" },
+          0.15,
+        )
+        // The headline wipes up out of its own baseline. It is animated as
+        // one element because it paints with background-clip:text.
+        .fromTo(
+          '[data-anim="title"]',
+          { opacity: 0, y: 32, clipPath: "inset(0 0 100% 0)" },
+          { opacity: 1, y: 0, clipPath: "inset(0 0 -10% 0)", duration: 1.3, ease: "power4.out", clearProps: "transform,clipPath" },
+          0.25,
+        )
+        .fromTo('[data-anim="lede"]', { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 1.1, clearProps: "transform" }, 0.5)
+        .fromTo(
+          '[data-anim="stackin"]',
+          { opacity: 0, y: 60, scale: 0.94 },
+          { opacity: 1, y: 0, scale: 1, duration: 1.6, ease: "power4.out", clearProps: "transform" },
+          0.6,
+        );
 
       // Below the fold: batched, so elements entering together rise as one
       // staggered group instead of dozens of tweens firing independently.
       const rise = gsap.utils.toArray<HTMLElement>('[data-anim="rise"]');
-      gsap.set(rise, { opacity: 0, y: 12 });
+      gsap.set(rise, { opacity: 0, y: 40 });
       ScrollTrigger.batch(rise, {
-        start: "top 90%",
+        start: "top 88%",
         once: true,
         onEnter: (els) =>
           gsap.to(els, {
             opacity: 1,
             y: 0,
-            duration: 0.9,
+            duration: 1.1,
             ease: "power3.out",
-            stagger: 0.06,
+            stagger: 0.09,
             clearProps: "transform",
           }),
       });
