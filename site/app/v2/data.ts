@@ -5,62 +5,6 @@
 
 export const REPO = "https://github.com/ru-dr/riffle";
 
-export const EVIDENCE = [
-  {
-    stat: "441.5",
-    unit: "%",
-    claim: "longer median review time",
-    source: "Faros AI, The Acceleration Whiplash",
-    detail: "Bugs per developer up 54%. 31% of PRs now merge with no human review at all.",
-  },
-  {
-    stat: "4.6",
-    unit: "×",
-    claim: "longer wait for first review",
-    source: "LinearB, 2026 Benchmarks",
-    detail:
-      "Across 8.1M PRs. AI-authored changes are accepted within 30 days 32.7% of the time, against 84.4% unassisted.",
-  },
-  {
-    stat: "1 in 5",
-    unit: "",
-    claim: "reviews now involve an agent",
-    source: "GitHub",
-    detail: "The bottleneck moved from writing code to verifying it, and reviewer capacity did not move with it.",
-  },
-] as const;
-
-export const SERVICES = [
-  {
-    name: "intake",
-    lang: "Go",
-    job: "Verify the webhook signature, deduplicate by delivery ID, publish to the queue, return 200.",
-    constraint: "Must never be slow",
-    reason: "GitHub allows 10 seconds.",
-  },
-  {
-    name: "scorer",
-    lang: "Python",
-    job: "Consume events, extract features, run the tenant ranking model, call the explainer, write the result.",
-    constraint: "Must never lose work",
-    reason: "An unranked PR is a broken promise.",
-  },
-  {
-    name: "explainer",
-    lang: "Python",
-    job: "LLM inference behind an API. Warm GPU, cached, rate-limited, times out to a template fallback.",
-    constraint: "Allowed to fail",
-    reason: "A missing sentence costs quality, not correctness.",
-  },
-  {
-    name: "app",
-    lang: "TypeScript",
-    job: "GitHub App plus the dashboard. Everything that talks to GitHub or to humans.",
-    constraint: "Must never mislead",
-    reason: "It is the only surface a reviewer sees.",
-  },
-] as const;
-
 export const INVARIANTS = [
   ["Idempotent scoring", "The same delivery ID must never produce two scores."],
   ["Version pinning", "A request never mixes a new model with an old feature extractor."],
@@ -91,28 +35,6 @@ export const SCORE_RESULT = `{
   "explanation":   "string | null (explainer timed out)",
   "scored_at":     "RFC3339 timestamp"
 }`;
-
-export const DATA = [
-  ["AIDev", "Primary training data — agent-authored PRs with merge outcomes, CI results, reviewer interactions"],
-  ["On the Shoulders of Giants", "69 engineered features for PR outcome prediction (MSR 2020)"],
-  ["ApacheJIT", "106,674 commits, 28,239 labelled bug-inducing. Bootstraps the defect signal"],
-  ["Live ingestion", "Labels from merge, revert and follow-up-fix history on connected repositories"],
-] as const;
-
-export const METRICS = [
-  ["riffle_intake_latency_seconds", "Must stay far under the 10s GitHub budget"],
-  ["riffle_scoring_duration_seconds", "Event received to result written"],
-  ["riffle_explainer_timeouts_total", "How often we degrade to no explanation"],
-  ["riffle_queue_depth", "Drives KEDA autoscaling"],
-  ["riffle_tenant_model_auc", "Per-tenant ranking quality over time"],
-  ["riffle_drift_score", "Feature distribution shift per tenant"],
-] as const;
-
-export const BANDS = [
-  ["review_first", "Highest risk in the queue. Read this one before anything else."],
-  ["standard", "Normal review. No signal that it needs special attention."],
-  ["senior_recommended", "Touches a path this repository has broken along before."],
-] as const;
 
 // --- Sections below the fold ------------------------------------------------
 // The reference page carries a dark product block, a statistics band, a
@@ -236,15 +158,6 @@ export const STATS = {
     ["0.65+", "ROC-AUC target on repositories never trained on", "target"],
   ] as const,
 } as const;
-
-export const CORPUS_SAMPLE = [
-  "kubernetes/kubernetes",
-  "python/cpython",
-  "llvm/llvm-project",
-  "facebook/react",
-  "apache/spark",
-  "pytorch/pytorch",
-] as const;
 
 export const MISSION =
   "Our claim is narrower than a verdict: the next incident follows the seams your repository has already broken along, and its own history is where they are written.";

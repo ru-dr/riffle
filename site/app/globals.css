@@ -256,47 +256,6 @@ body:has([data-riffle-light]) {
   color: #16171d;
 }
 
-/* Primary: a dark fill inside a moving gradient ring. Theirs paints the ring
-   from a photograph; this paints it from Riffle's own colours. */
-.v2-btn--primary {
-  position: relative;
-  isolation: isolate;
-  outline: none;
-  background-color: transparent;
-  color: #fff;
-}
-.v2-btn--primary::before {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  z-index: -2;
-  border-radius: calc(0.5rem + 2px);
-  background: linear-gradient(115deg, #7dd3a0, #a5b4fc, #c4b5fd, #7dd3a0);
-  background-size: 300% 300%;
-  animation: v2-ring 12s ease-in-out infinite;
-}
-.v2-btn--primary::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: 0.5rem;
-  background: #16171d;
-}
-.v2-btn--primary:hover {
-  box-shadow: none;
-}
-@keyframes v2-ring {
-  50% {
-    background-position: 100% 50%;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .v2-btn--primary::before {
-    animation: none;
-  }
-}
-
 .v2-link {
   transition: color 140ms ease;
 }

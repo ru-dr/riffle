@@ -3,9 +3,8 @@
 // page surface is #FBFAF7, a warm white, not the #f4f3ec that
 // --color-beige holds.
 //
-// Their two typefaces (APK Protocol, KH Teka Mono) are commercial, so this
-// substitutes what the repo already licenses: Geist for headings and body,
-// Supply Mono for every mono role.
+// Their two typefaces (APK Protocol, KH Teka Mono) are commercial, so /v2 is
+// set in Geist Sans and Geist Mono only.
 //
 // Their brand purple (#6C3BFF / #B39AFF) is deliberately not used. It is the
 // one token on their page that is theirs rather than structural, and Riffle

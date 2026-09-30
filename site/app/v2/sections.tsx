@@ -46,33 +46,6 @@ export function Spacer({ dark = false }: { dark?: boolean }) {
   );
 }
 
-export function AnnounceBar() {
-  return (
-    <a href={REPO} className="group relative block overflow-hidden" style={{ backgroundColor: T.darkBg }}>
-      <div
-        aria-hidden="true"
-        className="absolute inset-y-0 right-0 w-[55%]"
-        style={{
-          background:
-            "linear-gradient(90deg, transparent 0%, rgba(125,211,160,0.18) 40%, rgba(165,180,252,0.42) 75%, rgba(196,181,253,0.55) 100%)",
-        }}
-      />
-      <div className="relative flex items-center gap-2.5 px-6 py-2.5">
-        <span className="font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: T.darkInk }}>
-          Riffle is in development
-        </span>
-        <span
-          aria-hidden="true"
-          className="inline-flex size-[18px] items-center justify-center rounded-[3px] text-[11px] transition-transform group-hover:translate-x-0.5"
-          style={{ backgroundColor: T.darkInk, color: T.darkBg }}
-        >
-          &rarr;
-        </span>
-      </div>
-    </a>
-  );
-}
-
 /* Their customer-logo carousel slot, holding the training corpus. */
 export function Provenance() {
   return (
@@ -141,14 +114,16 @@ export function ServicesBlock() {
                 >
                   <span className="flex items-center gap-[3px] font-mono text-[15px]" style={{ color: T.darkGrey }}>
                     (
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={logoUrl(LANG_DOMAIN[s.icon], { size: 40 }) ?? ""}
-                      alt=""
-                      width={16}
-                      height={16}
-                      className="rounded-[3px]"
-                    />
+                    {logoUrl(LANG_DOMAIN[s.icon], { size: 40 }) && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={logoUrl(LANG_DOMAIN[s.icon], { size: 40 })!}
+                        alt=""
+                        width={16}
+                        height={16}
+                        className="rounded-[3px]"
+                      />
+                    )}
                     )
                   </span>
                   {s.name}
