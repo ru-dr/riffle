@@ -1,8 +1,9 @@
 "use client";
 
-import { useLayoutEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import Lenis from "lenis";
 
 // Motion for /v2.
 //
@@ -19,6 +20,67 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 // descendants that get their own compositing layer — so transforming the two
 // lines individually left the headline transparent over nothing.
 export function V2Motion() {
+  // Behaviour that is not decoration, so it runs whatever the motion
+  // preference or the state of the page's motion gate: smooth scrolling,
+  // anchor navigation, and the services rail following the row in view.
+  // The first version put the rail inside the gated effect, so any page load
+  // where the gate had already dropped (slow hydration, the failsafe) left
+  // the rail frozen on its first entry.
+  useEffect(() => {
+    gsap.registerPlugin(ScrollTrigger);
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // Lenis for momentum scrolling, driven from GSAP's ticker so ScrollTrigger
+    // and the scroller agree on every frame. Reduced motion keeps native.
+    let lenis: Lenis | null = null;
+    const tick = (t: number) => lenis?.raf(t * 1000);
+    if (!reduce) {
+      lenis = new Lenis({ duration: 1.15, smoothWheel: true, autoRaf: false });
+      lenis.on("scroll", ScrollTrigger.update);
+      gsap.ticker.add(tick);
+      gsap.ticker.lagSmoothing(0);
+    }
+
+    // In-page anchors glide instead of jumping. Offset clears nothing sticky
+    // today, but keeps headings off the very top edge.
+    const onClick = (e: MouseEvent) => {
+      const a = (e.target as HTMLElement).closest<HTMLAnchorElement>("a[data-scroll-to]");
+      if (!a) return;
+      const hash = a.getAttribute("href");
+      if (!hash?.startsWith("#")) return;
+      const target = document.querySelector<HTMLElement>(hash);
+      if (!target) return;
+      e.preventDefault();
+      if (lenis) lenis.scrollTo(target, { offset: -24, duration: 1.4 });
+      else target.scrollIntoView({ block: "start" });
+      history.replaceState(null, "", hash);
+    };
+    document.addEventListener("click", onClick);
+
+    // Rail: the service whose row crosses 40% down the viewport is live.
+    // Rows are ~465px, shorter than half a screen, so a 55% line fell past
+    // the bottom of a row parked at the top — clicking "explainer" lit "app".
+    const rail = gsap.utils.toArray<HTMLElement>("[data-rail]");
+    const triggers = gsap.utils.toArray<HTMLElement>("[data-project]").map((row) =>
+      ScrollTrigger.create({
+        trigger: row,
+        start: "top 40%",
+        end: "bottom 40%",
+        onToggle: ({ isActive }) => {
+          if (!isActive) return;
+          rail.forEach((item) => item.toggleAttribute("data-active", item.dataset.rail === row.dataset.project));
+        },
+      }),
+    );
+
+    return () => {
+      document.removeEventListener("click", onClick);
+      triggers.forEach((t) => t.kill());
+      gsap.ticker.remove(tick);
+      lenis?.destroy();
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const root = document.documentElement;
     if (root.dataset.motion !== "on") return;
@@ -85,22 +147,6 @@ export function V2Motion() {
               onComplete: () => {
                 el.textContent = format(target);
               },
-            });
-          },
-        });
-      });
-
-      // Services rail tracks the row in view, as their product list does.
-      const rail = gsap.utils.toArray<HTMLElement>("[data-rail]");
-      gsap.utils.toArray<HTMLElement>("[data-project]").forEach((row) => {
-        ScrollTrigger.create({
-          trigger: row,
-          start: "top 55%",
-          end: "bottom 55%",
-          onToggle: ({ isActive }) => {
-            if (!isActive) return;
-            rail.forEach((item) => {
-              item.toggleAttribute("data-active", item.dataset.rail === row.dataset.project);
             });
           },
         });

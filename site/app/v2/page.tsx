@@ -54,7 +54,12 @@ export default function Page() {
             <ul className="flex items-center">
               {NAV.map(([label, href]) => (
                 <li key={href} className="inline-block px-5">
-                  <a href={href} className="font-geist text-[16px] leading-6" style={{ color: T.ink }}>
+                  <a
+                    href={href}
+                    data-scroll-to={href.startsWith("#") ? "" : undefined}
+                    className="font-geist text-[16px] leading-6"
+                    style={{ color: T.ink }}
+                  >
                     {label}
                   </a>
                 </li>
@@ -124,7 +129,6 @@ export default function Page() {
 
       <Provenance />
       <ServicesBlock />
-      <Spacer />
       <StatsBand />
       <Spacer />
       <MissionPanel />

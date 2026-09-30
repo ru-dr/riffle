@@ -308,20 +308,50 @@ html[data-motion="on"] [data-anim] {
   opacity: 0;
 }
 
-/* Hero stack before hydration: while motion is on, the server-rendered
-   page must show the opening cube, not the finished stack, or the intro
-   would start by un-showing something the reader already saw. Without the
-   gate (no JS, reduced motion, failsafe) the cube stays hidden and the
-   stack shows as-is. */
-[data-cube] {
-  opacity: 0;
+/* Lenis (smooth scrolling on /v2). Its required base styles: the document
+   must size to content while it drives scrolling, and native smooth
+   scrolling must not fight it. */
+html.lenis,
+html.lenis body {
+  height: auto;
 }
-html[data-motion="on"] [data-cube] {
-  opacity: 1;
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
 }
-html[data-motion="on"] [data-slab],
-html[data-motion="on"] [data-leads] {
-  opacity: 0;
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: clip;
+}
+
+/* Hero stack micro-motion: dotted leaders flow toward the stack, and the
+   live slab's texture drifts. Dash offsets and transforms only. */
+@keyframes v2-flow {
+  to {
+    stroke-dashoffset: -11;
+  }
+}
+.v2-flow-r {
+  animation: v2-flow 1.1s linear infinite;
+}
+.v2-flow-l {
+  animation: v2-flow 1.1s linear infinite reverse;
+}
+@keyframes v2-drift {
+  to {
+    transform: translateX(40px);
+  }
+}
+.v2-drift {
+  animation: v2-drift 9s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .v2-flow-r,
+  .v2-flow-l,
+  .v2-drift {
+    animation: none;
+  }
 }
 
 /* /v2 tags its above-fold nodes separately so the hero timeline does not

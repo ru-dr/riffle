@@ -76,7 +76,7 @@ const schema = {
 // or a reduce-motion preference all leave the page fully rendered.
 //
 // The timer is the failsafe — if the GSAP timeline has not claimed the page
-// within 2.5s (slow hydration, chunk failure), the attribute is dropped and
+// within 5s (slow hydration, chunk failure), the attribute is dropped and
 // everything becomes visible without animation.
 const motionInit = `
 try {
@@ -85,7 +85,7 @@ try {
     r.dataset.motion = 'on';
     setTimeout(function () {
       if (!r.dataset.motionReady) r.removeAttribute('data-motion');
-    }, 2500);
+    }, 5000);
   }
 } catch (e) {}
 `;

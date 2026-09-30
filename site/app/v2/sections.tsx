@@ -1,5 +1,6 @@
 import { Mark } from "@/components/brand";
-import { LangIcon } from "./lang-icon";
+import { CorpusCarousel } from "./corpus-carousel";
+import { logoUrl } from "./logo";
 import { T } from "./tokens";
 
 // Publishable logo.dev key. It is designed to sit in client-visible image
@@ -9,7 +10,6 @@ const LOGO_DEV_TOKEN = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN;
 import {
   FOOTER_LINKS,
   INVARIANTS,
-  CORPUS_SAMPLE,
   MISSION,
   PRIOR_WORK,
   PR_EVENT,
@@ -73,53 +73,33 @@ export function AnnounceBar() {
   );
 }
 
-/* Their customer-logo row, holding datasets. Same bracket punctuation. */
+/* Their customer-logo carousel slot, holding the training corpus. */
 export function Provenance() {
   return (
     <section
-      className="v2-wrapper v2-ticks flex flex-col items-center justify-center border-t pt-10 pb-10 md:gap-2 md:pt-14"
+      className="v2-wrapper v2-ticks flex flex-col items-center justify-center gap-6 border-t pt-10 pb-10 md:pt-14"
       style={{ borderColor: T.stroke }}
     >
-      {/* Repositories named as slugs, not logos: they are the training corpus,
-          not customers, and a logo wall would say otherwise. */}
       <p data-anim="rise" className="text-center font-geist text-[16px] text-balance" style={{ color: T.nickel }}>
         Planned training corpus: 50 public repositories, then yours
       </p>
-      <div data-anim="rise" className="mt-6 flex items-center gap-6">
-        <Paren />
-        <div className="flex max-w-[52rem] flex-wrap items-center justify-center gap-x-8 gap-y-3">
-          {CORPUS_SAMPLE.map((repo) => (
-            <span key={repo} className="font-mono text-[14px]" style={{ color: T.ink, opacity: 0.5 }}>
-              {repo}
-            </span>
-          ))}
-          <span className="font-mono text-[14px]" style={{ color: T.ink }}>
-            +44 more
-          </span>
-        </div>
-        <Paren flip />
+      <div data-anim="rise" className="w-full max-w-[60rem]">
+        <CorpusCarousel />
       </div>
     </section>
-  );
-}
-
-function Paren({ flip = false }: { flip?: boolean }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 8 30"
-      className="h-[40px] w-[11px] shrink-0"
-      fill={T.nickel}
-      style={{ transform: flip ? "scaleX(-1)" : undefined }}
-    >
-      <path d="M4.652 30C1.48 25.427 0 20.439 0 15.035 0 9.596 1.48 4.538 4.652 0H8c-2.573 4.988-3.7 10.046-3.7 15.035 0 4.988 1.092 10.011 3.7 14.965H4.652Z" />
-    </svg>
   );
 }
 
 /* Dark product block, to the reference's structure: a short label row with
    the rule beneath it (no rule above — the block starts flush), a tall
    header band, then a rail with its own right border beside the rows. */
+// Language marks come from logo.dev by each language's home domain.
+const LANG_DOMAIN: Record<string, string> = {
+  go: "go.dev",
+  python: "python.org",
+  typescript: "typescriptlang.org",
+};
+
 export function ServicesBlock() {
   return (
     <div data-surface="dark" style={{ backgroundColor: T.darkBg }}>
@@ -155,15 +135,19 @@ export function ServicesBlock() {
               <li key={s.name} data-rail={s.name} data-active={i === 0 ? "" : undefined}>
                 <a
                   href={`#svc-${s.name}`}
+                  data-scroll-to
                   className="flex items-center gap-3 font-geist text-[16px]"
                   style={{ color: T.darkInk }}
                 >
-                  <span className="flex items-center font-mono text-[15px]" style={{ color: T.darkGrey }}>
+                  <span className="flex items-center gap-[3px] font-mono text-[15px]" style={{ color: T.darkGrey }}>
                     (
-                    <LangIcon
-                      lang={s.icon}
-                      className="mx-[3px] size-[15px]"
-                      color={s.icon === "python" ? "#4b8bbe" : undefined}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={logoUrl(LANG_DOMAIN[s.icon], { size: 40 }) ?? ""}
+                      alt=""
+                      width={16}
+                      height={16}
+                      className="rounded-[3px]"
                     />
                     )
                   </span>
@@ -295,8 +279,10 @@ const DOMAIN_COLORS = ["#16171d", "#3b3440", "#867e8e", "#b9b3bf", "#00b442"];
 
 export function StatsBand() {
   const total = STATS.domains.reduce((n, [, v]) => n + v, 0);
+  // No top rule: coming out of the dark block the page goes straight into
+  // this heading, and the first rule sits beneath it — as the reference does.
   return (
-    <section className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.stroke }}>
+    <section className="v2-wrapper">
       <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
         <h3 data-anim="rise" className={`${H3} max-w-[28rem]`}>
           {STATS.headline}
