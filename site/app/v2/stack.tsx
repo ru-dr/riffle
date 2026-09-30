@@ -113,7 +113,7 @@ function Box({
   const [rx] = upper[0];
   const line = {
     stroke: ghost ? T.grey : stroke,
-    strokeWidth: ghost ? 1 : 1.4,
+    strokeWidth: ghost ? 1 : glow ? 2.2 : 1.4,
     strokeDasharray: ghost ? "2 3" : undefined,
     strokeOpacity: ghost ? 0.7 : 1,
     filter: glow ? "url(#glow)" : undefined,
@@ -222,11 +222,35 @@ export function Stack() {
         aria-label="Riffle's architecture as a stack: app, explainer, scorer and intake resting on shared contracts."
       >
         <defs>
-          {LAYERS.map((l) => (
-            <pattern key={l.key} id={`tex-${l.key}`} patternUnits="objectBoundingBox" width="1" height="1">
-              <image className="v2-drift" href={l.art} x="-40" width="480" height="140" preserveAspectRatio="xMidYMid slice" />
-            </pattern>
-          ))}
+          {/* One texture per layer in user-space units, sized to that slab.
+              Bounding-box units would fail on the vertical edge lines (zero
+              width), and the texture has to paint strokes as well as sides:
+              the live slab's outline is the image itself, not a colour. The
+              pattern sits inside the slab's transformed group, so it rides
+              along when the slab lifts. */}
+          {LAYERS.map((l, i) => {
+            const y0 = TOP + i * STEP - W * TAN30 - 4;
+            return (
+              <pattern
+                key={l.key}
+                id={`tex-${l.key}`}
+                patternUnits="userSpaceOnUse"
+                x={CX - W - 4}
+                y={y0}
+                width={2 * W + 8}
+                height={2 * W * TAN30 + D + 8}
+              >
+                <image
+                  className="v2-drift"
+                  href={l.art}
+                  x="-40"
+                  width={2 * W + 88}
+                  height={2 * W * TAN30 + D + 8}
+                  preserveAspectRatio="xMidYMid slice"
+                />
+              </pattern>
+            );
+          })}
           {/* User-space region. The default sizes the filter to each
               element's bounding box, and a vertical <line> has zero width —
               so the live slab's side edges were filtered out of existence. */}
@@ -296,7 +320,7 @@ export function Stack() {
                     depth={D}
                     r={R}
                     sideFill={live ? `url(#tex-${l.key})` : "#ffffff"}
-                    stroke={live ? l.tone[1] : T.ink}
+                    stroke={live ? `url(#tex-${l.key})` : T.ink}
                     ghost={active >= 0 && !live}
                     glow={live}
                   />
