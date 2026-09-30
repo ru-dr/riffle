@@ -158,6 +158,31 @@ body:has([data-riffle-light]) {
   overflow: visible;
 }
 
+/* Hero stack sizing. Desktop: the full 1000x600 drawing. Phone: a crop to
+   the stack (x 280-720, y 20-520) — the SVG is oversized and offset so
+   exactly that region fills the container. */
+.v2-stack {
+  aspect-ratio: 1000 / 600;
+}
+.v2-stack-svg {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+@media (max-width: 39.999rem) {
+  .v2-stack {
+    aspect-ratio: 440 / 500;
+    max-width: 22rem;
+  }
+  .v2-stack-svg {
+    inset: auto;
+    width: calc(100% * 1000 / 440);
+    height: calc(100% * 600 / 500);
+    left: calc(-100% * 280 / 440);
+    top: calc(-100% * 20 / 500);
+  }
+}
+
 /* Scrollable code that should not show a scrollbar track. */
 .v2-noscrollbar {
   scrollbar-width: none;

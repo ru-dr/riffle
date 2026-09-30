@@ -201,10 +201,15 @@ export function Stack() {
   const edgeY = (i: number) => restY(i) + offset(i) + D / 2;
 
   return (
-    <div ref={root} className="relative mx-auto w-full max-w-[60rem]" style={{ aspectRatio: "1000 / 600" }}>
+    <>
+    {/* Below sm the side labels have no room, so the container crops to the
+        stack itself (x 280-720, y 20-520 of the 1000x600 drawing) and the
+        live layer's label moves underneath. CSS sizing only: the server
+        render is already correct on a phone, with no jump on hydration. */}
+    <div ref={root} className="v2-stack relative mx-auto w-full max-w-[60rem] overflow-hidden sm:overflow-visible">
       <svg
         viewBox="0 0 1000 600"
-        className="absolute inset-0 h-full w-full overflow-visible"
+        className="v2-stack-svg absolute overflow-visible"
         role="img"
         aria-label="Riffle's architecture as a stack: app, explainer, scorer and intake resting on shared contracts."
       >
@@ -252,7 +257,7 @@ export function Stack() {
 
         <g>
 
-          <g data-leads>
+          <g data-leads className="max-sm:hidden">
             {LAYERS.map((l, i) => {
               const live = i === active;
               const left = l.side === "left";
@@ -339,7 +344,7 @@ export function Stack() {
         return (
           <div
             key={l.key}
-            className="absolute"
+            className="absolute max-sm:hidden"
             onMouseEnter={() => take(i)}
             onMouseLeave={release}
             style={{
@@ -407,5 +412,30 @@ export function Stack() {
         );
       })}
     </div>
+
+    {/* Phone label: the live layer's pill and caption, centred under the
+        cropped stack. */}
+    {active >= 0 && (
+      <div className="mt-4 flex flex-col items-center gap-2 sm:hidden" aria-live="polite">
+        <span
+          className="inline-flex items-center gap-[7px] rounded-full py-[5px] pr-3 pl-2.5 font-mono text-[10px] leading-none tracking-[0.1em] uppercase"
+          style={{ backgroundColor: "#fff", outline: "1px solid rgba(22,23,29,0.24)", color: T.ink }}
+        >
+          {LAYERS[active].domain && logoUrl(LAYERS[active].domain!, { size: 32 }) ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logoUrl(LAYERS[active].domain!, { size: 32 })!} alt="" width={12} height={12} className="rounded-[2px]" />
+          ) : (
+            <svg viewBox="0 0 24 24" width={12} height={12} fill={T.ink} aria-hidden="true">
+              <path d={JSON_MARK} />
+            </svg>
+          )}
+          {LAYERS[active].key}
+        </span>
+        <span className="font-geist text-[13px]" style={{ color: T.grey }}>
+          {LAYERS[active].caption}
+        </span>
+      </div>
+    )}
+    </>
   );
 }
