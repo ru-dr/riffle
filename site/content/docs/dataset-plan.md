@@ -266,3 +266,46 @@ that window the label is *missing*, never *negative*.
 - **GH Archive after mid-2025.** [OSSInsight](https://ossinsight.io/) reports
   that pull request and issue events since mid-2025 were badly under-captured;
   any backfill from it is checked against the API first.
+- **Estimates.** About 30% of the pull request total and most commit counts
+  are estimates. The swift count is a January 2026 snapshot and has probably
+  grown by 5–8% since.
+- **CI labels lean recent.** After 1 October 2026 the CI label covers only
+  what the archive holds, so CI-label rates are not compared across
+  repositories with different archive start dates.
+
+## Sources
+
+1. [GitHub Changelog, "Actions retention will cover checks, workflow runs, and statuses" (27 Aug 2026)](https://github.blog/changelog/2026-08-27-actions-retention-will-cover-checks-workflow-runs-and-statuses/)
+2. [GitHub Docs, retention period for checks, workflow runs, statuses](https://docs.github.com/en/organizations/managing-organization-settings/configuring-the-retention-period-for-github-actions-artifacts-and-logs-in-your-organization)
+3. [GitHub Docs, GraphQL rate limits](https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api)
+4. [GitHub Docs, REST rate limits (incl. secondary)](https://docs.github.com/en/enterprise-cloud@latest/rest/using-the-rest-api/rate-limits-for-the-rest-api)
+5. [kubernetes/kubernetes repo page](https://github.com/kubernetes/kubernetes)
+6. [llvm/llvm-project repo page](https://github.com/llvm/llvm-project)
+7. [rust-lang/rust repo page](https://github.com/rust-lang/rust)
+8. [pytorch/pytorch repo page](https://github.com/pytorch/pytorch)
+9. [elastic/elasticsearch repo page](https://github.com/elastic/elasticsearch)
+10. [home-assistant/core fork commit count](https://github.com/allenporter/home-assistant-core)
+11. [rust-lang/rust PR #163089](https://github.com/rust-lang/rust/pull/163089)
+12. [Kobzol, "1160 PRs to improve Rust in 2025"](https://kobzol.github.io/rust/rustc/2026/01/05/my-rust-contributions-in-2025.html)
+13. [envoyproxy/envoy PR #47915](https://github.com/envoyproxy/envoy/pull/47915)
+14. [envoyproxy/envoy repo page](https://github.com/envoyproxy/envoy)
+15. [swiftlang/swift pulls](https://github.com/swiftlang/swift/pulls)
+16. [swiftlang/swift repo page](https://github.com/swiftlang/swift)
+17. [flutter/flutter repo page](https://github.com/flutter/flutter)
+18. [flutter/flutter pulls](https://github.com/flutter/flutter/pulls)
+19. [vuejs/core repo page](https://github.com/vuejs/core)
+20. [dotnet/roslyn repo page](https://github.com/dotnet/roslyn)
+21. [JuliaLang/julia repo page](https://github.com/JuliaLang/julia)
+22. [numpy/numpy repo page](https://github.com/numpy/numpy)
+23. [ray-project/ray repo page](https://github.com/ray-project/ray)
+24. [vllm-project/vllm repo page](https://github.com/vllm-project/vllm)
+25. [Keshavarz & Nagappan, ApacheJIT (MSR 2022)](https://arxiv.org/abs/2203.00101)
+26. [Rosa et al., Evaluating SZZ Implementations (ICSE 2021)](https://www.inf.usi.ch/faculty/bavota/papers/ICSE-2021-szz.pdf)
+27. [Evaluating SZZ Implementations: An Empirical Study on the Linux Kernel](https://arxiv.org/pdf/2308.05060)
+28. [Shimagaki et al., Why are Commits being Reverted? (ICSME 2016)](https://posl.ait.kyushu-u.ac.jp/~kamei/publications/Shimagaki_ICSME2016.pdf)
+29. [Kamei et al., Studying JIT defect prediction using cross-project models (EMSE 2016)](https://link.springer.com/article/10.1007/s10664-015-9400-x)
+30. [Exploratory study on JIT multi-language bug prediction (summarises Zeng et al. 2021, Kamei 2016)](https://arxiv.org/pdf/2407.10906)
+31. [OSSInsight homepage (events-feed under-capture notice)](https://ossinsight.io/)
+32. [LLVM GitHub User Guide](https://llvm.org/docs/GitHub.html)
+33. [Rust Compiler Development Guide, Using Git](https://rustc-dev-guide.rust-lang.org/git.html)
+34. [Phoronix, LLVM 2024 code activity](https://www.phoronix.com/news/LLVM-Code-Activity-2024)
