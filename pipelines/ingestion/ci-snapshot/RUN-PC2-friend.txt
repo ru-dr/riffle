@@ -1,0 +1,69 @@
+RIFFLE CI SNAPSHOT  -  PC 2 (friend)
+====================================
+Deadline: GitHub starts deleting CI history older than 90 days at
+8:00 PM EDT tonight (midnight UTC, 1 Oct 2026). Start as soon as you can.
+The tool only READS public data from GitHub. Nothing is changed anywhere.
+
+1) Make a token on YOUR OWN GitHub account (never use someone else's)
+   - Open https://github.com/settings/personal-access-tokens/new
+   - Name: riffle-ci-snapshot       Expiration: 7 days
+   - Repository access: Public repositories (read-only)
+   - No other permissions. Generate, and copy the github_pat_... value.
+
+2) Get the tool (needs access to the private ru-dr/riffle repo)
+   git clone https://github.com/ru-dr/riffle.git
+   cd riffle
+   git checkout pipelines/ci-snapshot
+   cd pipelines/ingestion/ci-snapshot/bin
+   (No repo access? ru-dr can send you the binary for your OS plus
+    repos.txt; keep them in the same folder.)
+   Pick your binary:
+     Linux:               ci-snapshot-linux-amd64
+     Windows:             ci-snapshot-windows-amd64.exe
+     Mac (Apple silicon): ci-snapshot-darwin-arm64
+     Mac (Intel):         ci-snapshot-darwin-amd64
+   On Mac, if it is blocked:  xattr -d com.apple.quarantine ci-snapshot-darwin-*
+                              chmod +x ci-snapshot-darwin-*
+
+--- Linux / Mac -------------------------------------------------------------
+3) export GITHUB_TOKEN=github_pat_YOUR_TOKEN_HERE
+   tmux new -s ci
+
+4) Window 1 (GraphQL quota)
+   ./ci-snapshot-linux-amd64 -mode prs -shard 2/2
+   -> when it says "all repositories finished", in the same window:
+   ./ci-snapshot-linux-amd64 -mode commits -since 2026-07-02T00:00:00Z -until 2026-10-01T00:00:00Z -out ~/proyecto/riffle-data/ci-snapshot/pass2
+
+5) Window 2 (REST quota): Ctrl+b then c, then
+   ./ci-snapshot-linux-amd64 -mode runs
+
+   (On Mac, use ./ci-snapshot-darwin-arm64 or -amd64 instead.)
+   Ctrl+b then d to detach, tmux attach -t ci to come back.
+
+--- Windows (PowerShell, two separate windows) ------------------------------
+3) In EACH PowerShell window, first:
+   cd path\to\riffle\pipelines\ingestion\ci-snapshot\bin
+   $env:GITHUB_TOKEN = "github_pat_YOUR_TOKEN_HERE"
+
+4) Window 1:
+   .\ci-snapshot-windows-amd64.exe -mode prs -shard 2/2
+   -> when finished, in the same window:
+   .\ci-snapshot-windows-amd64.exe -mode commits -since 2026-07-02T00:00:00Z -until 2026-10-01T00:00:00Z -out $HOME\proyecto\riffle-data\ci-snapshot\pass2
+
+5) Window 2:
+   .\ci-snapshot-windows-amd64.exe -mode runs
+   Keep both windows open; closing one stops that run.
+
+-----------------------------------------------------------------------------
+Expected: prs half ~7:15 PM, last-90-days commits ~7:35 PM, runs most
+repos by ~8 PM and the biggest ones later (let it run, even after 8 PM).
+
+If anything stops: run the same command again. It resumes and skips
+finished repos. PAUSED on screen = waiting for the hourly quota; leave it.
+
+Output folder: ~/proyecto/riffle-data/ci-snapshot/  (prs/, pass2/, runs/)
+              (Windows: C:\Users\<you>\proyecto\riffle-data\ci-snapshot\)
+
+When everything has finished
+   - Zip the whole ci-snapshot folder and send it to ru-dr.
+   - Delete your token at https://github.com/settings/tokens
