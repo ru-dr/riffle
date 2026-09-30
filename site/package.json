@@ -9,7 +9,6 @@
     "docs": "bun scripts/build-docs.mjs"
   },
   "dependencies": {
-    "@google/genai": "^2.24.0",
     "beautiful-mermaid": "^1.1.3",
     "geist": "^1.7.2",
     "github-slugger": "^2.0.0",

@@ -1,18 +1,27 @@
-import { GoogleGenAI } from "@google/genai";
-import { prompt, retrieve } from "@/components/docs/ask";
+import { prompt, retrieve, type Source } from "@/components/docs/ask";
 
-// "Ask AI" for the docs. POST { question } -> a text stream: the first line
-// is the JSON list of sources, the rest is the answer as it is generated.
-// The key stays on the server; the model sees only retrieved doc excerpts.
+// "Ask AI" for the docs, on Cloudflare Workers AI. POST { question } -> a
+// text stream: the first line is the JSON list of sources, the rest is the
+// answer as it is generated. The token stays on the server; the model sees
+// only retrieved doc excerpts.
+//
+// Cost: Workers AI includes 10,000 neurons a day at no charge. On the
+// Workers Free plan, requests past that are refused rather than billed, and
+// the reader is told to come back tomorrow.
 
-// Gemma thinks before it answers, and first text can take 10s or more.
 export const maxDuration = 60;
 
-const MODEL = process.env.DOCS_ASK_MODEL ?? "gemma-4-26b-a4b-it";
+const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
+const TOKEN = process.env.CLOUDFLARE_AI_TOKEN;
+const MODEL = process.env.DOCS_ASK_MODEL ?? "@cf/zai-org/glm-5.3-flash";
+// GLM-5.3 Flash always reasons and defaults to "max"; reasoning tokens are
+// billed as output and delay the first word, so docs answers ask for "low".
+// Set DOCS_ASK_REASONING="" for models that do not take the parameter.
+const REASONING = process.env.DOCS_ASK_REASONING ?? "low";
 const MAX_QUESTION = 400;
 
 // Best-effort per-IP limit. It is per server instance, so it caps a burst
-// rather than guaranteeing a quota; the provider's own quota is the backstop.
+// rather than guaranteeing a quota; the daily allowance is the backstop.
 const WINDOW_MS = 60_000;
 const PER_WINDOW = 8;
 const seen = new Map<string, number[]>();
@@ -25,11 +34,21 @@ function limited(ip: string) {
   return recent.length > PER_WINDOW;
 }
 
+// Repeated questions are answered from memory for an hour, so the free
+// allowance goes to new questions.
+const CACHE_MS = 60 * 60_000;
+const cache = new Map<string, { at: number; sources: Source[]; text: string }>();
+const keyOf = (q: string) => q.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
 const fail = (status: number, message: string) => Response.json({ error: message }, { status });
+const enc = new TextEncoder();
+
+function streamOf(sources: Source[], text: string) {
+  return new Response(JSON.stringify(sources) + "\n" + text, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+}
 
 export async function POST(req: Request) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) return fail(503, "Ask AI is not configured on this deployment.");
+  if (!ACCOUNT || !TOKEN) return fail(503, "Ask AI is not configured on this deployment.");
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "local";
   if (limited(ip)) return fail(429, "Too many questions in a minute. Try again shortly.");
@@ -41,47 +60,95 @@ export async function POST(req: Request) {
   if (!question) return fail(400, "Ask a question.");
   if (question.length > MAX_QUESTION) return fail(400, `Keep questions under ${MAX_QUESTION} characters.`);
 
-  const { sources, context } = await retrieve(question);
-  const ai = new GoogleGenAI({ apiKey: key });
+  const key = keyOf(question);
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_MS) return streamOf(hit.sources, hit.text);
 
-  type Chunk = { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[] };
-  let stream: AsyncGenerator<Chunk>;
+  const { sources, context } = await retrieve(question);
+
+  let res: Response;
   try {
-    stream = await ai.models.generateContentStream({
-      model: MODEL,
-      contents: [{ role: "user", parts: [{ text: prompt(question, context) }] }],
-      // No thinkingConfig: Gemma rejects both thinking level and budget, and
-      // always thinks. Its thoughts count against maxOutputTokens, so the
-      // limit leaves room for thinking and a short answer.
-      config: {
-        maxOutputTokens: 4096,
+    res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/v1/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [{ role: "user", content: prompt(question, context) }],
+        stream: true,
+        // Room for the model's reasoning plus a short answer.
+        max_completion_tokens: 2048,
         temperature: 0.2,
-        abortSignal: req.signal,
-      },
+        ...(REASONING ? { reasoning_effort: REASONING } : {}),
+      }),
+      signal: req.signal,
     });
   } catch (err) {
+    if (req.signal.aborted) return new Response(null, { status: 499 });
     console.error("docs ask:", err);
     return fail(502, "The model did not respond. Try again, or use search.");
   }
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "");
+    console.error("docs ask:", res.status, detail.slice(0, 500));
+    // Workers AI answers 429 (or a neuron-limit error) once the day's free
+    // allowance is used up.
+    if (res.status === 429 || /neuron|limit|quota/i.test(detail)) return fail(429, "Ask AI has used today's free allowance. Try again tomorrow, or use search.");
+    return fail(502, "The model did not respond. Try again, or use search.");
+  }
 
-  const enc = new TextEncoder();
+  const upstream = res.body.getReader();
+  const dec = new TextDecoder();
   const body = new ReadableStream({
     async start(controller) {
       controller.enqueue(enc.encode(JSON.stringify(sources) + "\n"));
-      let wrote = false;
-      let finish = "";
+      let buf = "";
+      let text = "";
+      // Some models open with a <think> block; readers get the answer only.
+      let thinking: boolean | null = null;
+      const emit = (piece: string) => {
+        if (thinking === null) {
+          const lead = (text + piece).trimStart();
+          if (!lead) return;
+          if ("<think>".startsWith(lead.slice(0, 7)) && lead.length < 7) {
+            text += piece;
+            return;
+          }
+          thinking = lead.startsWith("<think>");
+          piece = text + piece;
+          text = "";
+        }
+        if (thinking) {
+          const end = piece.indexOf("</think>");
+          if (end < 0) return;
+          thinking = false;
+          piece = piece.slice(end + 8).replace(/^\s+/, "");
+        }
+        if (!piece) return;
+        text += piece;
+        controller.enqueue(enc.encode(piece));
+      };
       try {
-        for await (const chunk of stream) {
-          const cand = chunk.candidates?.[0];
-          finish = cand?.finishReason ?? finish;
-          for (const part of cand?.content?.parts ?? []) {
-            // Thoughts stay on the server; the reader gets the answer only.
-            if (part.thought || !part.text) continue;
-            controller.enqueue(enc.encode(part.text));
-            wrote = true;
+        for (;;) {
+          const { done, value } = await upstream.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (data === "[DONE]") continue;
+            try {
+              // OpenAI shape; reasoning_content, where a model sends it, is skipped.
+              const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
+              if (typeof delta === "string") emit(delta);
+            } catch {}
           }
         }
-        if (!wrote) controller.enqueue(enc.encode(finish === "MAX_TOKENS" ? "_The model ran out of room before answering. Try a narrower question._" : "_No answer came back. Try again, or use search._"));
+        if (text.trim()) cache.set(key, { at: Date.now(), sources, text });
+        else controller.enqueue(enc.encode("_No answer came back. Try again, or use search._"));
+        if (cache.size > 300) cache.delete(cache.keys().next().value!);
       } catch (err) {
         if (!req.signal.aborted) {
           console.error("docs ask stream:", err);
