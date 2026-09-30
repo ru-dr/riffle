@@ -171,6 +171,22 @@ body:has([data-riffle-light]) {
 .v2-stack {
   aspect-ratio: 1000 / 600;
 }
+/* Fit the hero to one screen on landscape tablets and laptops. The stack's
+   top sits ~27rem down (nav + heading block); its width is derived from the
+   height left below that, at the drawing's 5:3, capped at 60rem and floored
+   at 30rem so it never becomes a thumbnail. Width-only sizing ran the stack
+   10-260px past the fold on every landscape screen from 1024x768 up. */
+@media (min-width: 40rem) {
+  .v2-stack {
+    max-width: max(30rem, min(60rem, calc((100svh - 29rem) * 5 / 3)));
+  }
+}
+/* Short screens (<= 900px tall) give the hero back half its top padding. */
+@media (min-width: 48rem) and (max-height: 56.25rem) {
+  .v2-hero {
+    padding-top: 2.5rem;
+  }
+}
 .v2-stack-svg {
   inset: 0;
   width: 100%;

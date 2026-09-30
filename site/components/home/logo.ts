@@ -9,3 +9,16 @@ export function logoUrl(domain: string, { size = 64, greyscale = false } = {}): 
   if (greyscale) q.set("greyscale", "true");
   return `https://img.logo.dev/${domain}?${q}`;
 }
+
+// Fade-in for remote logos, safe for cached images. `onLoad` alone missed
+// every image that finished before React attached the handler - on any
+// repeat visit that is most of them - leaving them stuck at opacity 0. The
+// ref callback catches those; onLoad catches the rest.
+const markLoaded = (img: HTMLImageElement | null) => {
+  if (img?.complete && img.naturalWidth > 0) img.classList.add("is-loaded");
+};
+export const fadeIn = {
+  ref: markLoaded,
+  onLoad: (e: { currentTarget: HTMLImageElement }) => e.currentTarget.classList.add("is-loaded"),
+  className: "v2-fade",
+} as const;

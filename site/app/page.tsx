@@ -87,7 +87,7 @@ export default function Page() {
       {/* Hero: chip, headline, one line of lede, then the diagram. Their hero
           has no buttons, so neither does this one — the CTA lives in the
           dark blocks and the footer. */}
-      <div className="v2-wrapper flex flex-col items-center gap-6 pt-6 pb-10 md:pt-20">
+      <div className="v2-wrapper v2-hero flex flex-col items-center gap-6 pt-6 pb-10 md:pt-20">
         <div className="flex w-full flex-col items-center gap-4 px-5 sm:w-[42rem] sm:px-0">
           <div
             data-anim="chip"
