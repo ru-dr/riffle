@@ -98,10 +98,13 @@ tmux new -s ci
 **After 8:00 PM, keep every window running.** GitHub's cleanup may not be
 instant, and anything captured is kept.
 
-Without the repository: use the prebuilt binary for the machine
-(`ci-snapshot-linux-amd64`, `ci-snapshot-windows-amd64.exe`,
-`ci-snapshot-darwin-arm64` or `-darwin-amd64`) with `repos.txt` in the same
-folder, e.g. `./ci-snapshot-linux-amd64 -mode prs`. On Windows, use two
+No Go on the machine: use the prebuilt binary in [`bin/`](bin) for the
+machine (`ci-snapshot-linux-amd64`, `ci-snapshot-windows-amd64.exe`,
+`ci-snapshot-darwin-arm64` for Apple silicon, `ci-snapshot-darwin-amd64` for
+Intel Macs), run from `bin/` so it finds `repos.txt`, e.g.
+`cd bin && ./ci-snapshot-linux-amd64 -mode prs -shard 2/2`. Checksums are in
+`bin/SHA256SUMS`. On macOS, if Gatekeeper blocks it:
+`xattr -d com.apple.quarantine ci-snapshot-darwin-*`. On Windows, use two
 terminal windows instead of tmux:
 `ci-snapshot-windows-amd64.exe -mode prs` and
 `ci-snapshot-windows-amd64.exe -mode runs`.
