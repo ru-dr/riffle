@@ -306,7 +306,11 @@ export function StatsBand() {
           </div>
         </div>
 
-        {/* By domain, to scale — the measured subtotals, not an illustration. */}
+        {/* By domain, to scale — the measured subtotals as one stacked bar.
+            The legend runs in segment order, and each entry (swatch, name,
+            share) is one unbreakable unit that wraps whole: in a fixed grid,
+            long names split across lines and their percentages were pushed
+            to the far edge of the cell, away from the name they belong to. */}
         <div
           data-anim="rise"
           className="flex flex-col justify-between gap-8 border-t p-6 md:col-span-6 md:border-t-0 md:p-10"
@@ -319,22 +323,24 @@ export function StatsBand() {
             <StatusTag status="measured" />
           </div>
           <div>
-            <div className="flex h-24 w-full gap-[3px]">
+            <div className="flex h-24 w-full gap-[3px]" role="img" aria-label="Pull requests by domain">
               {STATS.domains.map(([name, v], i) => (
                 <div
                   key={name}
-                  className="h-full rounded-[3px]"
+                  className="h-full rounded-[3px] transition-opacity duration-150 hover:opacity-85"
                   style={{ width: `${(v / total) * 100}%`, backgroundColor: DOMAIN_COLORS[i] }}
-                  title={`${name}: ${v.toLocaleString("en-US")}`}
+                  title={`${name}: ${v.toLocaleString("en-US")} PRs`}
                 />
               ))}
             </div>
-            <ul className="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3">
+            <ul className="mt-5 flex flex-wrap gap-x-7 gap-y-2.5">
               {STATS.domains.map(([name, v], i) => (
-                <li key={name} className="flex items-center gap-2 font-mono text-[11.5px]">
+                <li key={name} className="flex items-center gap-2 font-mono text-[12px] whitespace-nowrap">
                   <span className="size-2 shrink-0 rounded-[2px]" style={{ backgroundColor: DOMAIN_COLORS[i] }} />
                   <span style={{ color: T.nickel }}>{name}</span>
-                  <span style={{ color: T.grey }}>{Math.round((v / total) * 100)}%</span>
+                  <span className="tabular-nums" style={{ color: T.grey }}>
+                    {Math.round((v / total) * 100)}%
+                  </span>
                 </li>
               ))}
             </ul>

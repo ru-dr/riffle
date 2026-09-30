@@ -12,7 +12,6 @@ import { T } from "./tokens";
 // a live layer underneath shows at full strength straight through them.
 //
 // Micro-motion, all of it cheap (transforms, opacity, dash offsets):
-//   - the stack floats on a slow sine
 //   - dotted leader lines flow toward the stack
 //   - the live leader draws itself in from the pill, and a spark runs it
 //   - the live slab's texture drifts; its outline carries a soft glow
@@ -150,19 +149,12 @@ export function Stack() {
   const [ready, setReady] = useState(false);
   const hovering = useRef(false);
 
-  // On mount: first layer live, labels in, idle float.
+  // On mount: first layer live, labels in. The stack itself stays still.
   useEffect(() => {
     const el = root.current;
     if (!el) return;
     setReady(true);
     setActive(0);
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const ctx = gsap.context(() => {
-      // On the whole container, not the SVG, so the HTML pills move with
-      // their lines instead of drifting off them.
-      gsap.to(el, { y: -5, duration: 3.2, ease: "sine.inOut", yoyo: true, repeat: -1 });
-    }, el);
-    return () => ctx.revert();
   }, []);
 
   // The walk. Hovering a pill takes over; leaving hands back to the timer.
@@ -349,29 +341,26 @@ export function Stack() {
             style={{
               left: left ? "19.6%" : "80.4%",
               top: `${(edgeY(i) / 600) * 100}%`,
-              transform: `${left ? "translate(-100%, -50%)" : "translate(0, -50%)"} scale(${live ? 1.06 : 1})`,
+              transform: left ? "translate(-100%, -50%)" : "translate(0, -50%)",
               transformOrigin: left ? "right center" : "left center",
               opacity: ready ? 1 : 0,
               transition:
                 "top 700ms cubic-bezier(.2,.8,.2,1), opacity 500ms ease, transform 450ms cubic-bezier(.34,1.56,.64,1)",
             }}
           >
+            {/* As minimal as a label gets: a mark and a word, no outline and no
+                fill. Live is carried by ink colour and the drawn leader line. */}
             <span
-              className="inline-flex cursor-default items-center gap-1.5 rounded-full px-2.5 py-[3px] font-mono text-[10.5px] leading-none tracking-[0.1em] whitespace-nowrap uppercase"
-              style={{
-                outline: `1px solid ${live ? "rgba(22,23,29,0.2)" : T.stroke}`,
-                backgroundColor: "rgba(255,255,255,0.75)",
-                color: live ? T.ink : T.grey,
-                transition: "color 400ms ease, outline-color 400ms ease",
-              }}
+              className="inline-flex cursor-default items-center gap-[5px] font-mono text-[9.5px] leading-none tracking-[0.12em] whitespace-nowrap uppercase"
+              style={{ color: live ? T.ink : T.grey, transition: "color 400ms ease" }}
             >
               {src ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={src}
                   alt=""
-                  width={11}
-                  height={11}
+                  width={10}
+                  height={10}
                   className="rounded-[2px]"
                   style={{ filter: live ? "none" : "grayscale(1)", opacity: live ? 1 : 0.6, transition: "filter 400ms ease, opacity 400ms ease" }}
                 />
