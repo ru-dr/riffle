@@ -288,8 +288,11 @@ export function StatsBand() {
           {STATS.headline}
         </h3>
       </div>
-      <div className="grid border-t md:grid-cols-10 md:divide-x" style={{ borderColor: T.stroke }}>
-        <div data-anim="rise" className="flex flex-col justify-between gap-16 p-6 md:col-span-4 md:p-10">
+      {/* Thirds, not 4/6: the figure takes one third and the chart two, so
+          this row's divider lands on the first divider of the three cells
+          below and the verticals run unbroken through the band. */}
+      <div className="grid border-t md:grid-cols-3 md:divide-x" style={{ borderColor: T.stroke }}>
+        <div data-anim="rise" className="flex flex-col justify-between gap-16 p-6 md:col-span-1 md:p-10">
           <div className="flex items-center gap-3">
             <p className="font-geist text-[15px]" style={{ color: T.nickel }}>
               Pull requests in the corpus
@@ -313,7 +316,7 @@ export function StatsBand() {
             to the far edge of the cell, away from the name they belong to. */}
         <div
           data-anim="rise"
-          className="flex flex-col justify-between gap-8 border-t p-6 md:col-span-6 md:border-t-0 md:p-10"
+          className="flex flex-col justify-between gap-8 border-t p-6 md:col-span-2 md:border-t-0 md:p-10"
           style={{ borderColor: T.stroke }}
         >
           <div className="flex items-center gap-3">
@@ -347,7 +350,7 @@ export function StatsBand() {
           </div>
         </div>
       </div>
-      <div className="grid border-t sm:grid-cols-3 sm:divide-x" style={{ borderColor: T.stroke }}>
+      <div className="grid border-t md:grid-cols-3 md:divide-x" style={{ borderColor: T.stroke }}>
         {STATS.cells.map(([value, label, status]) => (
           <div key={label} data-anim="rise" className="flex flex-col gap-3 p-6 md:p-10">
             <div className="flex items-center gap-3">
