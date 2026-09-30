@@ -91,7 +91,7 @@ export default function Page() {
         <div className="flex w-full flex-col items-center gap-4 px-5 sm:w-[42rem] sm:px-0">
           <div
             data-anim="chip"
-            className="v2-chip mb-3 flex items-center gap-1.5 rounded px-3 py-1 font-mono text-[14px] font-medium tracking-[-0.03em]"
+            className="v2-chip v2-hero-chip mb-3 flex items-center gap-1.5 rounded px-3 py-1 font-mono text-[14px] font-medium tracking-[-0.03em]"
           >
             <span className="inline-flex rounded-sm p-0.5" style={{ backgroundColor: T.accentSoft }}>
               <span
@@ -109,14 +109,16 @@ export default function Page() {
               the entrance can move it without breaking the clip. */}
           <h1
             data-anim="title"
-            className="v2-shine pb-1 text-center font-geist text-[2.25rem] leading-[2.6rem] font-medium tracking-[-0.05em] text-balance md:text-[3rem] md:leading-[3.4rem] lg:text-[3.75rem] lg:leading-[4.2rem]"
+            className="v2-shine v2-hero-title pb-1 text-center font-geist text-[2.25rem] leading-[2.6rem] font-medium tracking-[-0.05em] text-balance"
           >
-            Every repo breaks differently
+            Every repo
+            <br />
+            breaks differently
           </h1>
 
           <p
             data-anim="lede"
-            className="self-stretch text-center font-geist text-[16px] leading-[1.6] text-balance md:text-[17px]"
+            className="v2-hero-lede self-stretch text-center font-geist text-[16px] leading-[1.6] text-balance"
             style={{ color: T.nickel }}
           >
             Riffle ranks your pull request queue by risk, trained on your

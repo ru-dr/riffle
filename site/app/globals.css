@@ -89,6 +89,13 @@ body:has([data-riffle-lock]) {
     max-width: 90rem;
   }
 }
+/* Tablets and small laptops (48-80rem): a 1rem gutter is a sliver at this
+   size. ~9% narrower gives ~4.5% of air per side (46px at 1024). */
+@media (min-width: 48rem) and (max-width: 79.999rem) {
+  .v2-wrapper {
+    max-width: 91vw;
+  }
+}
 
 
 /* Ticks sit on the section, not the wrapper, so each rule gets its own pair. */
@@ -171,22 +178,59 @@ body:has([data-riffle-light]) {
 .v2-stack {
   aspect-ratio: 1000 / 600;
 }
-/* Fit the hero to one screen on landscape tablets and laptops. The stack's
-   top sits ~27rem down (nav + heading block); its width is derived from the
-   height left below that, at the drawing's 5:3, capped at 60rem and floored
-   at 30rem so it never becomes a thumbnail. Width-only sizing ran the stack
-   10-260px past the fold on every landscape screen from 1024x768 up. */
+/* The hero scales as one unit on short screens. --hs steps down with the
+   viewport height and drives the headline, lede and chip; the stack takes
+   the height that frees up. (Shrinking only the stack left full-size type
+   over a thumbnail.) */
+.v2-hero {
+  --hs: 1;
+}
+@media (min-width: 48rem) {
+  .v2-hero-chip { font-size: calc(14px * var(--hs)); }
+  .v2-hero-title { font-size: calc(3rem * var(--hs)); line-height: calc(3.4rem * var(--hs)); }
+  .v2-hero-lede { font-size: calc(17px * var(--hs)); }
+}
+@media (min-width: 64rem) {
+  .v2-hero-title { font-size: calc(3.75rem * var(--hs)); line-height: calc(4.2rem * var(--hs)); }
+}
+/* --hero-above is the measured distance from the top of the page to the
+   stack at each step, plus 24px of air below it, so the stack fills exactly
+   the height the scaled heading leaves. */
+.v2-hero { --hero-above: 30rem; }
+@media (min-width: 48rem) and (max-height: 60rem) { .v2-hero { --hs: 0.94; --hero-above: 29rem; } }
+@media (min-width: 48rem) and (max-height: 56.25rem) { .v2-hero { --hs: 0.88; --hero-above: 24.75rem; padding-top: 2.5rem; } }
+@media (min-width: 48rem) and (max-height: 52rem) { .v2-hero { --hs: 0.82; --hero-above: 24rem; } }
+@media (min-width: 48rem) and (max-height: 49rem) { .v2-hero { --hs: 0.76; --hero-above: 23.25rem; } }
+
+/* Stack width from the height left under the (now scaled) heading block,
+   at the drawing's 5:3, capped at 60rem, floored at 34rem. */
 @media (min-width: 40rem) {
   .v2-stack {
-    max-width: max(30rem, min(60rem, calc((100svh - 29rem) * 5 / 3)));
+    max-width: max(34rem, min(60rem, calc((100svh - var(--hero-above)) * 5 / 3)));
   }
 }
-/* Short screens (<= 900px tall) give the hero back half its top padding. */
-@media (min-width: 48rem) and (max-height: 56.25rem) {
-  .v2-hero {
-    padding-top: 2.5rem;
-  }
+
+/* Pills scale with the drawing. The stack is an inline-size container and
+   every pill length is in em off a font-size tied to its width, so a
+   smaller stack gets proportionally smaller pills - and each pill still
+   hugs its own label. */
+.v2-stack {
+  container-type: inline-size;
 }
+.v2-pill {
+  font-size: clamp(8px, 1.1cqi, 10.5px);
+  padding: 0.5em 1.15em 0.5em 0.95em;
+  gap: 0.7em;
+}
+.v2-pill-mark {
+  width: 1.15em;
+  height: 1.15em;
+}
+.v2-pill-caption {
+  font-size: clamp(10px, 1.36cqi, 13px);
+  margin-top: 0.6em;
+}
+
 .v2-stack-svg {
   inset: 0;
   width: 100%;
