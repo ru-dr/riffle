@@ -1,6 +1,7 @@
 import type { Viewport } from "next";
 import { SiteHeader } from "@/components/home/site-header";
 import { MobileSections, Sidebar } from "@/components/docs/sidebar";
+import { DocsSearch } from "@/components/docs/search";
 import { ThemeSwitch } from "@/components/docs/theme-switch";
 
 // The docs frame: the site header, then one bordered wrapper split by
@@ -19,7 +20,12 @@ const DOCS_NAV = [
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
   return (
     <div data-riffle-light data-docs className="min-h-dvh" style={{ backgroundColor: "var(--rf-bg)", color: "var(--rf-ink)" }}>
-      <SiteHeader links={DOCS_NAV} section="Docs" actions={<ThemeSwitch />} />
+      <SiteHeader links={DOCS_NAV} section="Docs" actions={
+          <>
+            <DocsSearch />
+            <ThemeSwitch />
+          </>
+        } />
       <div
         className="rf-wrapper rf-ticks grid border-t lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[16rem_minmax(0,1fr)_15rem]"
         style={{ borderColor: "var(--rf-stroke)" }}
