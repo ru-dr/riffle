@@ -64,9 +64,11 @@ tmux new -s ci
 
 # window 1 (GraphQL): combined CI result of every default-branch commit
 ./ci-snapshot -mode commits
+# ...when it finishes (~7:10 PM), in the same window: half of the PRs
+./ci-snapshot -mode prs -shard 1/2
 
 # Ctrl+b then c  ->  window 2 (REST): per-check results for 50 failed
-# commits per repository, taken from window 1's output as it finishes
+# PR merge commits per repository, from window 1's output as it finishes
 ./ci-snapshot -mode checks
 
 # Ctrl+b then d to detach; `tmux attach -t ci` to come back
@@ -83,13 +85,18 @@ cd riffle/pipelines/ingestion/ci-snapshot
 go build -o ci-snapshot .
 tmux new -s ci
 
-# window 1 (GraphQL): every PR closed in the window, with its final CI result
-./ci-snapshot -mode prs
+# window 1 (GraphQL): the other half of the PRs, with their final CI result
+./ci-snapshot -mode prs -shard 2/2
+# ...when it finishes, in the same window: the most recent 90 days of commits
+./ci-snapshot -mode commits -since 2026-07-02T00:00:00Z -until 2026-10-01T00:00:00Z -out ~/proyecto/riffle-data/ci-snapshot/pass2
 
 # Ctrl+b then c  ->  window 2 (REST): Actions runs on default-branch pushes,
 # all 100 repositories, smallest first
 ./ci-snapshot -mode runs
 ```
+
+**After 8:00 PM, keep every window running.** GitHub's cleanup may not be
+instant, and anything captured is kept.
 
 Without the repository: use the prebuilt binary for the machine
 (`ci-snapshot-linux-amd64`, `ci-snapshot-windows-amd64.exe`,
@@ -103,10 +110,14 @@ terminal windows instead of tmux:
 
 | Machine | Window | Command | API | Output |
 | --- | --- | --- | --- | --- |
-| PC 1 | 1 | `./ci-snapshot -mode commits` | GraphQL | `ci-snapshot/pass1/` |
-| PC 1 | 2 | `./ci-snapshot -mode checks` | REST | `ci-snapshot/checks/` |
-| PC 2 | 1 | `./ci-snapshot -mode prs` | GraphQL | `ci-snapshot/prs/` |
-| PC 2 | 2 | `./ci-snapshot -mode runs` | REST | `ci-snapshot/runs/` |
+| PC 1 | 1 | `./ci-snapshot -mode commits`, then `-mode prs -shard 1/2` | GraphQL | `pass1/`, then `prs/` |
+| PC 1 | 2 | `./ci-snapshot -mode checks` | REST | `checks/` |
+| PC 2 | 1 | `./ci-snapshot -mode prs -shard 2/2`, then `-mode commits` for the last 90 days | GraphQL | `prs/`, then `pass2/` |
+| PC 2 | 2 | `./ci-snapshot -mode runs` | REST | `runs/` |
+
+If quota is left over (tonight or tomorrow), a bigger per-check sample goes
+in its own folder, since finished repositories are skipped:
+`./ci-snapshot -mode checks -sample 200 -out ~/proyecto/riffle-data/ci-snapshot/checks-more`
 
 Output lives under `~/proyecto/riffle-data/ci-snapshot/` (on PC 2 too, unless
 `-out` is given).
@@ -120,7 +131,7 @@ Measured on 30 September 2026. Both machines in parallel, started around
 | --- | --- | --- | --- | --- |
 | `commits` | PC 1 | ~500,000 commits, ~5,000 GraphQL points | 60–80 min | ~7:00–7:20 PM |
 | `checks` | PC 1 | ~5,000 commits × 2 requests = ~10,000 REST | ~2 h (follows `commits`) | ~8:00–8:15 PM |
-| `prs` | PC 2 | ~300,000–450,000 PRs walked, ~4,000–9,000 points | 1–2 h | ~7:00–8:00 PM |
+| `prs` | PC 2 half, then PC 1 half | ~300,000–450,000 PRs walked, ~4,000–9,000 points | ~1 h per half | ~7:00 PM (PC 2), ~8:00 PM (PC 1) |
 | `runs` | PC 2 | tens of runs a day for most repositories; ~2,000 a day for pytorch | small and medium repositories ~1.5 h; giants after 8 PM | partial by 8 PM |
 
 The progress screen shows a live ETA per run after a few minutes; trust that
