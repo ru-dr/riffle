@@ -21,6 +21,14 @@ type Ask = { question: string; sources: AskSource[]; text: string; status: "load
 
 type Hit = SearchRecord & { terms: string[] };
 
+// Shown before anyone types, so Ask AI is visible without having to guess
+// it exists. Each is answerable from the docs as they stand.
+const EXAMPLES = [
+  "How do I make src/auth always go to senior review?",
+  "What happens when the explainer is down?",
+  "Does Riffle store my code?",
+];
+
 const SUGGEST: { href: string; label: string }[] = [
   { href: "/docs/getting-started/introduction", label: "Introduction" },
   { href: "/docs/getting-started/how-it-works", label: "How it works" },
@@ -92,6 +100,8 @@ export function DocsSearch() {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const [mac, setMac] = useState(true);
+  // Opened from "Ask AI": the input invites a question instead of a search.
+  const [asking, setAsking] = useState(false);
   const [ask, setAsk] = useState<Ask | null>(null);
   const abort = useRef<AbortController | null>(null);
 
@@ -139,9 +149,10 @@ export function DocsSearch() {
     }
   }, []);
 
-  const open = useCallback(() => {
+  const open = useCallback((mode: "search" | "ask" = "search") => {
     const d = dialog.current;
     if (!d || d.open) return;
+    setAsking(mode === "ask");
     d.showModal();
     input.current?.select();
     loadIndex().then(setIndex, () => setFailed(true));
@@ -159,7 +170,7 @@ export function DocsSearch() {
       const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName));
       if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing)) {
         e.preventDefault();
-        open();
+        open("search");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -187,7 +198,7 @@ export function DocsSearch() {
       }
       return;
     }
-    const n = query ? hits.length + 1 : SUGGEST.length;
+    const n = query ? hits.length + 1 : EXAMPLES.length + SUGGEST.length;
     if (!n) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -197,10 +208,15 @@ export function DocsSearch() {
       setSel((s) => (s - 1 + n) % n);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (!query) go(SUGGEST[sel].href);
+      if (!query) (sel < EXAMPLES.length ? askExample(EXAMPLES[sel]) : go(SUGGEST[sel - EXAMPLES.length].href));
       else if (sel === 0) startAsk(query);
       else go(hits[sel - 1].href);
     }
+  };
+
+  const askExample = (question: string) => {
+    setQ(question);
+    startAsk(question);
   };
 
   const row = (i: number) =>
@@ -210,7 +226,20 @@ export function DocsSearch() {
     <>
       <button
         type="button"
-        onClick={open}
+        // Hidden on phones, where the header has no room; the dialog opens
+        // with Ask AI's examples first, so it stays one tap away.
+        onClick={() => open("ask")}
+        aria-label="Ask AI about the docs"
+        title="Ask AI about the docs"
+        className="hidden h-8 shrink-0 items-center gap-1.5 rounded-md border px-2 whitespace-nowrap transition-colors hover:border-[var(--rf-grey)] sm:flex xl:px-2.5"
+        style={{ borderColor: "var(--rf-stroke)", color: "var(--rf-ink)", backgroundColor: "var(--rf-surface)" }}
+      >
+        <Spark />
+        <span className="hidden font-geist text-[13px] leading-none xl:inline">Ask AI</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => open("search")}
         aria-label="Search docs"
         aria-keyshortcuts="Meta+K Control+K /"
         className="flex h-8 shrink-0 items-center gap-2 rounded-md border px-2 whitespace-nowrap transition-colors hover:border-[var(--rf-grey)] xl:w-52 xl:px-2.5"
@@ -259,7 +288,7 @@ export function DocsSearch() {
               if (ask && ask.status !== "loading" && ask.status !== "streaming") reset();
             }}
             onKeyDown={onInputKey}
-            placeholder="Search, or ask a question"
+            placeholder={asking ? "Ask a question about Riffle" : "Search, or ask a question"}
             aria-label="Search the docs"
             aria-controls="docs-search-results"
             autoComplete="off"
@@ -272,21 +301,35 @@ export function DocsSearch() {
         </div>
 
         <div className="max-h-[min(28rem,60vh)] overflow-y-auto p-2">
-          {!q.trim() ? (
-            <>
-              <p className="px-3 pt-2 pb-1 font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--rf-grey)" }}>
+          {ask ? (
+            <AskView ask={ask} onNavigate={close} onBack={reset} />
+          ) : !query ? (
+            <ul ref={list} id="docs-search-results">
+              <li className="flex items-center gap-2 px-3 pt-2 pb-1 font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--rf-grey)" }}>
+                <Spark />
+                Ask AI
+              </li>
+              {EXAMPLES.map((e, i) => (
+                <li key={e}>
+                  <button type="button" data-i={i} onMouseMove={() => setSel(i)} onClick={() => askExample(e)} className={`${row(i)} !flex-row items-center gap-3`}>
+                    <span className="min-w-0 flex-1 truncate font-geist text-[14.5px]">{e}</span>
+                    <span className="font-mono text-[10.5px]" style={{ color: "var(--rf-grey)" }}>
+                      Ask
+                    </span>
+                  </button>
+                </li>
+              ))}
+              <li className="mt-2 px-3 pt-2 pb-1 font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--rf-grey)" }}>
                 Start here
-              </p>
-              <ul ref={list} id="docs-search-results">
-                {SUGGEST.map((s, i) => (
-                  <li key={s.href}>
-                    <button type="button" data-i={i} onMouseMove={() => setSel(i)} onClick={() => go(s.href)} className={row(i)}>
-                      <span className="font-geist text-[14.5px]">{s.label}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
+              </li>
+              {SUGGEST.map((s, i) => (
+                <li key={s.href}>
+                  <button type="button" data-i={EXAMPLES.length + i} onMouseMove={() => setSel(EXAMPLES.length + i)} onClick={() => go(s.href)} className={row(EXAMPLES.length + i)}>
+                    <span className="font-geist text-[14.5px]">{s.label}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           ) : ask ? (
             <AskView ask={ask} onNavigate={close} onBack={reset} />
           ) : failed ? (

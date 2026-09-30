@@ -13,11 +13,12 @@ export const maxDuration = 60;
 
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const TOKEN = process.env.CLOUDFLARE_AI_TOKEN;
-const MODEL = process.env.DOCS_ASK_MODEL ?? "@cf/zai-org/glm-5.3-flash";
-// GLM-5.3 Flash always reasons and defaults to "max"; reasoning tokens are
-// billed as output and delay the first word, so docs answers ask for "low".
-// Set DOCS_ASK_REASONING="" for models that do not take the parameter.
-const REASONING = process.env.DOCS_ASK_REASONING ?? "low";
+// Qwen3 30B (A3B): on the Workers Free plan, about 22 neurons per docs
+// question - roughly 450 a day inside the free allowance - and it cites
+// well. Its reasoning arrives in reasoning_content, which is not streamed.
+// DOCS_ASK_REASONING sets reasoning_effort for models that take it.
+const MODEL = process.env.DOCS_ASK_MODEL ?? "@cf/qwen/qwen3-30b-a3b-fp8";
+const REASONING = process.env.DOCS_ASK_REASONING ?? "";
 const MAX_QUESTION = 400;
 
 // Best-effort per-IP limit. It is per server instance, so it caps a burst
@@ -77,7 +78,8 @@ export async function POST(req: Request) {
         stream: true,
         // Room for the model's reasoning plus a short answer.
         max_completion_tokens: 2048,
-        temperature: 0.2,
+        // Deterministic: the same question should get the same answer.
+        temperature: 0,
         ...(REASONING ? { reasoning_effort: REASONING } : {}),
       }),
       signal: req.signal,
@@ -92,6 +94,7 @@ export async function POST(req: Request) {
     console.error("docs ask:", res.status, detail.slice(0, 500));
     // Workers AI answers 429 (or a neuron-limit error) once the day's free
     // allowance is used up.
+    if (/not available on the Workers Free plan/i.test(detail)) return fail(503, "Ask AI's model is not available on this account's plan.");
     if (res.status === 429 || /neuron|limit|quota/i.test(detail)) return fail(429, "Ask AI has used today's free allowance. Try again tomorrow, or use search.");
     return fail(502, "The model did not respond. Try again, or use search.");
   }
@@ -141,8 +144,10 @@ export async function POST(req: Request) {
             if (data === "[DONE]") continue;
             try {
               // OpenAI shape; reasoning_content, where a model sends it, is skipped.
+              // Workers AI sends digit-only tokens as JSON numbers
+              // ({"content":3}), so numbers count as text too.
               const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
-              if (typeof delta === "string") emit(delta);
+              if (typeof delta === "string" || typeof delta === "number") emit(String(delta));
             } catch {}
           }
         }
