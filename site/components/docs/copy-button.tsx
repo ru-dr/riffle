@@ -19,8 +19,8 @@ export function CopyButton({ text }: { text: string }) {
       type="button"
       onClick={copy}
       aria-label={copied ? "Copied" : "Copy code"}
-      className="flex items-center gap-1.5 rounded-[5px] px-2 py-1 font-mono text-[11px] tracking-[0.04em] transition-colors hover:bg-white/10"
-      style={{ color: copied ? "#3fb950" : "#8b8993" }}
+      className="flex items-center gap-1.5 rounded-[5px] px-2 py-1 font-mono text-[11px] tracking-[0.04em] transition-colors hover:bg-[var(--rf-wash)]"
+      style={{ color: copied ? "var(--rf-accent)" : "var(--rf-grey)" }}
     >
       <svg viewBox="0 0 16 16" className="size-[13px]" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
         {copied ? (

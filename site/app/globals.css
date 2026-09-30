@@ -422,6 +422,24 @@ body:has([data-riffle-light]) {
 .docs-code-body code {
   font-family: inherit;
 }
+/* Token colours: both themes ride on every span; the docs theme picks. */
+.docs-code-body span {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight);
+}
+@media (prefers-color-scheme: dark) {
+  [data-docs]:not([data-theme="light"]) .docs-code-body span {
+    color: var(--shiki-dark);
+    font-style: var(--shiki-dark-font-style);
+    font-weight: var(--shiki-dark-font-weight);
+  }
+}
+[data-docs][data-theme="dark"] .docs-code-body span {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight);
+}
 .docs-callout p {
   margin: 0;
   font-size: 15px;
@@ -438,6 +456,9 @@ body:has([data-riffle-light]) {
   --rf-bg: #fbfaf7;
   --rf-surface: #ffffff;
   --rf-wash: rgba(22, 23, 29, 0.045);
+  --rf-code-bg: #ffffff;
+  --rf-code-head: rgba(22, 23, 29, 0.025);
+  --rf-code-stroke: #e5e4e7;
 }
 @media (prefers-color-scheme: dark) {
   [data-docs]:not([data-theme="light"]) {
@@ -450,6 +471,9 @@ body:has([data-riffle-light]) {
     --rf-grey: rgba(242, 241, 244, 0.48);
     --rf-stroke: #2c2d34;
     --rf-accent: #7dd3a0;
+    --rf-code-bg: #1a1b20;
+    --rf-code-head: transparent;
+    --rf-code-stroke: rgba(255, 255, 255, 0.08);
   }
 }
 [data-docs][data-theme="dark"] {
@@ -462,6 +486,9 @@ body:has([data-riffle-light]) {
   --rf-grey: rgba(242, 241, 244, 0.48);
   --rf-stroke: #2c2d34;
   --rf-accent: #7dd3a0;
+  --rf-code-bg: #1a1b20;
+  --rf-code-head: transparent;
+  --rf-code-stroke: rgba(255, 255, 255, 0.08);
 }
 [data-docs] .docs-link {
   color: var(--rf-ink);

@@ -8,20 +8,20 @@ import { highlight } from "./highlight";
 
 // Renders a docs page's markdown in the site's own vocabulary: Geist for
 // prose, Geist Mono for code and table heads, hairline rules, and code
-// blocks as the homepage's dark terminal card. Everything is a server
+// blocks as a card in the docs' light or dark theme. Everything is a server
 // component; highlighted code arrives as static HTML.
 
 async function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const clean = code.replace(/\n$/, "");
   const html = await highlight(clean, lang);
   return (
-    <figure className="docs-code my-7 overflow-hidden rounded-md" style={{ backgroundColor: "#1a1b20", outline: "1px solid rgba(255,255,255,0.06)" }}>
+    <figure className="docs-code my-7 overflow-hidden rounded-md" style={{ backgroundColor: "var(--rf-code-bg)", outline: "1px solid var(--rf-code-stroke)" }}>
       {/* Header on every block: the language, and a copy button. */}
       <figcaption
         className="flex items-center justify-between border-b py-1.5 pr-2 pl-5"
-        style={{ borderColor: "rgba(255,255,255,0.08)" }}
+        style={{ borderColor: "var(--rf-code-stroke)", backgroundColor: "var(--rf-code-head)" }}
       >
-        <span className="font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "#8b8993" }}>
+        <span className="font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--rf-grey)" }}>
           {lang && lang !== "text" ? lang : "text"}
         </span>
         <CopyButton text={clean} />
