@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { logoUrl } from "./logo";
 import { T } from "./tokens";
 
 // The corpus row, as the reference's logo carousel: repositories slide past a
-// fixed pair of brackets, and whichever one sits between them is the only one
-// at full strength. Named by repository and shown with the project's own mark
+// pair of brackets, and whichever one sits between them is the only one at
+// full strength. The brackets measure the repository they frame and resize to
+// hug it, in step with the slide — names run from rails/rails to
+// huggingface/transformers, and a fixed gap either gaped or collided. Named by repository and shown with the project's own mark
 // — they are the training corpus, not customers.
 
 const REPOS: { repo: string; domain: string }[] = [
@@ -28,7 +30,8 @@ const REPOS: { repo: string; domain: string }[] = [
   { repo: "elastic/elasticsearch", domain: "elastic.co" },
 ];
 
-const ITEM_W = 250; // px per slot; the brackets frame exactly one slot
+const ITEM_W = 300; // px per slot, wide enough that the longest name never meets its neighbours
+const BRACKET_PAD = 18; // space between a bracket and the name it frames
 const STEP_MS = 2200;
 
 export function CorpusCarousel() {
@@ -37,6 +40,15 @@ export function CorpusCarousel() {
   const items = [...REPOS, ...REPOS, ...REPOS];
   const [index, setIndex] = useState(REPOS.length);
   const [animate, setAnimate] = useState(true);
+  const track = useRef<HTMLUListElement>(null);
+  const [frame, setFrame] = useState(220);
+
+  // Measure the framed repository after each move. The snap-back lands on
+  // the same repository one copy earlier, so the width does not change.
+  useLayoutEffect(() => {
+    const content = track.current?.children[index]?.querySelector<HTMLElement>("[data-content]");
+    if (content) setFrame(content.getBoundingClientRect().width + BRACKET_PAD * 2 + 22);
+  }, [index]);
 
   useEffect(() => {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -64,7 +76,7 @@ export function CorpusCarousel() {
       <div
         aria-hidden="true"
         className="pointer-events-none absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-between"
-        style={{ width: ITEM_W }}
+        style={{ width: frame, transition: "width 600ms cubic-bezier(.65,0,.35,1)" }}
       >
         <Paren />
         <Paren flip />
@@ -80,6 +92,7 @@ export function CorpusCarousel() {
       />
 
       <ul
+        ref={track}
         className="absolute top-0 left-1/2 flex h-full items-center"
         style={{
           transform: `translateX(${-(index + 0.5) * ITEM_W}px)`,
@@ -94,7 +107,7 @@ export function CorpusCarousel() {
             <li
               key={`${repo}-${i}`}
               aria-hidden={i < REPOS.length || i >= REPOS.length * 2 ? true : undefined}
-              className="flex shrink-0 items-center justify-center gap-2.5"
+              className="flex shrink-0 items-center justify-center"
               style={{
                 width: ITEM_W,
                 opacity: live ? 1 : 0.35,
@@ -102,12 +115,14 @@ export function CorpusCarousel() {
                 transition: "opacity 500ms ease, filter 500ms ease",
               }}
             >
-              {src && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={src} alt="" width={20} height={20} loading="lazy" className="rounded-[4px]" />
-              )}
-              <span className="font-mono text-[13px] whitespace-nowrap" style={{ color: T.ink }}>
-                {repo}
+              <span data-content className="flex items-center gap-2.5">
+                {src && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={src} alt="" width={20} height={20} loading="lazy" className="rounded-[4px]" />
+                )}
+                <span className="font-mono text-[13px] whitespace-nowrap" style={{ color: T.ink }}>
+                  {repo}
+                </span>
               </span>
             </li>
           );

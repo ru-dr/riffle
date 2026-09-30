@@ -48,7 +48,7 @@ export default function Page() {
       <header className="v2-wrapper flex items-center justify-between px-6 py-5 lg:py-7">
         <div className="flex items-center gap-10">
           <a href="/v2" aria-label="Riffle home">
-            <LockupBlack aria-hidden="true" className="block h-4 w-auto" style={{ color: T.ink }} />
+            <LockupBlack aria-hidden="true" className="block h-[22px] w-auto" style={{ color: T.ink }} />
           </a>
           <nav className="hidden md:block">
             <ul className="flex items-center">

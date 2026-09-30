@@ -12,7 +12,7 @@ import { T } from "./tokens";
 // a live layer underneath shows at full strength straight through them.
 //
 // Micro-motion, all of it cheap (transforms, opacity, dash offsets):
-//   - the stack floats on a slow sine, its shadow breathing against it
+//   - the stack floats on a slow sine
 //   - dotted leader lines flow toward the stack
 //   - the live leader draws itself in from the pill, and a spark runs it
 //   - the live slab's texture drifts; its outline carries a soft glow
@@ -150,7 +150,7 @@ export function Stack() {
   const [ready, setReady] = useState(false);
   const hovering = useRef(false);
 
-  // On mount: first layer live, labels in, idle float and breathing shadow.
+  // On mount: first layer live, labels in, idle float.
   useEffect(() => {
     const el = root.current;
     if (!el) return;
@@ -161,15 +161,6 @@ export function Stack() {
       // On the whole container, not the SVG, so the HTML pills move with
       // their lines instead of drifting off them.
       gsap.to(el, { y: -5, duration: 3.2, ease: "sine.inOut", yoyo: true, repeat: -1 });
-      gsap.to("[data-shadow]", {
-        scaleX: 0.9,
-        opacity: 0.06,
-        duration: 3.2,
-        ease: "sine.inOut",
-        yoyo: true,
-        repeat: -1,
-        transformOrigin: "50% 50%",
-      });
     }, el);
     return () => ctx.revert();
   }, []);
@@ -264,8 +255,6 @@ export function Stack() {
         </defs>
 
         <g>
-          {/* Shadow pool under the stack. */}
-          <ellipse data-shadow cx={CX} cy={TOP + 4 * STEP + D + W * TAN30 + 22} rx={W * 0.95} ry="15" fill={T.ink} opacity="0.1" />
 
           <g data-leads>
             {LAYERS.map((l, i) => {
