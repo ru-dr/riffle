@@ -534,8 +534,10 @@ export function ResourcesGrid() {
    Watch button — it looks like theirs and says something true. */
 export function ClosingBlock() {
   return (
-    <footer data-surface="dark" style={{ backgroundColor: T.darkBg }}>
-      <section className="v2-wrapper grid gap-10 px-6 pt-14 pb-20 md:grid-cols-2 md:px-6 md:pt-16 md:pb-24 lg:px-6">
+    // A full viewport tall, as the reference's is: the link section takes the
+    // slack so the copyright rule always lands on the bottom edge.
+    <footer data-surface="dark" className="flex min-h-dvh flex-col" style={{ backgroundColor: T.darkBg }}>
+      <section className="v2-wrapper grid w-full gap-10 px-6 pt-14 pb-20 md:grid-cols-2 md:px-6 md:pt-16 md:pb-24 lg:px-6">
         <h3
           data-anim="rise"
           className="max-w-[28rem] font-geist text-[1.875rem] leading-[1.12] font-medium tracking-[-0.025em] md:text-[2.25rem]"
@@ -565,7 +567,7 @@ export function ClosingBlock() {
         </div>
       </section>
 
-      <section className="v2-wrapper">
+      <section className="v2-wrapper w-full">
         <div
           data-anim="rise"
           className="flex h-36 items-center justify-center md:h-[8.75rem]"
@@ -585,7 +587,7 @@ export function ClosingBlock() {
         </div>
       </section>
 
-      <section className="v2-wrapper flex flex-col justify-between gap-12 px-6 pt-11 pb-24 sm:flex-row sm:px-14 md:pb-28">
+      <section className="v2-wrapper flex w-full flex-1 flex-col justify-between gap-12 px-6 pt-11 pb-24 sm:flex-row sm:items-start sm:px-14 md:pb-28">
         <div className="flex flex-wrap gap-x-12 gap-y-10 sm:gap-x-12">
           {FOOTER_LINKS.map(([heading, links]) => (
             <div key={heading}>
@@ -621,7 +623,7 @@ export function ClosingBlock() {
         </div>
       </section>
 
-      <section className="v2-wrapper v2-ticks border-t px-6 py-5 sm:px-14" style={{ borderColor: T.nickel }}>
+      <section className="v2-wrapper v2-ticks w-full border-t px-6 py-5 sm:px-14" style={{ borderColor: T.nickel }}>
         <p className="font-geist text-[13px]" style={{ color: T.darkGrey }}>
           &copy; 2026 Riffle contributors. Apache-2.0.
         </p>
