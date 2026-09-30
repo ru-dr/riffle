@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { preconnect, preload } from "react-dom";
 import gsap from "gsap";
 import { logoUrl } from "./logo";
 import { T } from "./tokens";
@@ -147,6 +148,13 @@ function Box({
 }
 
 export function Stack() {
+  // Warm the cache before the walk needs it. Each slab's texture is only
+  // requested the first time that layer goes live, so the first lift of
+  // each layer used to flash untextured; and the pills' marks come from
+  // logo.dev over a cold connection. React hoists these into <head>.
+  for (const l of LAYERS) preload(l.art, { as: "image", fetchPriority: "low" });
+  preconnect("https://img.logo.dev", { crossOrigin: "anonymous" });
+
   const root = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(-1);
   const [ready, setReady] = useState(false);

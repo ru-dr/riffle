@@ -118,14 +118,6 @@ export default function RootLayout({
       <head>
         <style dangerouslySetInnerHTML={{ __html: criticalCss }} />
         <script dangerouslySetInnerHTML={{ __html: motionInit }} />
-        <link
-          rel="preload"
-          as="image"
-          href="/heroes/hero-desktop.jpg"
-          imageSrcSet="/heroes/hero-phone.jpg 1170w, /heroes/hero-tablet.jpg 1536w, /heroes/hero-desktop.jpg 2560w"
-          imageSizes="100vw"
-          fetchPriority="high"
-        />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}

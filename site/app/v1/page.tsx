@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { preload } from "react-dom";
 import { Lockup } from "@/components/brand";
 import { HeroMotion } from "@/components/hero-motion";
 
@@ -49,6 +50,16 @@ export const metadata: Metadata = {
 };
 
 export default function Page() {
+  // The painting is this page's LCP, so it is preloaded here, at high
+  // priority. It used to sit in the root layout, which made every route —
+  // including the home page that never shows it — fetch a 2560px JPEG first.
+  preload("/heroes/hero-desktop.jpg", {
+    as: "image",
+    fetchPriority: "high",
+    imageSrcSet: "/heroes/hero-phone.jpg 1170w, /heroes/hero-tablet.jpg 1536w, /heroes/hero-desktop.jpg 2560w",
+    imageSizes: "100vw",
+  });
+
   return (
     <main
       data-riffle-lock
