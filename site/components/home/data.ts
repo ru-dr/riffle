@@ -53,7 +53,7 @@ export const SERVICE_PANELS = [
   {
     name: "intake",
     icon: "go",
-    art: "/v2/art/streak-green.webp",
+    art: "/art/streak-green.webp",
     lang: "Go",
     title: "The webhook front door",
     body: "Verify the signature, deduplicate by delivery ID, publish, return 200 — inside the ten seconds GitHub allows. Nothing else happens here.",
@@ -74,7 +74,7 @@ export const SERVICE_PANELS = [
   {
     name: "scorer",
     icon: "python",
-    art: "/v2/art/streak-indigo.webp",
+    art: "/art/streak-indigo.webp",
     lang: "Python",
     title: "Features, model, result",
     body: "Consumes the event, extracts features, runs the tenant's own ranking model, asks the explainer for a sentence, writes the result.",
@@ -96,7 +96,7 @@ export const SERVICE_PANELS = [
   {
     name: "explainer",
     icon: "python",
-    art: "/v2/art/streak-violet.webp",
+    art: "/art/streak-violet.webp",
     lang: "Python",
     title: "Allowed to fail",
     body: "LLM inference behind an API. Warm GPU, cached, rate-limited, and a hard timeout to a deterministic template. Never on the correctness path.",
@@ -116,7 +116,7 @@ export const SERVICE_PANELS = [
   {
     name: "app",
     icon: "typescript",
-    art: "/v2/art/streak-orange.webp",
+    art: "/art/streak-orange.webp",
     lang: "TypeScript",
     title: "The only human surface",
     body: "The GitHub App and the dashboard. It reorders the queue, and it never merges a pull request or removes one from review.",
@@ -176,21 +176,21 @@ export const PRIOR_WORK = [
 export const RESOURCES = [
   {
     kind: "architecture",
-    art: "/v2/art/streak-green.webp",
+    art: "/art/streak-green.webp",
     title: "Four services, four failure modes",
     href: "#architecture",
     tone: ["#7dd3a0", "#2f6f52"],
   },
   {
     kind: "invariants",
-    art: "/v2/art/streak-indigo.webp",
+    art: "/art/streak-indigo.webp",
     title: "Six rules that outrank the tests",
     href: "#invariants",
     tone: ["#a5b4fc", "#4453b5"],
   },
   {
     kind: "contracts",
-    art: "/v2/art/streak-teal.webp",
+    art: "/art/streak-teal.webp",
     title: "The two shapes on the wire",
     href: "#contracts",
     tone: ["#c4b5fd", "#6d4fb8"],
