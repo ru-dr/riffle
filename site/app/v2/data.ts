@@ -122,70 +122,93 @@ export const BANDS = [
 
 // Each service gets a panel of its own real payload, which is what their
 // gradient code panels are doing: showing the thing, not a mock of it.
+// Terminal output is stored as coloured segments rather than a string, so the
+// panels can syntax-highlight the way the reference's terminals do.
+export type TokenKind = "cmd" | "key" | "dim" | "val" | "str" | "ok" | "warn";
+export type CodeLine = readonly (readonly [string, TokenKind])[];
+
 export const SERVICE_PANELS = [
   {
     name: "intake",
+    icon: "go",
+    art: "/v2/art/streak-green.webp",
     lang: "Go",
     title: "The webhook front door",
     body: "Verify the signature, deduplicate by delivery ID, publish, return 200 — inside the ten seconds GitHub allows. Nothing else happens here.",
     budget: "10s",
     budgetLabel: "hard budget",
     tone: ["#7dd3a0", "#2f6f52"],
-    code: `POST /webhook
-X-GitHub-Delivery: 8f2c…a91
-X-Hub-Signature-256: sha256=…
-
-  signature   ok
-  duplicate   no
-  published   pr_event
-  200         41ms`,
+    code: [
+      [["POST ", "dim"], ["/webhook", "cmd"]],
+      [["X-GitHub-Delivery: ", "dim"], ["8f2c…a91", "val"]],
+      [["X-Hub-Signature-256: ", "dim"], ["sha256=…", "val"]],
+      [],
+      [["✓ ", "ok"], ["signature  ", "key"], ["verified", "dim"]],
+      [["✓ ", "ok"], ["duplicate  ", "key"], ["no", "dim"]],
+      [["→ ", "dim"], ["published  ", "key"], ["pr_event", "str"]],
+      [["200 ", "ok"], ["in ", "dim"], ["41ms", "val"]],
+    ],
   },
   {
     name: "scorer",
+    icon: "python",
+    art: "/v2/art/streak-indigo.webp",
     lang: "Python",
     title: "Features, model, result",
     body: "Consumes the event, extracts features, runs the tenant's own ranking model, asks the explainer for a sentence, writes the result.",
     budget: "1 model",
     budgetLabel: "per tenant",
     tone: ["#a5b4fc", "#4453b5"],
-    code: `features  →  69 engineered
-model     →  tenant:4192 v7
-fallback  →  global base
-
-risk_score    0.81
-rank_band     review_first
-model_version v7 (pinned)`,
+    code: [
+      [["$ ", "dim"], ["riffle score ", "cmd"], ["--delivery ", "dim"], ["8f2c…a91", "val"]],
+      [],
+      [["features       ", "key"], ["69 engineered", "dim"]],
+      [["model          ", "key"], ["tenant:4192 ", "val"], ["v7", "str"]],
+      [["fallback       ", "key"], ["global base", "dim"]],
+      [],
+      [["risk_score     ", "key"], ["0.81", "val"]],
+      [["rank_band      ", "key"], ["review_first", "warn"]],
+      [["model_version  ", "key"], ["v7 ", "val"], ["(pinned)", "dim"]],
+    ],
   },
   {
     name: "explainer",
+    icon: "python",
+    art: "/v2/art/streak-violet.webp",
     lang: "Python",
     title: "Allowed to fail",
     body: "LLM inference behind an API. Warm GPU, cached, rate-limited, and a hard timeout to a deterministic template. Never on the correctness path.",
     budget: "null",
     budgetLabel: "valid answer",
     tone: ["#c4b5fd", "#6d4fb8"],
-    code: `POST /explain          900ms
-  cache      miss
-  inference  timeout
-  fallback   template
-
-explanation  null
-rank         still valid`,
+    code: [
+      [["POST ", "dim"], ["/explain", "cmd"], ["   900ms", "dim"]],
+      [["→ ", "dim"], ["cache      ", "key"], ["miss", "dim"]],
+      [["→ ", "dim"], ["inference  ", "key"], ["timeout", "warn"]],
+      [["→ ", "dim"], ["fallback   ", "key"], ["template", "str"]],
+      [],
+      [["explanation  ", "key"], ["null", "val"]],
+      [["✓ ", "ok"], ["rank still valid", "dim"]],
+    ],
   },
   {
     name: "app",
+    icon: "typescript",
+    art: "/v2/art/streak-orange.webp",
     lang: "TypeScript",
     title: "The only human surface",
     body: "The GitHub App and the dashboard. It reorders the queue, and it never merges a pull request or removes one from review.",
     budget: "0",
     budgetLabel: "auto-merges",
     tone: ["#e0a45e", "#8a5326"],
-    code: `queue  riffle/api  (14 open)
-
-#2841  review_first   0.81
-#2838  senior_rec.    0.64
-#2844  standard       0.22
-#2839  standard       0.19`,
+    code: [
+      [["queue ", "dim"], ["riffle/api ", "cmd"], ["(14 open)", "dim"]],
+      [],
+      [["#2841  ", "key"], ["review_first    ", "warn"], ["0.81", "val"]],
+      [["#2838  ", "key"], ["senior_rec.     ", "str"], ["0.64", "val"]],
+      [["#2844  ", "key"], ["standard        ", "dim"], ["0.22", "val"]],
+      [["#2839  ", "key"], ["standard        ", "dim"], ["0.19", "val"]],
+    ],
   },
 ] as const;
 
@@ -207,28 +230,32 @@ export const MISSION =
 // Stands in for their investor row. These are the papers and datasets the
 // approach rests on — the honest version of "backed by".
 export const PRIOR_WORK = [
-  "Faros AI",
-  "LinearB",
-  "GitHub",
-  "MSR 2020",
-  "ApacheJIT",
+  { name: "Faros AI", domain: "faros.ai" },
+  { name: "LinearB", domain: "linearb.io" },
+  { name: "GitHub", domain: "github.com" },
+  { name: "Apache", domain: "apache.org" },
+  // A conference, not a company — no logo to fetch, so it stays as text.
+  { name: "MSR 2020", domain: null },
 ] as const;
 
 export const RESOURCES = [
   {
     kind: "architecture",
+    art: "/v2/art/streak-green.webp",
     title: "Four services, four failure modes",
     href: "#architecture",
     tone: ["#7dd3a0", "#2f6f52"],
   },
   {
     kind: "invariants",
+    art: "/v2/art/streak-indigo.webp",
     title: "Six rules that outrank the tests",
     href: "#invariants",
     tone: ["#a5b4fc", "#4453b5"],
   },
   {
     kind: "contracts",
+    art: "/v2/art/streak-teal.webp",
     title: "The two shapes on the wire",
     href: "#contracts",
     tone: ["#c4b5fd", "#6d4fb8"],

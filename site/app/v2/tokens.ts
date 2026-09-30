@@ -30,7 +30,7 @@ export const T = {
   // The reference page alternates light and full-bleed dark blocks. Their
   // dark is #14121a; Riffle's own warm near-black is used instead, so the
   // two landing pages still read as the same product.
-  darkBg: "#14100c",
+  darkBg: "#16171d", // their charcoal, measured off the render
   darkInk: "#fbfaf7",
   darkNickel: "rgba(251,250,247,0.66)",
   darkGrey: "rgba(251,250,247,0.42)",

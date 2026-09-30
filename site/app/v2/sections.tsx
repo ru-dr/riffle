@@ -1,384 +1,69 @@
+import { Mark } from "@/components/brand";
+import { LangIcon } from "./lang-icon";
 import { T } from "./tokens";
+
+// Publishable logo.dev key. It is designed to sit in client-visible image
+// URLs, so NEXT_PUBLIC is correct here — but it is still read from the
+// environment rather than committed, so it can be rotated without a deploy.
+const LOGO_DEV_TOKEN = process.env.NEXT_PUBLIC_LOGO_DEV_TOKEN;
 import {
   FOOTER_LINKS,
+  INVARIANTS,
   MISSION,
   PRIOR_WORK,
+  PR_EVENT,
+  REPO,
   RESOURCES,
+  SCORE_RESULT,
   SERVICE_PANELS,
   STATS,
-  REPO,
+  type CodeLine,
+  type TokenKind,
 } from "./data";
 
-// The blocks below the hero, in the reference page's order: a full-bleed dark
-// product block, a statistics band, a mission panel, a prior-work row, a
-// resources grid, and a dark closing CTA.
-//
-// Two substitutions, both because the honest version is not available: there
-// is no investor row (no funding), and no newsletter (no mailing list). The
-// slots hold the papers the approach rests on, and the repository, instead.
+// Everything below the hero, each block built to the reference's own
+// markup: a bordered .wrapper per section, ticks where rules meet the
+// verticals, empty ruled spacers between blocks, and dark surfaces that
+// recolour those rules to nickel.
 
-/* Gradient code panel — their vivid right-hand column. The gradient is two
-   stops from the service's own tone, so four panels differ without four
-   different art directions. */
-function Panel({
-  tone,
-  code,
-  label,
-}: {
-  tone: readonly [string, string] | readonly string[];
-  code: string;
-  label: string;
-}) {
-  return (
-    <div
-      className="relative flex h-full min-h-[210px] flex-col justify-end overflow-hidden p-4"
-      style={{
-        background: `linear-gradient(140deg, ${tone[0]} 0%, ${tone[1]} 52%, ${tone[0]} 100%)`,
-      }}
-    >
-      {/* The code sits on a dark card over the gradient rather than directly
-          on it — their panels are a screenshot floating on artwork, and that
-          separation is what keeps the type readable at this saturation. */}
-      <div
-        className="flex h-full flex-col justify-between rounded-[3px] px-4 py-3.5"
-        style={{
-          backgroundColor: "rgba(12,9,7,0.86)",
-          border: "1px solid rgba(251,250,247,0.12)",
-          boxShadow: "0 12px 28px -10px rgba(0,0,0,0.55)",
-        }}
-      >
-        <pre
-          className="overflow-hidden font-mono text-[10.5px] leading-[1.75] whitespace-pre"
-          style={{ color: "rgba(251,250,247,0.8)" }}
-        >
-          {code}
-        </pre>
-        <p
-          className="mt-3 font-mono text-[10px] tracking-[0.08em] uppercase"
-          style={{ color: tone[0] }}
-        >
-          {label}
-        </p>
-      </div>
-    </div>
-  );
-}
+const H2 =
+  "font-geist text-[1.875rem] leading-[2.25rem] font-medium tracking-[-0.025em] text-balance md:text-[3rem] md:leading-[1.05]";
+const H3 =
+  "font-geist text-[1.5rem] leading-[2rem] font-medium tracking-[-0.025em] text-balance md:text-[2.5rem] md:leading-[1.1]";
+const LABEL = "font-mono text-[12px] uppercase tracking-[0.05em]";
 
-export function ServicesBlock() {
+/* Their empty ruled band between blocks: a rule with ticks and nothing in
+   it. It is what gives the page its measured, sectioned rhythm. */
+export function Spacer({ dark = false }: { dark?: boolean }) {
   return (
     <section
-      id="architecture"
-      className="v2-ticks border-t"
-      style={{ backgroundColor: T.darkBg, borderColor: T.stroke }}
-    >
-      <div className="px-5 pt-12 pb-4 sm:px-8 sm:pt-16 lg:px-12">
-        <div className="mx-auto w-full max-w-[74rem]">
-          <p
-            data-anim="rise"
-            className="font-mono text-[10.5px] tracking-[0.14em] uppercase"
-            style={{ color: T.darkGrey }}
-          >
-            Services
-          </p>
-          <h2
-            data-anim="rise"
-            className="mt-6 font-geist text-[clamp(1.7rem,4vw,2.6rem)] leading-[1.1] font-medium tracking-[-0.03em]"
-            style={{ color: T.darkInk }}
-          >
-            Four services
-          </h2>
-          <p
-            data-anim="rise"
-            className="mt-4 max-w-[30rem] font-geist text-[14px] leading-[1.6]"
-            style={{ color: T.darkNickel }}
-          >
-            Each boundary is a place where the failure mode changes. Intake must
-            never be slow, scoring must never be lost, and explanation is
-            allowed to fail.
-          </p>
-        </div>
-      </div>
-
-      <div className="mx-auto w-full max-w-[74rem] px-5 pb-14 sm:px-8 lg:px-12 lg:pb-20">
-        <div style={{ borderTop: `1px solid ${T.darkStroke}` }}>
-          {SERVICE_PANELS.map((s) => (
-            <div
-              key={s.name}
-              data-anim="rise"
-              className="grid grid-cols-1 items-stretch gap-y-5 border-b py-8 lg:grid-cols-[7rem_minmax(0,1fr)_minmax(0,1.05fr)] lg:gap-x-10"
-              style={{ borderColor: T.darkStroke }}
-            >
-              {/* Rail: the name, dim, the way their product list runs. */}
-              <div className="flex items-start gap-2 lg:flex-col lg:gap-1">
-                <p className="font-mono text-[12px]" style={{ color: T.darkInk }}>
-                  {s.name}
-                </p>
-                <p className="font-mono text-[10.5px] tracking-[0.04em] uppercase" style={{ color: T.darkGrey }}>
-                  {s.lang}
-                </p>
-              </div>
-
-              <div className="flex flex-col">
-                <h3
-                  className="font-geist text-[19px] leading-[1.25] font-medium tracking-[-0.02em]"
-                  style={{ color: T.darkInk }}
-                >
-                  {s.title}
-                </h3>
-                <p
-                  className="mt-3 max-w-[26rem] font-geist text-[13.5px] leading-[1.6]"
-                  style={{ color: T.darkNickel }}
-                >
-                  {s.body}
-                </p>
-                <div className="mt-5 flex items-center gap-5">
-                  <a
-                    href={`${REPO}#architecture`}
-                    className="riffle-btn-ghost inline-flex items-center gap-1.5 rounded-[7px] px-3.5 py-2 font-mono text-[11.5px]"
-                    style={{ color: T.darkInk, border: `1px solid ${T.darkStroke}` }}
-                  >
-                    Explore {s.name}
-                  </a>
-                  {/* Their rows end in stars and contributors. Riffle has
-                      neither yet, so the row ends in the constraint that
-                      actually distinguishes the service. */}
-                  <p className="font-mono text-[11px]" style={{ color: T.darkGrey }}>
-                    <span style={{ color: T.mint }}>{s.budget}</span> {s.budgetLabel}
-                  </p>
-                </div>
-              </div>
-
-              <Panel tone={s.tone} code={s.code} label={`${s.name} · live shape`} />
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
+      aria-hidden="true"
+      data-surface={dark ? "dark" : undefined}
+      className="v2-wrapper v2-ticks h-16 border-t sm:h-[7.5rem]"
+      style={{ borderColor: dark ? T.nickel : T.stroke }}
+    />
   );
 }
 
-export function StatsBand() {
-  return (
-    <section className="v2-ticks border-t px-5 py-14 sm:px-8 sm:py-20 lg:px-12" style={{ borderColor: T.stroke }}>
-      <div className="mx-auto w-full max-w-[74rem]">
-        <h2
-          data-anim="rise"
-          className="max-w-[26rem] font-geist text-[clamp(1.6rem,3.6vw,2.4rem)] leading-[1.12] font-medium tracking-[-0.03em]"
-        >
-          {STATS.headline}
-        </h2>
-
-        <div className="mt-12 grid items-end gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-          <div data-anim="rise">
-            <p className="font-mono text-[11px] tracking-[0.04em]" style={{ color: T.grey }}>
-              Bootstrap corpus
-            </p>
-            <p className="mt-4 font-geist text-[clamp(2.4rem,6vw,3.6rem)] leading-none font-medium tracking-[-0.04em]">
-              <span data-count={STATS.big} data-format="int">
-                {STATS.big.toLocaleString("en-US")}
-              </span>
-            </p>
-            <p className="mt-3 max-w-[20rem] font-geist text-[13.5px] leading-[1.5]" style={{ color: T.nickel }}>
-              {STATS.bigLabel}
-            </p>
-          </div>
-
-          {/* Their chart plots real download history. Riffle has no time
-              series to plot, so this is the label distribution instead — the
-              one proportion in the corpus that matters, drawn to scale. */}
-          <div data-anim="rise" style={{ border: `1px solid ${T.stroke}`, backgroundColor: T.paper }}>
-            <p
-              className="border-b px-5 py-3 font-mono text-[11px]"
-              style={{ borderColor: T.stroke, color: T.grey }}
-            >
-              ApacheJIT · labelled share
-            </p>
-            <div className="px-5 py-7">
-              <div className="flex h-3 w-full overflow-hidden rounded-[2px]" style={{ backgroundColor: T.stroke }}>
-                <div style={{ width: "26.5%", backgroundColor: T.accent }} />
-              </div>
-              <div className="mt-4 flex items-baseline justify-between font-mono text-[11px]">
-                <span style={{ color: T.accent }}>26.5% bug-inducing</span>
-                <span style={{ color: T.grey }}>73.5% clean</span>
-              </div>
-              <p className="mt-5 font-geist text-[12.5px] leading-[1.5]" style={{ color: T.nickel }}>
-                Enough signal to start a model, nowhere near enough to be your
-                repository. That is what per-tenant training is for.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-12 grid gap-px sm:grid-cols-3" style={{ backgroundColor: T.stroke }}>
-          {STATS.cells.map(([value, label]) => (
-            <div key={label} data-anim="rise" className="px-5 py-6" style={{ backgroundColor: T.beige }}>
-              <p className="font-geist text-[clamp(1.4rem,3vw,1.9rem)] leading-none font-medium tracking-[-0.03em]">
-                {value}
-              </p>
-              <p className="mt-2.5 font-geist text-[13px] leading-[1.45]" style={{ color: T.nickel }}>
-                {label}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-export function MissionPanel() {
-  return (
-    <section className="v2-ticks border-t px-5 py-14 sm:px-8 sm:py-16 lg:px-12" style={{ borderColor: T.stroke }}>
-      <div
-        data-anim="rise"
-        className="mx-auto flex w-full max-w-[74rem] flex-col items-center gap-7 px-6 py-16 text-center sm:px-12"
-        style={{ backgroundColor: T.paper, border: `1px solid ${T.stroke}` }}
-      >
-        <p className="max-w-[40rem] text-balance font-geist text-[clamp(1.15rem,2.6vw,1.6rem)] leading-[1.4] font-medium tracking-[-0.02em]">
-          {MISSION}
-        </p>
-        <a
-          href={`${REPO}#what-riffle-does`}
-          className="riffle-btn-ghost inline-flex items-center gap-1.5 rounded-[8px] px-4 py-2.5 font-mono text-[12px]"
-          style={{ color: T.ink, border: `1px solid ${T.stroke}` }}
-        >
-          Learn more
-        </a>
-      </div>
-
-      {/* Their "backed by" row, holding the work this rests on instead. */}
-      <div className="mx-auto mt-12 w-full max-w-[74rem]">
-        <div
-          data-anim="rise"
-          className="flex flex-wrap items-center justify-between gap-x-10 gap-y-4 border-t pt-7"
-          style={{ borderColor: T.stroke }}
-        >
-          <p className="font-geist text-[13px]" style={{ color: T.nickel }}>
-            Built on prior work in defect prediction and review analytics.
-          </p>
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-            {PRIOR_WORK.map((name) => (
-              <span key={name} className="font-mono text-[12px]" style={{ color: T.grey }}>
-                {name}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-export function ResourcesGrid() {
-  return (
-    <section className="v2-ticks border-t px-5 py-14 sm:px-8 sm:py-20 lg:px-12" style={{ borderColor: T.stroke }}>
-      <div className="mx-auto w-full max-w-[74rem]">
-        <div className="flex flex-wrap items-end justify-between gap-5">
-          <h2
-            data-anim="rise"
-            className="max-w-[20rem] font-geist text-[clamp(1.5rem,3.4vw,2.2rem)] leading-[1.14] font-medium tracking-[-0.03em]"
-          >
-            Reference &amp; internals
-          </h2>
-          <a
-            data-anim="rise"
-            href={REPO}
-            className="riffle-btn-ghost inline-flex items-center gap-1.5 rounded-[8px] px-4 py-2.5 font-mono text-[12px]"
-            style={{ color: T.ink, border: `1px solid ${T.stroke}` }}
-          >
-            All docs
-          </a>
-        </div>
-
-        <div className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,2fr)]">
-          {/* Their `js resources .filter(...)` block: documentation written as
-              the query that produced it. */}
-          <pre
-            data-anim="rise"
-            className="overflow-x-auto px-5 py-5 font-mono text-[11px] leading-[1.85]"
-            style={{ backgroundColor: T.paper, border: `1px solid ${T.stroke}`, color: T.nickel }}
-          >
-            <span style={{ color: T.grey }}>ts</span>
-            {"\n"}docs{"\n"}
-            <span style={{ color: T.accent }}>  .filter</span>
-            {"(d => d.settled === "}
-            <span style={{ color: T.accent }}>true</span>
-            {")"}
-            {"\n"}
-            <span style={{ color: T.accent }}>  .filter</span>
-            {"(d => d.source === "}
-            <span style={{ color: T.accent }}>&quot;README&quot;</span>
-            {")"}
-            {"\n"}
-            <span style={{ color: T.accent }}>  .filter</span>
-            {"(d => d.sections.length === "}
-            <span style={{ color: T.accent }}>3</span>
-            {")"}
-          </pre>
-
-          <div className="grid gap-px sm:grid-cols-3" style={{ backgroundColor: T.stroke }}>
-            {RESOURCES.map((r) => (
-              <a
-                key={r.kind}
-                data-anim="rise"
-                href={r.href}
-                className="group flex flex-col"
-                style={{ backgroundColor: T.beige }}
-              >
-                <div
-                  className="relative h-[116px] overflow-hidden"
-                  style={{
-                    background: `linear-gradient(140deg, ${r.tone[0]} 0%, ${r.tone[1]} 55%, ${r.tone[0]} 100%)`,
-                  }}
-                />
-                <div className="px-4 py-4">
-                  <p className="font-mono text-[10.5px] tracking-[0.06em] uppercase" style={{ color: T.grey }}>
-                    // {r.kind}
-                  </p>
-                  <p className="mt-2 font-geist text-[14px] leading-[1.35]" style={{ color: T.ink }}>
-                    {r.title}
-                  </p>
-                </div>
-              </a>
-            ))}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* Their page opens on a dark strip with a gradient bleeding in from the
-   right, carrying one announcement. Riffle's only true announcement is its
-   own status, so that is what it carries. */
 export function AnnounceBar() {
   return (
-    <a
-      href={REPO}
-      className="group relative block overflow-hidden"
-      style={{ backgroundColor: T.darkBg }}
-    >
+    <a href={REPO} className="group relative block overflow-hidden" style={{ backgroundColor: T.darkBg }}>
       <div
         aria-hidden="true"
-        className="absolute inset-y-0 right-0 w-[52%]"
+        className="absolute inset-y-0 right-0 w-[55%]"
         style={{
-          background: `linear-gradient(90deg, transparent 0%, rgba(125,211,160,0.14) 45%, rgba(165,180,252,0.3) 100%)`,
+          background:
+            "linear-gradient(90deg, transparent 0%, rgba(125,211,160,0.18) 40%, rgba(165,180,252,0.42) 75%, rgba(196,181,253,0.55) 100%)",
         }}
       />
-      <div className="relative mx-auto flex w-full max-w-[74rem] items-center gap-2.5 px-5 py-2 sm:px-8 lg:px-12">
-        <span className="font-mono text-[10.5px] tracking-[0.1em] uppercase" style={{ color: T.mint }}>
-          Riffle
-        </span>
-        <span
-          className="font-mono text-[10.5px] tracking-[0.1em] uppercase"
-          style={{ color: "rgba(251,250,247,0.78)" }}
-        >
-          is in development &mdash; architecture and contracts are settled
+      <div className="relative flex items-center gap-2.5 px-6 py-2.5">
+        <span className="font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: T.darkInk }}>
+          Riffle is in development
         </span>
         <span
           aria-hidden="true"
-          className="ml-1 inline-flex size-4 items-center justify-center rounded-full text-[9px] transition-transform group-hover:translate-x-0.5"
-          style={{ backgroundColor: "rgba(251,250,247,0.14)", color: T.darkInk }}
+          className="inline-flex size-[18px] items-center justify-center rounded-[3px] text-[11px] transition-transform group-hover:translate-x-0.5"
+          style={{ backgroundColor: T.darkInk, color: T.darkBg }}
         >
           &rarr;
         </span>
@@ -387,77 +72,532 @@ export function AnnounceBar() {
   );
 }
 
-/* Closing block: their dark CTA plus gradient banner plus link columns. The
-   newsletter is replaced by the repository, because there is no list to
-   subscribe anyone to. */
-export function ClosingBlock() {
+/* Their customer-logo row, holding datasets. Same bracket punctuation. */
+export function Provenance() {
   return (
-    <footer style={{ backgroundColor: T.darkBg }}>
-      <div className="v2-ticks border-t" style={{ borderColor: T.stroke }}>
-        <div className="mx-auto w-full max-w-[74rem] px-5 py-14 sm:px-8 sm:py-20 lg:px-12">
-          <div className="flex flex-wrap items-end justify-between gap-8">
-            <h2
-              data-anim="rise"
-              className="max-w-[24rem] font-geist text-[clamp(1.6rem,3.6vw,2.4rem)] leading-[1.12] font-medium tracking-[-0.03em]"
-              style={{ color: T.darkInk }}
+    <section
+      className="v2-wrapper v2-ticks flex flex-col items-center justify-center border-t pt-10 pb-10 md:gap-2 md:pt-14"
+      style={{ borderColor: T.stroke }}
+    >
+      <p data-anim="rise" className="text-center font-geist text-[16px] text-balance" style={{ color: T.nickel }}>
+        Trained on public defect history, then on yours
+      </p>
+      <div data-anim="rise" className="mt-6 flex items-center gap-6">
+        <Paren />
+        <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
+          {["AIDev", "ApacheJIT", "MSR 2020", "Your revert history"].map((src, i) => (
+            <span
+              key={src}
+              className="font-geist text-[17px] font-medium tracking-[-0.02em]"
+              style={{ color: T.ink, opacity: i === 3 ? 1 : 0.42 }}
             >
-              Interested in where your repository breaks?
-            </h2>
-            <div data-anim="rise" className="flex flex-wrap items-center gap-3">
-              <a
-                href={REPO}
-                className="riffle-btn inline-flex items-center gap-2 rounded-[8px] px-4 py-2.5 font-mono text-[12.5px] transition-transform"
-                style={{ backgroundColor: T.darkInk, color: T.darkBg }}
-              >
-                Watch the repo
-              </a>
-              <a
-                href={`${REPO}/issues`}
-                className="riffle-btn-ghost inline-flex items-center gap-1.5 rounded-[8px] px-4 py-2.5 font-mono text-[12.5px]"
-                style={{ color: T.darkInk, border: `1px solid ${T.darkStroke}` }}
-              >
-                Open an issue
-              </a>
+              {src}
+            </span>
+          ))}
+        </div>
+        <Paren flip />
+      </div>
+    </section>
+  );
+}
+
+function Paren({ flip = false }: { flip?: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 8 30"
+      className="h-[40px] w-[11px] shrink-0"
+      fill={T.nickel}
+      style={{ transform: flip ? "scaleX(-1)" : undefined }}
+    >
+      <path d="M4.652 30C1.48 25.427 0 20.439 0 15.035 0 9.596 1.48 4.538 4.652 0H8c-2.573 4.988-3.7 10.046-3.7 15.035 0 4.988 1.092 10.011 3.7 14.965H4.652Z" />
+    </svg>
+  );
+}
+
+/* Dark product block, to the reference's structure: a short label row with
+   the rule beneath it (no rule above — the block starts flush), a tall
+   header band, then a rail with its own right border beside the rows. */
+export function ServicesBlock() {
+  return (
+    <div data-surface="dark" style={{ backgroundColor: T.darkBg }}>
+      <section className="v2-wrapper px-6 py-5 md:px-10">
+        <p className="font-geist text-[16px] font-medium" style={{ color: T.darkInk }}>
+          Services
+        </p>
+      </section>
+
+      <section
+        id="architecture"
+        className="v2-wrapper v2-ticks border-t px-6 py-16 md:px-10 md:py-24"
+        style={{ borderColor: T.nickel }}
+      >
+        <h2 data-anim="rise" className={H2} style={{ color: T.darkInk }}>
+          Four services
+        </h2>
+        <p
+          data-anim="rise"
+          className="mt-6 max-w-[25rem] font-geist text-[18px] leading-[1.55] text-pretty"
+          style={{ color: T.darkNickel }}
+        >
+          Each boundary is a place where the failure mode changes. Intake must
+          never be slow, scoring must never be lost, and explanation is allowed
+          to fail.
+        </p>
+      </section>
+
+      <section className="v2-wrapper v2-ticks flex flex-col border-t md:flex-row" style={{ borderColor: T.nickel }}>
+        <div className="hidden shrink-0 border-r px-6 py-10 md:block md:w-[15.5rem] md:px-10" style={{ borderColor: T.nickel }}>
+          <ul className="sticky top-10 flex flex-col gap-4">
+            {SERVICE_PANELS.map((s, i) => (
+              <li key={s.name} data-rail={s.name} data-active={i === 0 ? "" : undefined}>
+                <a
+                  href={`#svc-${s.name}`}
+                  className="flex items-center gap-3 font-geist text-[16px]"
+                  style={{ color: T.darkInk }}
+                >
+                  <span className="flex items-center font-mono text-[15px]" style={{ color: T.darkGrey }}>
+                    (
+                    <LangIcon
+                      lang={s.icon}
+                      className="mx-[3px] size-[15px]"
+                      color={s.icon === "python" ? "#4b8bbe" : undefined}
+                    />
+                    )
+                  </span>
+                  {s.name}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="w-full">
+          {SERVICE_PANELS.map((s, i) => (
+            <div
+              key={s.name}
+              id={`svc-${s.name}`}
+              data-project={s.name}
+              className="grid w-full lg:grid-cols-2"
+              style={{ borderTop: i === 0 ? undefined : `1px solid ${T.nickel}` }}
+            >
+              <div data-anim="rise" className="flex flex-col justify-between gap-10 p-6 md:p-10 lg:gap-20">
+                <div className="flex max-w-[22rem] flex-col gap-5">
+                  <span className="font-mono text-[14px] tracking-[0.08em] uppercase" style={{ color: T.darkGrey }}>
+                    {s.name}
+                  </span>
+                  <h4
+                    className="font-geist text-[1.875rem] leading-[1.15] font-medium tracking-[-0.025em] text-pretty"
+                    style={{ color: T.darkInk }}
+                  >
+                    {s.title}
+                  </h4>
+                  <p className="font-geist text-[16px] leading-[1.55] text-pretty" style={{ color: T.darkNickel }}>
+                    {s.body}
+                  </p>
+                  <a href={`${REPO}#architecture`} className="v2-btn v2-btn--sm mt-5 w-fit">
+                    Explore {s.name}
+                  </a>
+                </div>
+                <div
+                  className="flex w-fit items-center gap-3 rounded-sm px-3 py-1 font-mono text-[12px]"
+                  style={{ backgroundColor: "rgba(255,255,255,0.06)", color: T.darkNickel }}
+                >
+                  <span style={{ color: T.darkInk }}>{s.budget}</span>
+                  <span style={{ color: T.darkGrey }}>{s.budgetLabel}</span>
+                </div>
+              </div>
+
+              <Artwork tone={s.tone} code={s.code} art={s.art} />
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* Right-hand artwork: texture flush to the cell, terminal card vertically
+   centred and running off the right edge. The card has the reference's dual
+   edge — a thin bright outer rim over a dark inner border — and highlighted
+   output rather than flat grey text. */
+const TOKEN: Record<TokenKind, React.CSSProperties> = {
+  cmd: { color: "#ffffff", fontWeight: 600 },
+  key: { color: "#e7e6ea" },
+  dim: { color: "#8b8993" },
+  val: { color: "#8ab4ff" },
+  str: { color: "#6ee7d8" },
+  ok: { color: "#3fb950" },
+  warn: { color: "#f0b35a" },
+};
+
+function Artwork({ tone, code, art }: { tone: readonly string[]; code: readonly CodeLine[]; art: string }) {
+  return (
+    <div
+      data-anim="rise"
+      className="relative min-h-[22rem] overflow-hidden lg:min-h-[29rem]"
+      style={{
+        backgroundColor: tone[1],
+        backgroundImage: `url(${art})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      }}
+    >
+      {/* Outer rim: a 1px gradient ring, bright at the top-left where the
+          light in the texture comes from. */}
+      <div
+        className="absolute top-1/2 right-0 left-6 -translate-y-1/2 rounded-l-[7px] p-px md:left-10"
+        style={{
+          background:
+            "linear-gradient(140deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0.14) 38%, rgba(255,255,255,0.06) 70%, rgba(255,255,255,0.3) 100%)",
+          boxShadow: "0 24px 50px -20px rgba(0,0,0,0.65)",
+        }}
+      >
+        <div
+          className="rounded-l-[6px] px-7 py-7"
+          style={{ backgroundColor: "#1a1b20", boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.55)" }}
+        >
+          <pre className="overflow-hidden font-mono text-[13px] leading-[2]">
+            {code.map((line, i) => (
+              <div key={i}>
+                {line.length === 0
+                  ? "\u00a0"
+                  : line.map(([text, kind], j) => (
+                      <span key={j} style={TOKEN[kind]}>
+                        {text}
+                      </span>
+                    ))}
+              </div>
+            ))}
+          </pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Statistics: heading, then a 4/6 split of big figure and chart, then three
+   cells — each divided by hairlines, as theirs are. */
+export function StatsBand() {
+  return (
+    <section className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.stroke }}>
+      <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
+        <h3 data-anim="rise" className={`${H3} max-w-[28rem]`}>
+          {STATS.headline}
+        </h3>
+      </div>
+      <div className="grid border-t md:grid-cols-10 md:divide-x" style={{ borderColor: T.stroke }}>
+        <div data-anim="rise" className="flex flex-col justify-between gap-16 p-6 md:col-span-4 md:p-10" style={{ borderColor: T.stroke }}>
+          <p className="font-geist text-[15px]" style={{ color: T.nickel }}>
+            Bootstrap corpus
+          </p>
+          <div>
+            <p className="font-geist text-[2.75rem] leading-none font-medium tracking-[-0.04em] md:text-[3.5rem]">
+              <span data-count={STATS.big}>{STATS.big.toLocaleString("en-US")}</span>
+            </p>
+            <p className="mt-3 font-geist text-[14px]" style={{ color: T.grey }}>
+              {STATS.bigLabel}
+            </p>
+          </div>
+        </div>
+        <div data-anim="rise" className="flex flex-col justify-between gap-8 border-t p-6 md:col-span-6 md:border-t-0 md:p-10" style={{ borderColor: T.stroke }}>
+          <p className="w-fit rounded px-2 py-1 font-mono text-[12px]" style={{ outline: `1px solid ${T.stroke}`, color: T.nickel }}>
+            ApacheJIT · labelled share
+          </p>
+          <div>
+            <div className="flex h-24 items-end gap-2">
+              <div className="h-full w-[26.5%] rounded-sm" style={{ backgroundColor: T.live }} />
+              <div className="h-full flex-1 rounded-sm" style={{ backgroundColor: T.stroke }} />
+            </div>
+            <div className="mt-3 flex justify-between font-mono text-[12px]">
+              <span style={{ color: T.accent }}>26.5% bug-inducing</span>
+              <span style={{ color: T.grey }}>73.5% clean</span>
             </div>
           </div>
+        </div>
+      </div>
+      <div className="grid border-t sm:grid-cols-3 sm:divide-x" style={{ borderColor: T.stroke }}>
+        {STATS.cells.map(([value, label]) => (
+          <div key={label} data-anim="rise" className="p-6 md:p-10" style={{ borderColor: T.stroke }}>
+            <p className="font-geist text-[2rem] leading-none font-medium tracking-[-0.03em]">{value}</p>
+            <p className="mt-3 font-geist text-[14px]" style={{ color: T.grey }}>
+              {label}
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
-          {/* Their gradient banner with the mark centred in it. */}
-          <div
+export function MissionPanel() {
+  return (
+    <>
+      <section
+        className="v2-wrapper v2-ticks flex flex-col items-center gap-8 border-t px-6 py-20 text-center md:py-28"
+        style={{ borderColor: T.stroke, backgroundColor: T.beige }}
+      >
+        <h3 data-anim="rise" className={`${H3} max-w-[44rem] md:text-[2.25rem]`}>
+          {MISSION}
+        </h3>
+        <a data-anim="rise" href={`${REPO}#what-riffle-does`} className="v2-btn v2-btn--sm">
+          Learn more
+        </a>
+      </section>
+      {/* Their "backed by" row, holding the sources Riffle's approach cites.
+          Logos come from logo.dev when a publishable token is configured;
+          without one each cell falls back to the name, so the row never
+          renders broken images. Labelled as research, not backing, because
+          none of these organisations endorse Riffle. */}
+      <section className="v2-wrapper v2-ticks grid border-t md:grid-cols-6 md:divide-x" style={{ borderColor: T.stroke }}>
+        <p className="flex items-center p-6 font-geist text-[14px] md:col-span-1 md:p-8" style={{ color: T.nickel }}>
+          Research this builds on
+        </p>
+        {PRIOR_WORK.map(({ name, domain }) => (
+          <div key={name} className="flex items-center justify-center gap-2.5 p-6 md:p-8">
+            {LOGO_DEV_TOKEN && domain ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`https://img.logo.dev/${domain}?token=${LOGO_DEV_TOKEN}&size=64&format=png&greyscale=true&retina=true`}
+                  alt=""
+                  width={22}
+                  height={22}
+                  loading="lazy"
+                  className="rounded-[4px] opacity-70"
+                />
+                <span className="font-geist text-[17px] font-medium tracking-[-0.02em]" style={{ color: T.ink, opacity: 0.6 }}>
+                  {name}
+                </span>
+              </>
+            ) : (
+              <span className="font-geist text-[18px] font-medium tracking-[-0.02em]" style={{ color: T.ink, opacity: 0.55 }}>
+                {name}
+              </span>
+            )}
+          </div>
+        ))}
+      </section>
+    </>
+  );
+}
+
+export function InvariantsSection() {
+  return (
+    <section id="invariants" className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.stroke }}>
+      <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
+        <p data-anim="rise" className={LABEL} style={{ color: T.grey }}>
+          Invariants
+        </p>
+        <h3 data-anim="rise" className={`${H3} mt-6 max-w-[34rem]`}>
+          Breaking one is a bug even if the tests pass
+        </h3>
+      </div>
+      <ol className="grid border-t md:grid-cols-3" style={{ borderColor: T.stroke }}>
+        {INVARIANTS.map(([rule, detail], i) => (
+          <li
+            key={rule}
             data-anim="rise"
-            className="relative mt-12 flex h-[140px] items-center justify-center overflow-hidden rounded-[4px] sm:h-[180px]"
-            style={{
-              background:
-                "linear-gradient(115deg, #1f1a14 0%, #2b3a30 35%, #7dd3a0 68%, #a5b4fc 100%)",
-            }}
+            className="flex flex-col gap-3 border-b p-6 md:p-10 [&:nth-child(3n+2)]:md:border-x"
+            style={{ borderColor: T.stroke }}
           >
-            <span
-              className="flex size-11 items-center justify-center rounded-[8px] font-mono text-[15px]"
-              style={{ backgroundColor: T.darkBg, color: T.darkInk }}
-            >
-              R
+            <span className="font-mono text-[12px]" style={{ color: T.grey }}>
+              {String(i + 1).padStart(2, "0")}
             </span>
+            <span className="font-geist text-[17px] font-medium tracking-[-0.015em]">{rule}</span>
+            <span className="font-geist text-[14.5px] leading-[1.55]" style={{ color: T.nickel }}>
+              {detail}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+export function ContractsSection() {
+  return (
+    <section id="contracts" className="v2-wrapper v2-ticks border-t" style={{ borderColor: T.stroke }}>
+      <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
+        <p data-anim="rise" className={LABEL} style={{ color: T.grey }}>
+          Contracts
+        </p>
+        <h3 data-anim="rise" className={`${H3} mt-6 max-w-[34rem]`}>
+          Two shapes cross every boundary
+        </h3>
+      </div>
+      <div className="grid border-t md:grid-cols-2 md:divide-x" style={{ borderColor: T.stroke }}>
+        {[
+          ["intake → scorer", PR_EVENT],
+          ["scorer → app", SCORE_RESULT],
+        ].map(([caption, code]) => (
+          <CodeBlock key={caption} tag="json" caption={caption} code={code} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* Their code device: a small language tag pinned top-left on a faint beige
+   chip, then monospace lines at 12px. */
+function CodeBlock({ tag, caption, code }: { tag: string; caption: string; code: string }) {
+  return (
+    <figure data-anim="rise" className="relative flex flex-col gap-4 px-6 pt-16 pb-8 md:px-10" style={{ borderColor: T.stroke }}>
+      <span
+        className="absolute top-3 left-3 rounded p-2 font-mono text-[12px]"
+        style={{ backgroundColor: "rgba(244,243,236,0.4)", color: T.ink }}
+      >
+        {tag}
+      </span>
+      <figcaption className="font-mono text-[12px]" style={{ color: T.grey }}>
+        {caption}
+      </figcaption>
+      <pre className="overflow-x-auto font-mono text-[12px] leading-[1.7]" style={{ color: T.ink }}>
+        {code}
+      </pre>
+    </figure>
+  );
+}
+
+/* Resources: their 4/6 split. Left column is heading-plus-button over the
+   .filter() device; right column is the card row. */
+export function ResourcesGrid() {
+  return (
+    <section
+      className="v2-wrapper v2-ticks grid grid-cols-1 border-t md:grid-cols-10 md:divide-x"
+      style={{ borderColor: T.stroke }}
+    >
+      <div className="flex flex-col divide-y md:col-span-4" style={{ borderColor: T.stroke }}>
+        <div className="flex flex-col justify-center gap-6 p-5 md:h-72 md:justify-start md:gap-10 md:p-10" style={{ borderColor: T.stroke }}>
+          <h3 data-anim="rise" className={H3}>
+            Reference &amp; internals
+          </h3>
+          <a data-anim="rise" href={`${REPO}#readme`} className="v2-btn w-fit">
+            All docs
+          </a>
+        </div>
+        <div data-anim="rise" className="relative flex flex-col gap-4 px-6 pt-16 pb-8 md:px-10" style={{ borderColor: T.stroke }}>
+          <span
+            className="absolute top-3 left-3 rounded p-2 font-mono text-[12px]"
+            style={{ backgroundColor: "rgba(244,243,236,0.4)", color: T.ink }}
+          >
+            ts
+          </span>
+          <div className="flex flex-col font-mono text-[12px] leading-[1.7]">
+            <span style={{ color: T.grey }}>docs</span>
+            {[
+              ["d.settled ===", "true"],
+              ["d.source ===", '"README"'],
+              ["d.sections.length ===", "3"],
+            ].map(([arg, value]) => (
+              <span key={arg} style={{ color: T.ink }}>
+                {" "}.filter<span style={{ color: T.grey }}>(d =&gt; {arg}</span> {value}
+                <span style={{ color: T.grey }}>)</span>
+              </span>
+            ))}
           </div>
         </div>
       </div>
 
-      <div className="border-t" style={{ borderColor: T.darkStroke }}>
-        <div className="mx-auto grid w-full max-w-[74rem] gap-10 px-5 py-12 sm:grid-cols-3 sm:px-8 lg:px-12">
+      <div className="grid border-t sm:grid-cols-3 md:col-span-6 md:border-t-0" style={{ borderColor: T.stroke }}>
+        {RESOURCES.map((r) => (
+          <a key={r.kind} data-anim="rise" href={r.href} className="group flex flex-col gap-4 p-5 md:p-6">
+            <div
+              className="aspect-[16/10] w-full overflow-hidden rounded-sm transition-transform duration-300 group-hover:scale-[1.02]"
+              style={{
+                backgroundColor: r.tone[1],
+                backgroundImage: `url(${r.art})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+            />
+            <div className="flex flex-col gap-1.5">
+              <span className="font-mono text-[12px] uppercase tracking-[0.05em]" style={{ color: T.grey }}>
+                // {r.kind}
+              </span>
+              <span className="font-geist text-[16px] leading-[1.35]" style={{ color: T.ink }}>
+                {r.title}
+              </span>
+            </div>
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* Dark footer, to the reference render: a two-column CTA row, a banner flush
+   to the wrapper's edges with the mark centred, a compact cluster of link
+   columns with Social pushed right, deliberate empty space, then a ticked
+   rule over the copyright line.
+
+   Their right-hand column is a newsletter form. Riffle has no list, so the
+   same bordered field-plus-button shape holds the repository address and a
+   Watch button — it looks like theirs and says something true. */
+export function ClosingBlock() {
+  return (
+    <footer data-surface="dark" style={{ backgroundColor: T.darkBg }}>
+      <section className="v2-wrapper grid gap-10 px-6 pt-14 pb-20 md:grid-cols-2 md:px-6 md:pt-16 md:pb-24 lg:px-6">
+        <h3
+          data-anim="rise"
+          className="max-w-[28rem] font-geist text-[1.875rem] leading-[1.12] font-medium tracking-[-0.025em] md:text-[2.25rem]"
+          style={{ color: T.darkInk }}
+        >
+          Interested in where your repository breaks?
+        </h3>
+        <div data-anim="rise" className="flex flex-col gap-4 md:items-end md:pt-1">
+          <p className="w-full max-w-[17.5rem] font-geist text-[17px] md:max-w-[17.5rem] md:self-end lg:max-w-[17.5rem]" style={{ color: T.darkInk }}>
+            Follow the build on GitHub
+          </p>
+          <div
+            className="flex w-full max-w-[17.5rem] items-center justify-between gap-3 rounded-[4px] py-1.5 pr-1.5 pl-3 md:w-[17.5rem] lg:w-[17.5rem]"
+            style={{ outline: `1px solid ${T.nickel}` }}
+          >
+            <span className="truncate font-geist text-[14px]" style={{ color: T.darkGrey }}>
+              github.com/ru-dr/riffle
+            </span>
+            <a
+              href={REPO}
+              className="rounded-[3px] px-3 py-1.5 font-geist text-[14px] font-medium whitespace-nowrap transition-transform hover:scale-105"
+              style={{ backgroundColor: "#fff", color: T.ink }}
+            >
+              Watch repo
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section className="v2-wrapper">
+        <div
+          data-anim="rise"
+          className="flex h-36 items-center justify-center md:h-[8.75rem]"
+          style={{
+            backgroundColor: "#3a1e8c",
+            backgroundImage: "url(/v2/art/rays-purple.webp)",
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        >
+          <span
+            className="flex size-12 items-center justify-center rounded-[10px]"
+            style={{ backgroundColor: "#0d0c10", boxShadow: "0 10px 26px -8px rgba(0,0,0,0.6)" }}
+          >
+            <Mark aria-hidden="true" className="h-auto w-7" style={{ color: T.darkInk }} />
+          </span>
+        </div>
+      </section>
+
+      <section className="v2-wrapper flex flex-col justify-between gap-12 px-6 pt-11 pb-24 sm:flex-row sm:px-14 md:pb-28">
+        <div className="flex flex-wrap gap-x-12 gap-y-10 sm:gap-x-12">
           {FOOTER_LINKS.map(([heading, links]) => (
             <div key={heading}>
-              <p
-                className="font-mono text-[10.5px] tracking-[0.12em] uppercase"
-                style={{ color: T.darkGrey }}
-              >
+              <p className="font-mono text-[12px] tracking-[0.06em] uppercase" style={{ color: T.darkGrey }}>
                 {heading}
               </p>
-              <ul className="mt-4 flex flex-col gap-2.5">
+              <ul className="mt-7 flex flex-col gap-4">
                 {links.map(([label, href]) => (
                   <li key={label}>
-                    <a
-                      href={href}
-                      className="v2-navlink-dark font-geist text-[13.5px]"
-                      style={{ color: T.darkNickel }}
-                    >
+                    <a href={href} className="v2-link font-geist text-[14px]" style={{ color: T.darkInk }}>
                       {label}
                     </a>
                   </li>
@@ -466,15 +606,28 @@ export function ClosingBlock() {
             </div>
           ))}
         </div>
-        <div
-          className="mx-auto w-full max-w-[74rem] border-t px-5 py-6 sm:px-8 lg:px-12"
-          style={{ borderColor: T.darkStroke }}
-        >
-          <p className="font-mono text-[11px]" style={{ color: T.darkGrey }}>
-            &copy; 2026 Riffle contributors. Apache-2.0.
+        <div className="sm:pr-8">
+          <p className="font-mono text-[12px] tracking-[0.06em] uppercase" style={{ color: T.darkGrey }}>
+            Social
           </p>
+          <ul className="mt-7 flex flex-col gap-3">
+            <li>
+              <a href={REPO} className="v2-link flex items-center gap-2 font-geist text-[14px]" style={{ color: T.darkInk }}>
+                <svg viewBox="0 0 16 16" className="size-[15px]" fill="currentColor" aria-hidden="true">
+                  <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.19c0 .21.14.46.55.38A8 8 0 0 0 8 0Z" />
+                </svg>
+                GitHub
+              </a>
+            </li>
+          </ul>
         </div>
-      </div>
+      </section>
+
+      <section className="v2-wrapper v2-ticks border-t px-6 py-5 sm:px-14" style={{ borderColor: T.nickel }}>
+        <p className="font-geist text-[13px]" style={{ color: T.darkGrey }}>
+          &copy; 2026 Riffle contributors. Apache-2.0.
+        </p>
+      </section>
     </footer>
   );
 }

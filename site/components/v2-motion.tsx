@@ -4,16 +4,20 @@ import { useLayoutEffect } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 
-// Motion for the /v2 documentation layout.
+// Motion for /v2.
 //
-// Two behaviours, both taken from the reference: sections resolve as they
-// come into view, and the statistics count up once when their card first
-// lands. Nothing parallaxes and nothing repeats on scroll-back — on a page
-// this long, motion that replays becomes noise the second time down.
+// Ownership is the whole design. Before hydration, CSS hides every
+// [data-anim] node behind html[data-motion="on"] so nothing flashes. The
+// moment this effect runs, GSAP writes an explicit inline starting state onto
+// every node it will animate, and the CSS gate is removed. From then on
+// nothing can be left invisible by a selector that no tween covers — the
+// failure the first version shipped with, where the whole stack diagram sat
+// at opacity 0 forever because no timeline ever touched it.
 //
-// Transform and opacity only. Same html[data-motion="on"] gate and failsafe
-// as the poster page, so no-JS and reduced-motion readers get the finished
-// document.
+// The headline is animated as one element. It paints with
+// background-clip:text, and Chromium stops painting that background through
+// descendants that get their own compositing layer — so transforming the two
+// lines individually left the headline transparent over nothing.
 export function V2Motion() {
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -23,67 +27,97 @@ export function V2Motion() {
     gsap.registerPlugin(ScrollTrigger);
 
     const ctx = gsap.context(() => {
-      // Hero: the only sequenced part of the page.
-      gsap
-        .timeline({ defaults: { ease: "power3.out", duration: 0.8, force3D: true } })
-        .fromTo(
-          '[data-anim="line"]',
-          { opacity: 0, y: 24 },
-          { opacity: 1, y: 0, duration: 1, stagger: 0.09 },
-        )
-        .fromTo(
-          // Above the fold, and tagged as such — slicing the first N of a
-          // 40-element selector breaks the moment a section is reordered.
-          '[data-anim="hero-rise"]',
-          { opacity: 0, y: 14 },
-          { opacity: 1, y: 0, stagger: 0.07 },
-          0.25,
-        );
+      const hero = gsap.timeline({ defaults: { ease: "power3.out", duration: 0.8 } });
 
-      // Below the fold: reveal on entry, once each.
+      hero
+        .fromTo('[data-anim="chip"]', { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.6 })
+        .fromTo(
+          '[data-anim="title"]',
+          { opacity: 0, y: 18 },
+          { opacity: 1, y: 0, duration: 0.95, clearProps: "transform" },
+          0.08,
+        )
+        .fromTo('[data-anim="lede"]', { opacity: 0, y: 10 }, { opacity: 1, y: 0 }, 0.22)
+        // Plates settle bottom-up: the foundation first, then what rests on it.
+        .fromTo(
+          '[data-anim="plate"]',
+          { opacity: 0, y: -14 },
+          { opacity: 1, y: 0, duration: 0.7, stagger: { each: 0.07, from: "end" } },
+          0.35,
+        )
+        .fromTo('[data-anim="lead"]', { opacity: 0 }, { opacity: 1, duration: 0.5, stagger: 0.05 }, 0.8);
+
+      // Everything below the fold: start state set now, reveal once on entry.
       gsap.utils.toArray<HTMLElement>('[data-anim="rise"]').forEach((el) => {
-        gsap.fromTo(
-          el,
-          { opacity: 0, y: 16 },
-          {
-            opacity: 1,
-            y: 0,
-            duration: 0.7,
-            ease: "power2.out",
-            scrollTrigger: { trigger: el, start: "top 88%", once: true },
-          },
-        );
+        gsap.set(el, { opacity: 0, y: 14 });
+        ScrollTrigger.create({
+          trigger: el,
+          start: "top 90%",
+          once: true,
+          onEnter: () =>
+            gsap.to(el, { opacity: 1, y: 0, duration: 0.7, ease: "power2.out", clearProps: "transform" }),
+        });
       });
 
-      // Statistics count up. Non-numeric values ("1 in 5") are left alone —
-      // animating them would mean animating nonsense.
+      // Figures count up once. The real value stays in the markup until the
+      // trigger fires, so a missed trigger leaves the true number on screen
+      // rather than a zero.
       gsap.utils.toArray<HTMLElement>("[data-count]").forEach((el) => {
-        const target = Number(el.dataset.count);
+        const raw = el.dataset.count ?? "";
+        const target = Number(raw);
         if (!Number.isFinite(target)) return;
-        const decimals = (el.dataset.count ?? "").split(".")[1]?.length ?? 0;
-        const state = { value: 0 };
-        gsap.to(state, {
-          value: target,
-          duration: 1.4,
-          ease: "power2.out",
-          scrollTrigger: { trigger: el, start: "top 90%", once: true },
-          onUpdate: () => {
-            el.textContent = state.value.toFixed(decimals);
+        const decimals = raw.split(".")[1]?.length ?? 0;
+        const format = (v: number) =>
+          decimals ? v.toFixed(decimals) : Math.round(v).toLocaleString("en-US");
+        ScrollTrigger.create({
+          trigger: el,
+          start: "top 92%",
+          once: true,
+          onEnter: () => {
+            const state = { v: 0 };
+            gsap.to(state, {
+              v: target,
+              duration: 1.5,
+              ease: "power2.out",
+              onUpdate: () => {
+                el.textContent = format(state.v);
+              },
+              onComplete: () => {
+                el.textContent = format(target);
+              },
+            });
           },
         });
       });
 
-      // The status dot in the rail is the only thing that keeps moving, and
-      // it is the only genuinely live element on the page.
+      // Services rail tracks the row in view, as their product list does.
+      const rail = gsap.utils.toArray<HTMLElement>("[data-rail]");
+      gsap.utils.toArray<HTMLElement>("[data-project]").forEach((row) => {
+        ScrollTrigger.create({
+          trigger: row,
+          start: "top 55%",
+          end: "bottom 55%",
+          onToggle: ({ isActive }) => {
+            if (!isActive) return;
+            rail.forEach((item) => {
+              item.toggleAttribute("data-active", item.dataset.rail === row.dataset.project);
+            });
+          },
+        });
+      });
+
       gsap.to('[data-anim="pulse"]', {
         opacity: 0.3,
-        duration: 1.6,
-        delay: 1.5,
+        duration: 1.4,
         ease: "sine.inOut",
         repeat: -1,
         yoyo: true,
       });
     });
+
+    // Every animated node now carries its own inline state. Drop the gate so
+    // anything not animated is simply visible.
+    root.removeAttribute("data-motion");
 
     return () => ctx.revert();
   }, []);

@@ -158,9 +158,41 @@ body:has([data-riffle-light]) {
   overflow: visible;
 }
 
+/* Services rail: inactive entries sit at 40% and desaturated, the active
+   one at full colour — the reference's treatment of its product list. */
+[data-rail] {
+  opacity: 0.4;
+  filter: grayscale(1);
+  transition:
+    opacity 500ms ease,
+    filter 500ms ease;
+}
+[data-rail][data-active] {
+  opacity: 1;
+  filter: none;
+}
+
+/* Tailwind v4 borders default to currentColor, so any divide-* line on an
+   element without an explicit colour came out in full ink. Zero-specificity
+   default for the whole /v2 subtree; inline colours still win. */
+[data-riffle-light] :where(*) {
+  border-color: var(--v2-stroke);
+}
+
+/* On dark blocks the wrapper's side rules and ticks go nickel, exactly as
+   the reference recolours them. */
+[data-surface="dark"] {
+  --v2-stroke: #3b3440;
+}
+
 /* Tokens for the primitives above. Kept on the opted-in subtree so the
    poster page's warm palette is untouched. */
 [data-riffle-light] {
+  /* /v2 is set in Geist Sans and Geist Mono and nothing else. Overriding
+     the token on the subtree retargets every font-mono utility inside it,
+     including SVG text, without touching the poster page. */
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --v2-stroke: #e5e4e7;
   --v2-ink: #16171d;
   --v2-nickel: #3b3440;
@@ -169,47 +201,102 @@ body:has([data-riffle-light]) {
   --v2-live: #00b442;
 }
 
-@layer components {
-  .v2-navlink {
-    transition: color 140ms ease;
-    text-decoration: none;
+
+/* Buttons, to the reference's measured spec rather than an impression of
+   it: sans, medium weight, white fill, 1px stroke outline, 0.5rem radius,
+   and a 105% scale with a soft shadow on hover. On dark surfaces the fill
+   drops out and the outline goes nickel. */
+.v2-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  background-color: #fff;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: #16171d;
+  outline: 1px solid #e5e4e7;
+  transition:
+    scale 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+  user-select: none;
+  white-space: nowrap;
+}
+.v2-btn:hover {
+  scale: 1.05;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+.v2-btn--sm {
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.25rem;
+}
+[data-surface="dark"] .v2-btn {
+  background-color: transparent;
+  color: #fff;
+  outline-color: #3b3440;
+}
+[data-surface="dark"] .v2-btn:hover {
+  background-color: #fff;
+  color: #16171d;
+}
+
+/* Primary: a dark fill inside a moving gradient ring. Theirs paints the ring
+   from a photograph; this paints it from Riffle's own colours. */
+.v2-btn--primary {
+  position: relative;
+  isolation: isolate;
+  outline: none;
+  background-color: transparent;
+  color: #fff;
+}
+.v2-btn--primary::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  z-index: -2;
+  border-radius: calc(0.5rem + 2px);
+  background: linear-gradient(115deg, #7dd3a0, #a5b4fc, #c4b5fd, #7dd3a0);
+  background-size: 300% 300%;
+  animation: v2-ring 12s ease-in-out infinite;
+}
+.v2-btn--primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 0.5rem;
+  background: #16171d;
+}
+.v2-btn--primary:hover {
+  box-shadow: none;
+}
+@keyframes v2-ring {
+  50% {
+    background-position: 100% 50%;
   }
-  .v2-navlink:hover {
-    color: #16171d;
-  }
-  .v2-navlink-dark {
-    transition: color 140ms ease;
-    text-decoration: none;
-  }
-  .v2-navlink-dark:hover {
-    color: #fbfaf7;
+}
+@media (prefers-reduced-motion: reduce) {
+  .v2-btn--primary::before {
+    animation: none;
   }
 }
 
-/* Buttons on the /v2 paper card. Hover/focus cannot live in inline styles,
-   and the card is a light surface, so these are separate from .riffle-link
-   (which is tuned for ink-on-painting). */
-@layer components {
-  .riffle-btn {
-    outline-color: #14100c;
-  }
-  .riffle-btn:hover {
-    transform: translateY(-1px);
-  }
-  .riffle-btn:active {
-    transform: translateY(0);
-  }
-  .riffle-btn-ghost {
-    background-color: transparent;
-    transition:
-      background-color 160ms ease,
-      border-color 160ms ease;
-    outline-color: #14100c;
-  }
-  .riffle-btn-ghost:hover {
-    background-color: rgba(20, 16, 12, 0.04);
-    border-color: rgba(20, 16, 12, 0.18) !important;
-  }
+.v2-link {
+  transition: color 140ms ease;
+}
+.v2-link:hover {
+  color: #16171d;
+}
+[data-surface="dark"] .v2-link:hover {
+  color: #fff;
 }
 
 /* Entrance states for the GSAP timeline in components/hero-motion.tsx.

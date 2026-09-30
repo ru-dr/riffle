@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import { Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
@@ -105,7 +106,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${tagline.variable} ${GeistSans.variable} ${supplyMono.variable}`}
+      className={`${tagline.variable} ${GeistSans.variable} ${GeistMono.variable} ${supplyMono.variable}`}
       // The motion script below sets data-motion on this element before
       // hydration, by design - it has to run before first paint. That makes
       // the server and client attribute sets differ, which is exactly what
