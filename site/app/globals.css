@@ -180,6 +180,37 @@ body:has([data-riffle-light]) {
   }
 }
 
+/* Corner-lit rim: a 1px ring drawn by masking a conic gradient down to its
+   border box, bright at the top-left and bottom-right corners and fading out
+   between them. Placed 2px outside its tile, it leaves a 1px gap. The glow
+   variant is the same ring blurred, underneath. */
+.v2-rim {
+  padding: 1px;
+  background: conic-gradient(
+    from 225deg,
+    rgba(255, 255, 255, 0.95) 0deg,
+    rgba(255, 255, 255, 0.05) 70deg,
+    rgba(255, 255, 255, 0) 110deg,
+    rgba(255, 255, 255, 0.05) 150deg,
+    rgba(255, 255, 255, 0.85) 180deg,
+    rgba(255, 255, 255, 0.05) 250deg,
+    rgba(255, 255, 255, 0) 290deg,
+    rgba(255, 255, 255, 0.05) 330deg,
+    rgba(255, 255, 255, 0.95) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+}
+.v2-rim-glow {
+  filter: blur(4px);
+  opacity: 0.8;
+}
+
 /* Scrollable code that should not show a scrollbar track. */
 .v2-noscrollbar {
   scrollbar-width: none;
