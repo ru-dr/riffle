@@ -6,7 +6,8 @@ repositories.
 > between July and September 2026; for repositories 51–100, with the GitHub
 > search API on 30 September 2026. Commit counts marked `~` are estimates, the
 > rest come from each repository's GitHub page; estimates are replaced with
-> `git rev-list --count HEAD` after cloning.
+> `git rev-list --count HEAD` after cloning. Every other value is marked
+> Measured, Sourced, Derived, Estimate, Decision or Pending.
 
 ## At a glance
 
@@ -205,6 +206,45 @@ repositories.
 | **New 50** | 50 | **1,019,194** | **~1,526,983** | All measured |
 | **All 100** | 100 | **2,919,190** | **~5,009,242** | 98 repositories measured |
 
+## Dataset estimates
+
+| Item | Value | Status |
+| --- | --- | --- |
+| Total PRs, 98 measured repositories (open and closed) | 2,919,190 | Measured |
+| Closed PRs, 98 measured repositories | 2,837,457 | Measured |
+| rust-lang/rust and envoyproxy/envoy PRs | Not measured yet | Pending |
+| Approx. commits, all 100 repositories | ~5,009,242 | Estimate |
+| Mature PRs after the 30-day wait | About the closed count | Derived |
+| Training rows after bot and backport filtering | Measure in the pilot | Pending |
+| Feature columns | 100–300 | Estimate |
+| Positive labels at 2% (upper bound) | 56,700 | Derived |
+| Positive labels at 3% (upper bound) | 85,100 | Derived |
+| Positive labels at 5% (upper bound) | 141,900 | Derived |
+| Revert rate in open source | 1–5% of commits | Sourced [1] |
+| SZZ bug-inducing rate, if used as a label | About 26% | Sourced [2] |
+| R-SZZ label precision | 57–73% | Sourced [12] |
+| Permanent structured data | 15–61 GB without diffs or CI logs | Derived [7] |
+| Temporary clone and SZZ scratch space | 1–1.5 TB across machines | Estimate |
+| Recommended total storage | 2 TB | Estimate |
+| Model artifact | 10–100 MB | Estimate |
+| Model plus repository layers | 100 MB–1 GB | Estimate |
+| Feature matrix and cache | 10–80 GB | Estimate |
+
+Positive-label counts are upper bounds based on closed PRs before bot and
+backport filtering. Roughly one SZZ label in three is likely wrong, so SZZ is
+weighted below reverts and follow-up fixes.
+
+## Machine allocation
+
+| Item | Value | Status |
+| --- | --- | --- |
+| Machines | 8 | Estimate |
+| Repositories per machine | 3–22, balanced to about 360,000 PRs each | Estimate |
+| Parallel workers per machine | 3–4 | Estimate |
+| Repositories per worker | 1 at a time | Estimate |
+| Recommended disk per machine | 250–500 GB | Estimate |
+| Largest repositories | llvm-project, pytorch, swift and flutter on the biggest disks | Decision |
+
 ## Data split
 
 | Purpose | Value | Status |
@@ -220,77 +260,140 @@ repositories under 6,000 PRs, and one giant each (godot in validation,
 elasticsearch in test). Splits within each training repository are
 time-ordered.
 
-## Dataset estimates
-
-| Item | Value | Status |
-| --- | --- | --- |
-| Total PRs, 98 measured repositories | 2,919,190 | Measured |
-| Closed PRs, 98 measured repositories | 2,837,457 | Measured |
-| rust-lang/rust and envoyproxy/envoy PRs | Not measured yet | Pending |
-| Approx. commits, all 100 repositories | ~5,009,242 | Estimate |
-| Positive labels at 2% of closed PRs (upper bound) | 56,700 | Derived |
-| Positive labels at 3% of closed PRs (upper bound) | 85,100 | Derived |
-| Positive labels at 5% of closed PRs (upper bound) | 141,900 | Derived |
-| Revert rate in open source | 1–5% of commits | Sourced [1] |
-| SZZ bug-inducing rate, if used as a label | About 26% | Sourced [2] |
-| R-SZZ precision | 57–73% | Sourced [3] |
-| Permanent structured data | 15–61 GB without diffs or CI logs | Derived |
-| Temporary clone and SZZ scratch space | 1–1.5 TB across machines | Estimate |
-
-Positive-label counts are upper bounds before bot and backport filtering.
-Roughly one SZZ label in three is likely wrong, so SZZ is weighted below
-reverts and follow-up fixes.
-
-## Machine allocation
-
-| Item | Value | Status |
-| --- | --- | --- |
-| Machines | 8 | Estimate |
-| Repositories per machine | 3–22, balanced to ~360,000 PRs each | Estimate |
-| Parallel workers per machine | 3–4 | Estimate |
-| Recommended disk per machine | 250–500 GB | Estimate |
-
-The largest repositories (llvm-project, pytorch, swift, flutter) go on the
-machines with the most disk.
-
 ## Extraction timeline
 
 | Task | Expected time | Status |
 | --- | --- | --- |
+| One- or two-repository pilot | 1–3 days | Estimate |
 | Clone repositories and count commits | 1–2 days | Estimate |
-| List-level PR metadata (GraphQL) | 2–3 days | Derived |
-| Full extraction with reviews and checks | 2–3 weeks | Derived |
-| Labelling (reverts, R-SZZ, follow-up fixes) and audit | 5–7 days | Estimate |
+| List-level PR metadata (GraphQL) | 2–3 days | Derived [6] |
+| Full extraction with reviews and checks | 2–3 weeks | Derived [6] |
+| Labelling and audit (reverts, R-SZZ, follow-up fixes) | 5–7 days | Estimate |
+| Feature generation | 1–7 days | Estimate |
 | Global model training | Minutes to several hours | Estimate |
+| Repository-layer training | Seconds to minutes per repository | Estimate |
 | Backtesting | Hours to several days | Estimate |
 
-## Caveats
+## API limits and data retention
 
-- From 1 October 2026, GitHub keeps check runs, workflow runs, and statuses
-  on public repositories for at most 90 days [4]. CI-failure labels for the
-  new 50 will only cover a rolling window from the day archiving starts.
-  Missing CI data is treated as missing, not negative.
+| Item | Value | Status |
+| --- | --- | --- |
+| REST core limit | 5,000 requests an hour per user | Sourced [8] |
+| REST secondary limit | 900 points a minute; 100 concurrent requests | Sourced [8] |
+| GraphQL limit | 5,000 points an hour; apps up to 12,500 | Sourced [8] |
+| Search API limit | 30 requests a minute, authenticated | Sourced [8] |
+| Check runs and statuses retention | At most 90 days | Sourced [9] |
+
+Retention applies to public repositories from 1 October 2026.
+
+## Storage strategy
+
+**Store:**
+
+- `pull_requests.parquet`
+- `commits.parquet`
+- `file_changes.parquet`
+- `reviews.parquet`
+- `check_runs.parquet`
+- `tags.parquet`
+- `mined_history.json`
+- `features.parquet`
+
+**Avoid storing permanently:**
+
+- full historical blobs
+- complete repository clones
+- duplicate API responses
+- all full diffs
+- raw Claude transcripts
+
+Temporary clones and diffs are used to compute features, then deleted once
+validation is complete.
+
+## Full diffs and accuracy
+
+| Item | Value | Status |
+| --- | --- | --- |
+| Storage without full diffs | 15–61 GB | Derived [7] |
+| Storage with full diffs kept | 150 GB or more | Estimate |
+| Accuracy gain from diff-text models | Small; often none over simple size features | Sourced [11] |
+| Recommended approach | Compute diff features from temporary diffs, then delete the diffs | Decision |
+
+Zeng et al. tested deep models that read diff text (DeepJIT, CC2Vec) on over
+310,000 changes. Neither beat traditional metric-based models consistently,
+and a logistic regression on lines added alone outperformed both. Keeping full
+diffs permanently therefore adds storage without a reliable accuracy gain.
+
+## Model expectations
+
+| Metric | Planning target | Status |
+| --- | --- | --- |
+| ROC-AUC, within-project time split | 0.70+ | Sourced [3][4] |
+| ROC-AUC, unseen repositories | 0.65+ | Sourced [5] |
+| PR-AUC | At least 2× the bad-rate baseline | Sourced [4] |
+| Lift at top 20% | 2–4× FIFO | Sourced [3][4] |
+| Recall at top 20% of effort | 40–60% (literature 35–75%) | Sourced [3][4] |
+| Reliable positive examples | 5,000 minimum; 10,000–20,000 preferred | Estimate |
+
+These are targets, not guaranteed results. Cross-project models are notably
+weaker than within-project models, so the unseen-repository splits are judged
+on their own target.
+
+## Data caveats
+
+- From 1 October 2026, GitHub keeps check runs, workflow runs and commit
+  statuses on public repositories for at most 90 days. CI-failure labels will
+  only cover a rolling window from the day archiving starts. Missing CI data
+  is treated as missing, not negative.
 - The 10 largest repositories hold about a third of all PRs. Each repository
   is capped (for example 20,000 PRs, sampled across time) or reweighted, and
   metrics are reported per repository.
-- Many repositories merge outside the GitHub button (rust, pytorch, angular,
-  openssl, php-src, spark, bitcoin, node). Merges are detected by commit SHA
-  or the PR number in commit messages.
-- Bot, backport, sync, and dependency-bump PRs are filtered, or modelled
+- Many repositories merge outside the GitHub merge button (rust, pytorch,
+  angular, openssl, php-src, spark, flink, spring-boot, bitcoin, node). Merges
+  are detected by commit SHA or the PR number in commit messages.
+- `llvm/llvm-project` has used GitHub PR review only since September 2023, and
+  `php/php-src` only since 2021.
+- `tensorflow/tensorflow` PRs are mostly generated by an internal Copybara
+  sync, and are filtered by author before training.
+- Bot, backport, sync and dependency-bump PRs are filtered, or modelled
   separately.
 - History breaks: renames (scala3, trino, luanti, thunderbird-android, dbt),
   repository mergers (the flutter engine), private-then-public history (zed),
   and tracker moves (arrow).
-- GH Archive under-captured PR and issue events from mid-2025 [6]. It is
+- GH Archive under-captured PR and issue events from mid-2025 [13]. It is
   checked against the API before any backfill.
-- Cross-project models are weaker than within-project ones, which is why
-  unseen repositories are judged on their own target [5].
+- Commit counts marked `~` are estimates, replaced with
+  `git rev-list --count HEAD` after cloning.
+
+## Minimum viable pilot
+
+Before extracting all 100 repositories, one or two repositories must show
+that the pipeline can:
+
+- Resume after interruption
+- Avoid duplicate records
+- Produce valid Parquet tables
+- Produce a valid `mined_history.json`
+- Track API requests and rate limits
+- Report missing reviews and check runs
+- Detect merges done outside the GitHub merge button
+- Filter bot, backport and sync PRs
+- Generate point-in-time features
+- Complete schema validation
+- Run without Claude remaining active
 
 ## Sources
 
 1. [Shimagaki et al., Why are commits being reverted? (ICSME 2016)](https://rebels.cs.uwaterloo.ca/confpaper/2016/10/04/why-are-commits-being-reverted.html)
-2. [Keshavarz and Nagappan, ApacheJIT (MSR 2022)](https://arxiv.org/abs/2203.00101)
-3. [Rosa et al., Evaluating SZZ Implementations Through a Developer-informed Oracle (ICSE 2021)](https://arxiv.org/pdf/2102.03300)
-4. [GitHub Changelog, Actions retention will cover checks, workflow runs, and statuses (27 Aug 2026)](https://github.blog/changelog/2026-08-27-actions-retention-will-cover-checks-workflow-runs-and-statuses/)
+2. [Keshavarz and Nagappan, ApacheJIT (MSR 2022)](https://arxiv.org/pdf/2203.00101)
+3. [Kamei et al., A large-scale empirical study of just-in-time quality assurance (TSE 2013)](https://posl.ait.kyushu-u.ac.jp/~kamei/publications/Kamei_TSE2013.pdf)
+4. [Yan et al., Characterizing and identifying reverted commits (EMSE 2019)](https://ink.library.smu.edu.sg/cgi/viewcontent.cgi?article=5360&context=sis_research)
 5. [Kamei et al., Studying just-in-time defect prediction using cross-project models (EMSE 2016)](https://link.springer.com/article/10.1007/s10664-015-9400-x)
-6. [OSSInsight, GitHub events feed under-capture notice](https://ossinsight.io/)
+6. Rate-limit arithmetic in this plan, plus the Kubernetes export anchor [7]
+7. [Grunert, My exciting journey into Kubernetes history (Kubernetes Blog, 2020)](https://v1-33.docs.kubernetes.io/blog/2020/05/my-exciting-journey-into-kubernetes-history)
+8. [GitHub Docs, Rate limits for the REST API](https://docs.github.com/en/enterprise-server@3.21/rest/using-the-rest-api/rate-limits-for-the-rest-api?apiVersion=2026-03-10)
+9. [GitHub Changelog, Actions retention will cover checks, workflow runs, and statuses (27 Aug 2026)](https://github.blog/changelog/2026-08-27-actions-retention-will-cover-checks-workflow-runs-and-statuses/)
+10. [Gousios and Zaidman, A dataset for pull request research (MSR 2014)](https://azaidman.github.io/publications/gousiosMSR2014a.pdf)
+11. [Zeng et al., Deep just-in-time defect prediction: how far are we? (ISSTA 2021)](https://conf.researchr.org/details/issta-2021/issta-2021-technical-papers/33/Deep-Just-in-Time-Defect-Prediction-How-Far-Are-We-)
+12. [Rosa et al., Evaluating SZZ implementations through a developer-informed oracle (ICSE 2021)](https://arxiv.org/pdf/2102.03300)
+13. [OSSInsight, GitHub events feed under-capture notice](https://ossinsight.io/)
