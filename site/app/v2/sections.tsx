@@ -301,6 +301,12 @@ export function StatsBand() {
           </div>
           <div>
             <p className="font-geist text-[2.75rem] leading-none font-medium tracking-[-0.04em] md:text-[3.5rem]">
+              {/* Approximate: PR tabs were read over July-September and the
+                  counts keep moving. Outside the counting span so the
+                  count-up, which rewrites that span's text, cannot drop it. */}
+              <span aria-label="approximately" className="mr-1" style={{ color: T.grey }}>
+                ~
+              </span>
               <span data-count={STATS.big}>{STATS.big.toLocaleString("en-US")}</span>
             </p>
             <p className="mt-3 max-w-[20rem] font-geist text-[14px] leading-[1.5]" style={{ color: T.grey }}>
