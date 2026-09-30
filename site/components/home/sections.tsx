@@ -530,7 +530,7 @@ const CONTRACTS = [
     facts: ["7 fields, all required", "delivery_id dedupes"],
     code: PR_EVENT,
     tone: ["#6ee7d8", "#1f7a70"] as const,
-    art: "/v2/art/streak-teal.webp",
+    art: "/art/streak-teal.webp",
   },
   {
     id: "score-result",
@@ -540,7 +540,7 @@ const CONTRACTS = [
     facts: ["explanation is nullable", "model_version pinned"],
     code: SCORE_RESULT,
     tone: ["#a5b4fc", "#4453b5"] as const,
-    art: "/v2/art/streak-indigo.webp",
+    art: "/art/streak-indigo.webp",
   },
 ] as const;
 
@@ -745,7 +745,7 @@ export function ClosingBlock() {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/v2/art/rays-purple.webp"
+            src="/art/rays-purple.webp"
             alt=""
             loading="lazy"
             className="absolute inset-0 z-0 h-full w-full object-cover"

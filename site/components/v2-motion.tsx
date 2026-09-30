@@ -5,7 +5,7 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
 
-// Motion for /v2.
+// Motion for the landing page.
 //
 // Ownership is the whole design. Before hydration, CSS hides every
 // [data-anim] node behind html[data-motion="on"] so nothing flashes. The
