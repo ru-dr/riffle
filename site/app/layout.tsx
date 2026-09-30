@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import { Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
@@ -75,7 +76,7 @@ const schema = {
 // or a reduce-motion preference all leave the page fully rendered.
 //
 // The timer is the failsafe — if the GSAP timeline has not claimed the page
-// within 2.5s (slow hydration, chunk failure), the attribute is dropped and
+// within 5s (slow hydration, chunk failure), the attribute is dropped and
 // everything becomes visible without animation.
 const motionInit = `
 try {
@@ -84,7 +85,7 @@ try {
     r.dataset.motion = 'on';
     setTimeout(function () {
       if (!r.dataset.motionReady) r.removeAttribute('data-motion');
-    }, 2500);
+    }, 5000);
   }
 } catch (e) {}
 `;
@@ -92,6 +93,8 @@ try {
 const criticalCss = `
 html,body{height:100%;margin:0;background:#14100c}
 body{color:#f4f5f7}
+/* /v2 is a light document; set here so it cannot flash dark pre-stylesheet */
+body:has([data-riffle-light]){background:#fbfaf7;color:#16171d}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `;
 
@@ -103,7 +106,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${tagline.variable} ${GeistSans.variable} ${supplyMono.variable}`}
+      className={`${tagline.variable} ${GeistSans.variable} ${GeistMono.variable} ${supplyMono.variable}`}
       // The motion script below sets data-motion on this element before
       // hydration, by design - it has to run before first paint. That makes
       // the server and client attribute sets differ, which is exactly what

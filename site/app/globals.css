@@ -60,12 +60,270 @@ body:has([data-riffle-lock]) {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   /v2 layout primitives, rebuilt from voidzero.dev's own stylesheet.
+
+   The vertical hairlines that frame their pages are not decoration drawn on
+   top — they are the content wrapper's own left and right borders, so every
+   section's horizontal rule terminates exactly on them. The little inward
+   arrows at those junctions are CSS border-triangles hung on the wrapper's
+   pseudo-elements at top:-5px, straddling the rule.
+   --------------------------------------------------------------------------- */
+.v2-wrapper {
+  margin-inline: auto;
+  position: relative;
+  max-width: 90rem;
+  border-left: 1px solid var(--v2-stroke);
+  border-right: 1px solid var(--v2-stroke);
+  overflow-x: clip;
+}
+
+@media (max-width: 40rem) {
+  .v2-wrapper {
+    max-width: calc(100vw - 2rem);
+  }
+}
+
+/* Ticks sit on the section, not the wrapper, so each rule gets its own pair. */
+.v2-ticks {
+  position: relative;
+}
+.v2-ticks::before,
+.v2-ticks::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+}
+.v2-ticks::before {
+  left: 0;
+  border-left: 5px solid var(--v2-stroke);
+}
+.v2-ticks::after {
+  right: 0;
+  border-right: 5px solid var(--v2-stroke);
+}
+
+/* One sweep of accent across the headline, then it stays where it lands.
+   400% background over clipped text is what makes the band narrow enough to
+   read as a highlight rather than a gradient fill. */
+.v2-shine {
+  background: linear-gradient(
+    110deg,
+    var(--v2-ink) 0%,
+    var(--v2-ink) 40%,
+    var(--v2-accent) 48%,
+    var(--v2-accent) 50%,
+    var(--v2-accent) 52%,
+    var(--v2-ink) 60%,
+    var(--v2-ink) 100%
+  );
+  background-size: 400% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: v2-shine 4.5s ease-in-out 0.5s forwards;
+}
+
+@keyframes v2-shine {
+  to {
+    background-position: 28% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-shine {
+    animation: none;
+    background-position: 28% 0;
+  }
+}
+
+/* Status chip: white card, barely-there shadow, hairline outline. */
+.v2-chip {
+  background-color: #fff;
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.05);
+  outline: 1px solid rgba(59, 52, 64, 0.06);
+}
+
+/* The /v2 document runs on a light field, while the poster page and the
+   critical CSS in layout.tsx assume a warm near-black. Scoped to the page
+   that opts in, so neither has to know about the other. */
+body:has([data-riffle-light]) {
+  background-color: #fbfaf7;
+  color-scheme: light;
+  overflow: visible;
+}
+
+/* Scrollable code that should not show a scrollbar track. */
+.v2-noscrollbar {
+  scrollbar-width: none;
+}
+.v2-noscrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Services rail: inactive entries sit at 40% and desaturated, the active
+   one at full colour — the reference's treatment of its product list. */
+[data-rail] {
+  opacity: 0.4;
+  filter: grayscale(1);
+  transition:
+    opacity 500ms ease,
+    filter 500ms ease;
+}
+[data-rail][data-active] {
+  opacity: 1;
+  filter: none;
+}
+
+/* Tailwind v4 borders default to currentColor, so any divide-* line on an
+   element without an explicit colour came out in full ink. Zero-specificity
+   default for the whole /v2 subtree; inline colours still win. */
+[data-riffle-light] :where(*) {
+  border-color: var(--v2-stroke);
+}
+
+/* On dark blocks the wrapper's side rules and ticks go nickel, exactly as
+   the reference recolours them. */
+[data-surface="dark"] {
+  --v2-stroke: #3b3440;
+}
+
+/* Tokens for the primitives above. Kept on the opted-in subtree so the
+   poster page's warm palette is untouched. */
+[data-riffle-light] {
+  /* /v2 is set in Geist Sans and Geist Mono and nothing else. Overriding
+     the token on the subtree retargets every font-mono utility inside it,
+     including SVG text, without touching the poster page. */
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --v2-stroke: #e5e4e7;
+  --v2-ink: #16171d;
+  --v2-nickel: #3b3440;
+  --v2-grey: #867e8e;
+  --v2-accent: #0f7a4f;
+  --v2-live: #00b442;
+}
+
+
+/* Buttons, to the reference's measured spec rather than an impression of
+   it: sans, medium weight, white fill, 1px stroke outline, 0.5rem radius,
+   and a 105% scale with a soft shadow on hover. On dark surfaces the fill
+   drops out and the outline goes nickel. */
+.v2-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.5rem;
+  background-color: #fff;
+  padding: 0.5rem 1rem;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: #16171d;
+  outline: 1px solid #e5e4e7;
+  transition:
+    scale 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+  user-select: none;
+  white-space: nowrap;
+}
+.v2-btn:hover {
+  scale: 1.05;
+  box-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+.v2-btn--sm {
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.25rem;
+}
+[data-surface="dark"] .v2-btn {
+  background-color: transparent;
+  color: #fff;
+  outline-color: #3b3440;
+}
+[data-surface="dark"] .v2-btn:hover {
+  background-color: #fff;
+  color: #16171d;
+}
+
+.v2-link {
+  transition: color 140ms ease;
+}
+.v2-link:hover {
+  color: #16171d;
+}
+[data-surface="dark"] .v2-link:hover {
+  color: #fff;
+}
+
 /* Entrance states for the GSAP timeline in components/hero-motion.tsx.
    Gated on html[data-motion="on"], which the blocking script in layout.tsx
    sets only when JS is running and reduced motion is not requested — so a
    no-JS or reduce-motion reader gets the finished page, never a blank one.
    The attribute is removed when the timeline completes. */
 html[data-motion="on"] [data-anim] {
+  opacity: 0;
+}
+
+/* Lenis (smooth scrolling on /v2). Its required base styles: the document
+   must size to content while it drives scrolling, and native smooth
+   scrolling must not fight it. */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: clip;
+}
+
+/* Hero stack micro-motion: dotted leaders flow toward the stack, and the
+   live slab's texture drifts. Dash offsets and transforms only. */
+@keyframes v2-flow {
+  to {
+    stroke-dashoffset: -11;
+  }
+}
+.v2-flow-r {
+  animation: v2-flow 1.1s linear infinite;
+}
+.v2-flow-l {
+  animation: v2-flow 1.1s linear infinite reverse;
+}
+@keyframes v2-drift {
+  to {
+    transform: translateX(40px);
+  }
+}
+.v2-drift {
+  animation: v2-drift 9s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .v2-flow-r,
+  .v2-flow-l,
+  .v2-drift {
+    animation: none;
+  }
+}
+
+/* /v2 tags its above-fold nodes separately so the hero timeline does not
+   have to guess which of forty revealed elements are visible on load. */
+html[data-motion="on"] [data-anim="hero-rise"] {
   opacity: 0;
 }
 
