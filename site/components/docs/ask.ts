@@ -30,8 +30,18 @@ export async function retrieve(question: string, limit = 8) {
     title: h.heading ? `${h.page} › ${h.heading}` : h.page,
     href: h.href,
   }));
+  // A shared budget rather than a fixed cut per excerpt: a long section (the
+  // table of 50 repositories) gets room when the others are short, and the
+  // whole context stays near 12,000 characters, so a question stays cheap.
+  // Link targets are dropped - the model needs the text, not the URLs.
+  let budget = 12_000;
   const context = hits
-    .map((h, i) => `[${i + 1}] ${sources[i].title} (${h.href})\n${h.text.slice(0, 1800)}`)
+    .map((h, i) => {
+      const text = h.text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+      const take = Math.max(400, Math.min(6000, budget, text.length));
+      budget -= Math.min(take, text.length);
+      return `[${i + 1}] ${sources[i].title} (${h.href})\n${text.slice(0, take)}`;
+    })
     .join("\n\n");
   return { sources, context };
 }

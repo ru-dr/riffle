@@ -13,26 +13,50 @@ export const maxDuration = 60;
 
 const ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID;
 const TOKEN = process.env.CLOUDFLARE_AI_TOKEN;
-// Qwen3 30B (A3B): on the Workers Free plan, about 22 neurons per docs
-// question - roughly 450 a day inside the free allowance - and it cites
+// Qwen3 30B (A3B): on the Workers Free plan, about 30 neurons per docs
+// question - roughly 300 a day inside the free allowance - and it cites
 // well. Its reasoning arrives in reasoning_content, which is not streamed.
 // DOCS_ASK_REASONING sets reasoning_effort for models that take it.
 const MODEL = process.env.DOCS_ASK_MODEL ?? "@cf/qwen/qwen3-30b-a3b-fp8";
 const REASONING = process.env.DOCS_ASK_REASONING ?? "";
 const MAX_QUESTION = 400;
 
-// Best-effort per-IP limit. It is per server instance, so it caps a burst
-// rather than guaranteeing a quota; the daily allowance is the backstop.
-const WINDOW_MS = 60_000;
-const PER_WINDOW = 8;
-const seen = new Map<string, number[]>();
-function limited(ip: string) {
+// Our own limits, on top of Cloudflare's allowance: per visitor a minute and
+// a day, and for the whole site a day, set under what the free neurons cover
+// (~310 questions at ~30 neurons each) so one visitor or a script cannot
+// use it all up. Cached
+// answers cost nothing and are not counted.
+//
+// The counters live in this server instance's memory. On a single instance
+// they are exact; across several they are per instance, so a durable limit
+// would need a shared store (e.g. Upstash Redis). Env overrides the numbers.
+const LIMITS = {
+  perMinute: Number(process.env.DOCS_ASK_PER_MINUTE ?? 5),
+  perDay: Number(process.env.DOCS_ASK_PER_DAY ?? 30),
+  siteDay: Number(process.env.DOCS_ASK_SITE_PER_DAY ?? 300),
+};
+const MINUTE = 60_000;
+const DAY = 24 * 60 * MINUTE;
+const visitors = new Map<string, { minute: number[]; day: number[] }>();
+let site: number[] = [];
+
+/** Seconds until the caller may ask again, or 0 if allowed. Counts the call when allowed. */
+function admit(ip: string): { wait: number; reason?: string } {
   const now = Date.now();
-  const recent = (seen.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
-  recent.push(now);
-  seen.set(ip, recent);
-  if (seen.size > 5000) seen.clear();
-  return recent.length > PER_WINDOW;
+  site = site.filter((t) => now - t < DAY);
+  const v = visitors.get(ip) ?? { minute: [], day: [] };
+  v.minute = v.minute.filter((t) => now - t < MINUTE);
+  v.day = v.day.filter((t) => now - t < DAY);
+  const until = (oldest: number, span: number) => Math.max(1, Math.ceil((oldest + span - now) / 1000));
+  if (site.length >= LIMITS.siteDay) return { wait: until(site[0], DAY), reason: "Ask AI has reached today's limit for the site. Try again tomorrow, or use search." };
+  if (v.day.length >= LIMITS.perDay) return { wait: until(v.day[0], DAY), reason: `You've asked ${LIMITS.perDay} questions today, the daily limit. Try again tomorrow, or use search.` };
+  if (v.minute.length >= LIMITS.perMinute) return { wait: until(v.minute[0], MINUTE), reason: "That's a lot of questions in a minute. Try again in a moment." };
+  v.minute.push(now);
+  v.day.push(now);
+  site.push(now);
+  visitors.set(ip, v);
+  if (visitors.size > 10_000) visitors.delete(visitors.keys().next().value!);
+  return { wait: 0 };
 }
 
 // Repeated questions are answered from memory for an hour, so the free
@@ -51,8 +75,8 @@ function streamOf(sources: Source[], text: string) {
 export async function POST(req: Request) {
   if (!ACCOUNT || !TOKEN) return fail(503, "Ask AI is not configured on this deployment.");
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "local";
-  if (limited(ip)) return fail(429, "Too many questions in a minute. Try again shortly.");
+  // Vercel sets x-forwarded-for; its first entry is the visitor.
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "local";
 
   let question = "";
   try {
@@ -64,6 +88,9 @@ export async function POST(req: Request) {
   const key = keyOf(question);
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return streamOf(hit.sources, hit.text);
+
+  const gate = admit(ip);
+  if (gate.wait) return Response.json({ error: gate.reason }, { status: 429, headers: { "retry-after": String(gate.wait) } });
 
   const { sources, context } = await retrieve(question);
 
