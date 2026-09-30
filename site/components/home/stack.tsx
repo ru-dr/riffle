@@ -119,7 +119,6 @@ function Box({
     strokeWidth: ghost ? 1 : glow ? 2.2 : 1.4,
     strokeDasharray: ghost ? "2 3" : undefined,
     strokeOpacity: ghost ? 0.7 : 1,
-    filter: glow ? "url(#glow)" : undefined,
     style: { transition: "stroke 400ms ease, stroke-opacity 400ms ease" },
   } as const;
   return (
@@ -233,7 +232,6 @@ export function Stack() {
                 height={2 * W * TAN30 + D + 8}
               >
                 <image
-                  className="v2-drift"
                   href={l.art}
                   x="-40"
                   width={2 * W + 88}
@@ -243,16 +241,6 @@ export function Stack() {
               </pattern>
             );
           })}
-          {/* User-space region. The default sizes the filter to each
-              element's bounding box, and a vertical <line> has zero width —
-              so the live slab's side edges were filtered out of existence. */}
-          <filter id="glow" filterUnits="userSpaceOnUse" x="0" y="0" width="1000" height="600">
-            <feGaussianBlur stdDeviation="2.2" result="b" />
-            <feMerge>
-              <feMergeNode in="b" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
         </defs>
 
         <g>
@@ -295,7 +283,7 @@ export function Stack() {
                 </g>
               );
             })}
-            <circle data-spark r="3" cx="0" cy="0" fill={active >= 0 ? LAYERS[active].tone[0] : T.grey} opacity="0" filter="url(#glow)" />
+            <circle data-spark r="2.5" cx="0" cy="0" fill={active >= 0 ? LAYERS[active].tone[1] : T.grey} opacity="0" />
           </g>
 
           {[...LAYERS.keys()].reverse().map((i) => {
@@ -342,21 +330,30 @@ export function Stack() {
         const left = l.side === "left";
         const src = l.domain ? logoUrl(l.domain, { size: 32 }) : null;
         return (
+          // Each pill rides a full-size layer that translates by the lift, in
+          // percent of its own (= the drawing's) height. Moving it with `top`
+          // cost a layout on every frame of every lift; a transform does not.
           <div
             key={l.key}
-            className="absolute max-sm:hidden"
+            aria-hidden={!live}
+            className="pointer-events-none absolute inset-0 max-sm:hidden"
+            style={{
+              transform: `translateY(${(offset(i) / 600) * 100}%)`,
+              transition: "transform 700ms cubic-bezier(.2,.8,.2,1)",
+            }}
+          >
+          <div
+            className="pointer-events-auto absolute"
             onMouseEnter={() => take(i)}
             onMouseLeave={release}
             style={{
               // Lines end at x=196 / 804 (of 1000); pills sit 6 units short
               // of that so there is air between line and pill.
               left: left ? "19%" : "81%",
-              top: `${(edgeY(i) / 600) * 100}%`,
+              top: `${((restY(i) + D / 2) / 600) * 100}%`,
               transform: left ? "translate(-100%, -50%)" : "translate(0, -50%)",
-              transformOrigin: left ? "right center" : "left center",
               opacity: ready ? 1 : 0,
-              transition:
-                "top 700ms cubic-bezier(.2,.8,.2,1), opacity 500ms ease, transform 450ms cubic-bezier(.34,1.56,.64,1)",
+              transition: "opacity 500ms ease",
             }}
           >
             {/* A proper pill: white fill, 1px hairline, fully rounded, with
@@ -379,7 +376,8 @@ export function Stack() {
                   alt=""
                   width={12}
                   height={12}
-                  className="rounded-[2px]"
+                  onLoad={(e) => e.currentTarget.classList.add("is-loaded")}
+                  className="v2-fade rounded-[2px]"
                   style={{ filter: live ? "none" : "grayscale(1)", opacity: live ? 1 : 0.6, transition: "filter 400ms ease, opacity 400ms ease" }}
                 />
               ) : (
@@ -408,6 +406,7 @@ export function Stack() {
             >
               {l.caption}
             </span>
+          </div>
           </div>
         );
       })}

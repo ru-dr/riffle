@@ -47,7 +47,7 @@ export default function Page() {
       {/* Their header: logo and links grouped left with a 2.5rem gap, icon
           links right. Part of the wrapper, not a sticky bar — it scrolls away
           with the page. Links are sans at 16px in full ink, not mono grey. */}
-      <header className="v2-wrapper relative flex items-center justify-between px-6 py-5 lg:py-7">
+      <header data-anim="nav" className="v2-wrapper relative flex items-center justify-between px-6 py-5 lg:py-7">
         <div className="flex items-center gap-10">
           <a href="/" aria-label="Riffle home">
             <LockupBlack aria-hidden="true" className="block h-[22px] w-auto" style={{ color: T.ink }} />
@@ -96,8 +96,7 @@ export default function Page() {
             <span className="inline-flex rounded-sm p-0.5" style={{ backgroundColor: T.accentSoft }}>
               <span
                 aria-hidden="true"
-                data-anim="pulse"
-                className="block size-1.5 rounded-[1.1px]"
+                className="v2-pulse block size-1.5 rounded-[1.1px]"
                 style={{ backgroundColor: T.live }}
               />
             </span>
@@ -125,7 +124,7 @@ export default function Page() {
           </p>
         </div>
 
-        <div className="w-full px-5 pt-6 md:pt-0">
+        <div data-anim="stackin" className="w-full px-5 pt-6 md:pt-0">
           <Stack />
         </div>
       </div>

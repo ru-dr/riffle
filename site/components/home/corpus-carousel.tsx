@@ -73,13 +73,22 @@ export function CorpusCarousel() {
   return (
     <div className="relative w-full overflow-hidden" style={{ height: 64 }}>
       {/* Fixed brackets around the centre slot. */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-between"
-        style={{ width: frame, transition: "width 600ms cubic-bezier(.65,0,.35,1)" }}
-      >
-        <Paren />
-        <Paren flip />
+      {/* Each bracket is placed from the centre by a transform. Resizing a
+          container's width to hug the name cost a layout every frame of
+          every slide; translating two brackets does not. */}
+      <div aria-hidden="true" className="pointer-events-none absolute top-1/2 left-1/2 z-10 -translate-y-1/2">
+        {[-1, 1].map((side) => (
+          <span
+            key={side}
+            className="absolute top-1/2 block"
+            style={{
+              transform: `translate(${side * (frame / 2) - (side < 0 ? 0 : 11)}px, -50%)`,
+              transition: "transform 600ms cubic-bezier(.65,0,.35,1)",
+            }}
+          >
+            <Paren flip={side > 0} />
+          </span>
+        ))}
       </div>
 
       {/* Edge fades so repositories arrive and leave rather than clip. */}
@@ -118,7 +127,7 @@ export function CorpusCarousel() {
               <span data-content className="flex items-center gap-2.5">
                 {src && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={src} alt="" width={20} height={20} loading="lazy" className="rounded-[4px]" />
+                  <img src={src} alt="" width={20} height={20} loading="lazy" onLoad={(e) => e.currentTarget.classList.add("is-loaded")} className="v2-fade rounded-[4px]" />
                 )}
                 <span className="font-mono text-[13px] whitespace-nowrap" style={{ color: T.ink }}>
                   {repo}

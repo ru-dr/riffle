@@ -89,41 +89,37 @@ export function V2Motion() {
     gsap.registerPlugin(ScrollTrigger);
 
     const ctx = gsap.context(() => {
-      const hero = gsap.timeline({ defaults: { ease: "power3.out", duration: 0.8 } });
+      // Load: one quiet movement in reading order. Transform and opacity
+      // only, short distances, long eases — nothing lands hard, and nothing
+      // animates a property that costs a layout or a repaint.
+      gsap
+        .timeline({ defaults: { ease: "expo.out", duration: 1.1 } })
+        .fromTo('[data-anim="nav"]', { opacity: 0, y: -6 }, { opacity: 1, y: 0, duration: 0.9, clearProps: "transform" })
+        .fromTo('[data-anim="chip"]', { opacity: 0, y: 8 }, { opacity: 1, y: 0, clearProps: "transform" }, 0.12)
+        .fromTo('[data-anim="title"]', { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 1.3, clearProps: "transform" }, 0.2)
+        .fromTo('[data-anim="lede"]', { opacity: 0, y: 10 }, { opacity: 1, y: 0, clearProps: "transform" }, 0.34)
+        .fromTo('[data-anim="stackin"]', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 1.4, clearProps: "transform" }, 0.46);
 
-      hero
-        .fromTo('[data-anim="chip"]', { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.6 })
-        .fromTo(
-          '[data-anim="title"]',
-          { opacity: 0, y: 18 },
-          { opacity: 1, y: 0, duration: 0.95, clearProps: "transform" },
-          0.08,
-        )
-        .fromTo('[data-anim="lede"]', { opacity: 0, y: 10 }, { opacity: 1, y: 0 }, 0.22)
-        // Plates settle bottom-up: the foundation first, then what rests on it.
-        .fromTo(
-          '[data-anim="plate"]',
-          { opacity: 0, y: -14 },
-          { opacity: 1, y: 0, duration: 0.7, stagger: { each: 0.07, from: "end" } },
-          0.35,
-        )
-        .fromTo('[data-anim="lead"]', { opacity: 0 }, { opacity: 1, duration: 0.5, stagger: 0.05 }, 0.8);
-
-      // Everything below the fold: start state set now, reveal once on entry.
-      gsap.utils.toArray<HTMLElement>('[data-anim="rise"]').forEach((el) => {
-        gsap.set(el, { opacity: 0, y: 14 });
-        ScrollTrigger.create({
-          trigger: el,
-          start: "top 90%",
-          once: true,
-          onEnter: () =>
-            gsap.to(el, { opacity: 1, y: 0, duration: 0.7, ease: "power2.out", clearProps: "transform" }),
-        });
+      // Below the fold: batched, so elements entering together rise as one
+      // staggered group instead of dozens of tweens firing independently.
+      const rise = gsap.utils.toArray<HTMLElement>('[data-anim="rise"]');
+      gsap.set(rise, { opacity: 0, y: 12 });
+      ScrollTrigger.batch(rise, {
+        start: "top 90%",
+        once: true,
+        onEnter: (els) =>
+          gsap.to(els, {
+            opacity: 1,
+            y: 0,
+            duration: 0.9,
+            ease: "power3.out",
+            stagger: 0.06,
+            clearProps: "transform",
+          }),
       });
 
       // Figures count up once. The real value stays in the markup until the
-      // trigger fires, so a missed trigger leaves the true number on screen
-      // rather than a zero.
+      // trigger fires, so a missed trigger leaves the true number on screen.
       gsap.utils.toArray<HTMLElement>("[data-count]").forEach((el) => {
         const raw = el.dataset.count ?? "";
         const target = Number(raw);
@@ -139,7 +135,7 @@ export function V2Motion() {
             const state = { v: 0 };
             gsap.to(state, {
               v: target,
-              duration: 1.5,
+              duration: 1.6,
               ease: "power2.out",
               onUpdate: () => {
                 el.textContent = format(state.v);
@@ -150,14 +146,6 @@ export function V2Motion() {
             });
           },
         });
-      });
-
-      gsap.to('[data-anim="pulse"]', {
-        opacity: 0.3,
-        duration: 1.4,
-        ease: "sine.inOut",
-        repeat: -1,
-        yoyo: true,
       });
     });
 

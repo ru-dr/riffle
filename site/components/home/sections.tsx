@@ -750,19 +750,18 @@ export function ClosingBlock() {
             loading="lazy"
             className="absolute inset-0 z-0 h-full w-full object-cover"
           />
-          {/* The mark tile, edged like the terminal cards: the tile has no
-              border of its own; 1px out, a gap where the banner shows
-              through; 1px beyond that, a rim lit at two opposite corners and
-              dark between them, with a blurred copy underneath as the glow. */}
-          <span className="relative flex size-12 items-center justify-center md:size-20">
-            <span aria-hidden="true" className="v2-rim v2-rim-glow absolute -inset-[2px] rounded-[14px] md:rounded-[20px]" />
-            <span aria-hidden="true" className="v2-rim absolute -inset-[2px] rounded-[14px] md:rounded-[20px]" />
-            <span
-              className="relative flex size-full items-center justify-center rounded-[12px] md:rounded-[18px]"
-              style={{ backgroundColor: "#0d0c10", boxShadow: "0 12px 30px -8px rgba(0,0,0,0.6)" }}
-            >
-              <Mark aria-hidden="true" className="h-auto w-7 md:w-11" style={{ color: "#fff" }} />
-            </span>
+          {/* The mark tile's edge is a faint hairline on the tile itself,
+              slightly brighter along the top where light would catch it. No
+              gap, no blur: a glow that announces itself reads as cheap. */}
+          <span
+            className="relative flex size-12 items-center justify-center rounded-[12px] md:size-20 md:rounded-[18px]"
+            style={{
+              backgroundColor: "#0d0c10",
+              boxShadow:
+                "inset 0 0 0 1px rgba(255,255,255,0.1), inset 0 1px 0 rgba(255,255,255,0.14), 0 12px 30px -8px rgba(0,0,0,0.6)",
+            }}
+          >
+            <Mark aria-hidden="true" className="h-auto w-7 md:w-11" style={{ color: "#fff" }} />
           </span>
         </div>
 
