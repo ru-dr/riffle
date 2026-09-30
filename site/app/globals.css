@@ -78,11 +78,8 @@ body:has([data-riffle-lock]) {
   overflow-x: clip;
 }
 
-@media (max-width: 40rem) {
-  .v2-wrapper {
-    max-width: calc(100vw - 2rem);
-  }
-}
+/* On phones the wrapper runs edge to edge, as the reference does — no side
+   gutter, the vertical rules sitting on the screen edges. */
 
 /* Ticks sit on the section, not the wrapper, so each rule gets its own pair. */
 .v2-ticks {
