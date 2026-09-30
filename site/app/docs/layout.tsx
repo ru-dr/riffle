@@ -3,6 +3,7 @@ import { SiteHeader } from "@/components/home/site-header";
 import { MobileSections, Sidebar } from "@/components/docs/sidebar";
 import { DocsSearch } from "@/components/docs/search";
 import { ThemeSwitch } from "@/components/docs/theme-switch";
+import { ToTop } from "@/components/docs/to-top";
 
 // The docs frame: the site header, then one bordered wrapper split by
 // hairlines into section nav | article | "On this page". The article and its
@@ -48,6 +49,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
           Riffle is in development. These docs track the settled design.
         </p>
       </footer>
+      <ToTop />
     </div>
   );
 }
