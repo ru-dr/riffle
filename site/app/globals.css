@@ -522,3 +522,18 @@ body:has([data-riffle-light]) {
     animation: none;
   }
 }
+
+/* Ask AI: a slow breathe while the model reads, until text arrives. */
+.docs-thinking {
+  animation: rf-thinking 1.4s ease-in-out infinite;
+}
+@keyframes rf-thinking {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-thinking {
+    animation: none;
+  }
+}

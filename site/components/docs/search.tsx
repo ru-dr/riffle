@@ -1,11 +1,20 @@
 "use client";
 
 import MiniSearch, { type SearchResult } from "minisearch";
+import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AskSource } from "./answer";
 import type { SearchRecord } from "./search-index";
+import { topical } from "./stopwords";
 
-// Docs search. The trigger sits in the header; ⌘K, Ctrl+K or "/" opens it
+// The answer renderer (react-markdown) loads only when someone asks.
+const Answer = dynamic(() => import("./answer"), { ssr: false });
+
+type Ask = { question: string; sources: AskSource[]; text: string; status: "loading" | "streaming" | "done" | "error"; error?: string };
+
+// Docs search, and Ask AI. The trigger sits in the header; ⌘K, Ctrl+K or "/" opens it
 // anywhere in the docs. The index is fetched on first open, never on page
 // load, and searched in the browser: prefix and light fuzzy matching, with
 // headings and page titles weighted above body text.
@@ -41,8 +50,9 @@ function loadIndex() {
 
 function search(ms: MiniSearch<SearchRecord>, q: string): Hit[] {
   // Every word must match; if nothing does, fall back to any word.
-  let res: SearchResult[] = ms.search(q, { combineWith: "AND" });
-  if (!res.length) res = ms.search(q, { combineWith: "OR" });
+  const words = topical(q);
+  let res: SearchResult[] = ms.search(words, { combineWith: "AND" });
+  if (!res.length) res = ms.search(words, { combineWith: "OR" });
   return res.slice(0, 12).map((r) => ({ ...(r as unknown as SearchRecord), terms: r.terms }));
 }
 
@@ -54,8 +64,9 @@ function Snippet({ text, terms }: { text: string; terms: string[] }) {
   const start = Math.max(0, at - 48);
   const end = Math.min(text.length, start + 150);
   const slice = (start > 0 ? "…" : "") + text.slice(start, end) + (end < text.length ? "…" : "");
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).filter(Boolean);
-  const parts = escaped.length ? slice.split(new RegExp(`(${escaped.join("|")})`, "gi")) : [slice];
+  // Mark whole-word starts only; a 2-letter term inside "criticality" is noise.
+  const escaped = terms.filter((t) => t.length > 2).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const parts = escaped.length ? slice.split(new RegExp(`(?<![\\p{L}\\p{N}])(${escaped.join("|")})`, "giu")) : [slice];
   return (
     <span className="line-clamp-2 font-geist text-[13px] leading-[1.55]" style={{ color: "var(--rf-grey)" }}>
       {parts.map((p, i) =>
@@ -81,6 +92,52 @@ export function DocsSearch() {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const [mac, setMac] = useState(true);
+  const [ask, setAsk] = useState<Ask | null>(null);
+  const abort = useRef<AbortController | null>(null);
+
+  // Ask AI: POST the question; the reply's first line is the sources as
+  // JSON, the rest is the answer, streamed.
+  const startAsk = useCallback(async (question: string) => {
+    abort.current?.abort();
+    const ctl = new AbortController();
+    abort.current = ctl;
+    setAsk({ question, sources: [], text: "", status: "loading" });
+    try {
+      const res = await fetch("/docs/ask", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ question }),
+        signal: ctl.signal,
+      });
+      if (!res.ok || !res.body) {
+        const msg = await res.json().then((j) => j.error as string, () => "Ask AI is unavailable right now.");
+        setAsk({ question, sources: [], text: "", status: "error", error: msg });
+        return;
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      let sources: AskSource[] | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        if (!sources) {
+          const nl = buf.indexOf("\n");
+          if (nl < 0) continue;
+          sources = JSON.parse(buf.slice(0, nl)) as AskSource[];
+          buf = buf.slice(nl + 1);
+        }
+        const text = buf;
+        const src = sources;
+        setAsk({ question, sources: src, text, status: "streaming" });
+      }
+      setAsk({ question, sources: sources ?? [], text: buf, status: "done" });
+    } catch (err) {
+      if (ctl.signal.aborted) return;
+      setAsk({ question, sources: [], text: "", status: "error", error: "Ask AI is unavailable right now." });
+    }
+  }, []);
 
   const open = useCallback(() => {
     const d = dialog.current;
@@ -90,6 +147,10 @@ export function DocsSearch() {
     loadIndex().then(setIndex, () => setFailed(true));
   }, []);
   const close = useCallback(() => dialog.current?.close(), []);
+  const reset = useCallback(() => {
+    abort.current?.abort();
+    setAsk(null);
+  }, []);
 
   // Shortcuts: ⌘K / Ctrl+K from anywhere, "/" when not already typing.
   useEffect(() => {
@@ -116,8 +177,17 @@ export function DocsSearch() {
     router.push(href);
   };
 
+  // With a query, row 0 is "Ask AI" and the search hits follow it.
+  const query = q.trim();
   const onInputKey = (e: React.KeyboardEvent) => {
-    const n = q.trim() ? hits.length : SUGGEST.length;
+    if (ask) {
+      if (e.key === "Enter" && query && query !== ask.question) {
+        e.preventDefault();
+        startAsk(query);
+      }
+      return;
+    }
+    const n = query ? hits.length + 1 : SUGGEST.length;
     if (!n) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -127,7 +197,9 @@ export function DocsSearch() {
       setSel((s) => (s - 1 + n) % n);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      go(q.trim() ? hits[sel].href : SUGGEST[sel].href);
+      if (!query) go(SUGGEST[sel].href);
+      else if (sel === 0) startAsk(query);
+      else go(hits[sel - 1].href);
     }
   };
 
@@ -167,7 +239,10 @@ export function DocsSearch() {
         ref={dialog}
         aria-label="Search docs"
         onClick={(e) => e.target === dialog.current && close()}
-        onClose={() => setQ("")}
+        onClose={() => {
+          setQ("");
+          reset();
+        }}
         className="docs-search m-0 mx-auto mt-[10vh] w-[calc(100vw-2rem)] max-w-[40rem] overflow-hidden rounded-lg p-0"
         style={{ backgroundColor: "var(--rf-bg)", color: "var(--rf-ink)", outline: "1px solid var(--rf-stroke)", border: "none" }}
       >
@@ -179,9 +254,12 @@ export function DocsSearch() {
           <input
             ref={input}
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => {
+              setQ(e.target.value);
+              if (ask && ask.status !== "loading" && ask.status !== "streaming") reset();
+            }}
             onKeyDown={onInputKey}
-            placeholder="Search the docs"
+            placeholder="Search, or ask a question"
             aria-label="Search the docs"
             aria-controls="docs-search-results"
             autoComplete="off"
@@ -209,6 +287,8 @@ export function DocsSearch() {
                 ))}
               </ul>
             </>
+          ) : ask ? (
+            <AskView ask={ask} onNavigate={close} onBack={reset} />
           ) : failed ? (
             <p className="px-3 py-6 text-center font-geist text-[14px]" style={{ color: "var(--rf-grey)" }}>
               Search could not load. Check your connection and try again.
@@ -217,11 +297,22 @@ export function DocsSearch() {
             <p className="px-3 py-6 text-center font-geist text-[14px]" style={{ color: "var(--rf-grey)" }}>
               Loading…
             </p>
-          ) : hits.length ? (
+          ) : (
             <ul ref={list} id="docs-search-results">
+              <li>
+                <button type="button" data-i={0} onMouseMove={() => setSel(0)} onClick={() => startAsk(query)} className={`${row(0)} !flex-row items-center gap-3`}>
+                  <Spark />
+                  <span className="min-w-0 flex-1 truncate font-geist text-[14.5px]">
+                    Ask AI <span style={{ color: "var(--rf-grey)" }}>&ldquo;{query}&rdquo;</span>
+                  </span>
+                  <span className="font-mono text-[10.5px] tracking-[0.04em]" style={{ color: "var(--rf-grey)" }}>
+                    ↵
+                  </span>
+                </button>
+              </li>
               {hits.map((h, i) => (
                 <li key={h.id}>
-                  <button type="button" data-i={i} onMouseMove={() => setSel(i)} onClick={() => go(h.href)} className={row(i)}>
+                  <button type="button" data-i={i + 1} onMouseMove={() => setSel(i + 1)} onClick={() => go(h.href)} className={row(i + 1)}>
                     <span className="font-mono text-[10.5px] tracking-[0.06em] uppercase" style={{ color: "var(--rf-grey)" }}>
                       {h.section} / {h.page}
                     </span>
@@ -230,20 +321,90 @@ export function DocsSearch() {
                   </button>
                 </li>
               ))}
+              {!hits.length && (
+                <li className="px-3 py-5 text-center font-geist text-[14px]" style={{ color: "var(--rf-grey)" }}>
+                  No pages match &ldquo;{query}&rdquo;. Ask AI may still find it.
+                </li>
+              )}
             </ul>
-          ) : (
-            <p className="px-3 py-6 text-center font-geist text-[14px]" style={{ color: "var(--rf-grey)" }}>
-              No results for &ldquo;{q.trim()}&rdquo;
-            </p>
           )}
         </div>
 
         <div className="flex items-center gap-4 border-t px-4 py-2 font-mono text-[10.5px] tracking-[0.04em]" style={{ borderColor: "var(--rf-stroke)", color: "var(--rf-grey)" }}>
-          <span>↑↓ to move</span>
-          <span>↵ to open</span>
-          <span className="ml-auto">{hits.length ? `${hits.length} result${hits.length === 1 ? "" : "s"}` : ""}</span>
+          {ask ? (
+            <span>AI answers come from these docs and can still be wrong. Check the sources.</span>
+          ) : (
+            <>
+              <span>↑↓ to move</span>
+              <span>↵ to open</span>
+              <span className="ml-auto">{hits.length ? `${hits.length} result${hits.length === 1 ? "" : "s"}` : ""}</span>
+            </>
+          )}
         </div>
       </dialog>
     </>
+  );
+}
+
+function Spark() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-[16px] shrink-0" fill="none" stroke="var(--rf-accent)" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9L12 3.5Z" />
+      <path d="M18.5 16.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z" />
+    </svg>
+  );
+}
+
+/** The Ask AI panel: the question, the streamed answer, and its sources. */
+function AskView({ ask, onNavigate, onBack }: { ask: Ask; onNavigate: () => void; onBack: () => void }) {
+  return (
+    <div className="px-3 py-2" aria-live="polite" aria-busy={ask.status === "loading" || ask.status === "streaming"}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="flex min-w-0 items-center gap-2 font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--rf-grey)" }}>
+          <Spark />
+          <span className="truncate">Ask AI</span>
+        </p>
+        <button type="button" onClick={onBack} className="rf-link font-mono text-[11px] tracking-[0.04em]" style={{ color: "var(--rf-grey)" }}>
+          &larr; Back to results
+        </button>
+      </div>
+      <p className="mt-3 font-geist text-[15px] font-medium" style={{ color: "var(--rf-ink)" }}>
+        {ask.question}
+      </p>
+      <div className="mt-3">
+        {ask.status === "error" ? (
+          <p className="font-geist text-[14px]" style={{ color: "var(--rf-grey)" }}>
+            {ask.error}
+          </p>
+        ) : ask.text ? (
+          <Answer text={ask.text} sources={ask.sources} onNavigate={onNavigate} />
+        ) : (
+          <p className="docs-thinking font-geist text-[14px]" style={{ color: "var(--rf-grey)" }}>
+            Reading the docs…
+          </p>
+        )}
+      </div>
+      {ask.sources.length > 0 && ask.status !== "loading" && (
+        <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--rf-stroke)" }}>
+          <p className="mb-1.5 font-mono text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--rf-grey)" }}>
+            Sources
+          </p>
+          <ol className="flex flex-col gap-0.5">
+            {ask.sources.map((s) => (
+              <li key={s.n}>
+                <Link href={s.href} onClick={onNavigate} className="group flex items-baseline gap-2 rounded-md px-1 py-1 font-geist text-[13.5px] hover:bg-[var(--rf-wash)]">
+                  <span className="font-mono text-[10.5px]" style={{ color: "var(--rf-grey)" }}>
+                    {s.n}
+                  </span>
+                  <span className="truncate" style={{ color: "var(--rf-nickel)" }}>
+                    {s.title}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
   );
 }
