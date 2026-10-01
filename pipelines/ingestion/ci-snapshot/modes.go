@@ -233,6 +233,8 @@ func (c *client) runPRs(worker int, repo string) {
 		done = countLines(base + ".jsonl")
 	}
 
+	sizes := []int{50, 25, 10}
+	sizeIdx := 0
 	for {
 		var d struct {
 			Repository *struct {
@@ -260,11 +262,12 @@ func (c *client) runPRs(worker int, repo string) {
 				}
 			}
 		}
+		// Start at 50 and keep whatever size last worked for this repository.
+		// Retrying 100 on every page of a giant (llvm, zed, vllm) timed out
+		// again and again, which also tripped GitHub's secondary limit.
 		var err error
-		size := 0
-		for _, n := range []int{100, 50, 25, 10} {
-			size = n
-			vars := map[string]any{"owner": owner, "name": name, "n": n}
+		for ; sizeIdx < len(sizes); sizeIdx++ {
+			vars := map[string]any{"owner": owner, "name": name, "n": sizes[sizeIdx]}
 			if after != "" {
 				vars["after"] = after
 			}
@@ -272,8 +275,14 @@ func (c *client) runPRs(worker int, repo string) {
 			if !errors.Is(err, errTooHeavy) {
 				break
 			}
-			c.send(eventMsg(fmt.Sprintf("%s: timed out at %d a page, trying smaller", repo, n)))
+			c.send(eventMsg(fmt.Sprintf("%s: timed out at %d a page, using smaller pages", repo, sizes[sizeIdx])))
+			time.Sleep(3 * time.Second)
 		}
+		if sizeIdx == len(sizes) {
+			sizeIdx = len(sizes) - 1
+			err = errors.New("times out even at 10 a page")
+		}
+		size := sizes[sizeIdx]
 		if err != nil {
 			c.send(repoDoneMsg{repo: repo, commits: done, err: err})
 			return
