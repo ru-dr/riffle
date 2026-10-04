@@ -1,0 +1,41 @@
+# 0007: Add repositories to the training corpus
+
+- **Date:** 2026-10-03
+- **Status:** Proposed
+- **Owners:** #5 Data ingestion
+
+## Context
+
+Pilot mining found very few bad outcomes in well-gated libraries. Fast-moving
+application and framework repositories that merge through GitHub are expected
+to give more positives.
+
+## Decision
+
+- Add these repositories to `repo-miner/repos.txt`:
+  - **Application monorepos:** `getsentry/sentry`, `PostHog/posthog`,
+    `supabase/supabase`, `calcom/cal.com`, `n8n-io/n8n`,
+    `mattermost/mattermost`, `mastodon/mastodon`, `discourse/discourse`,
+    `apache/superset`, `airbytehq/airbyte`
+  - **Frameworks and tools:** `vercel/next.js`, `vitejs/vite`,
+    `sveltejs/svelte`, `denoland/deno`, `astral-sh/ruff`, `astral-sh/uv`,
+    `tauri-apps/tauri`
+  - **ML and data:** `ray-project/ray`, `vllm-project/vllm`, `apache/airflow`,
+    `pandas-dev/pandas`, `scikit-learn/scikit-learn`, `pydantic/pydantic`
+  - **Infrastructure:** `prometheus/prometheus`, `hashicorp/terraform`,
+    `argoproj/argo-cd`, `traefik/traefik`, `etcd-io/etcd`,
+    `keycloak/keycloak`
+
+## Options not taken
+
+| Option | Why not |
+| --- | --- |
+| Keep only the current corpus | Too few positives expected |
+
+## Consequences
+
+- The corpus grows beyond the 50 repositories listed on the site.
+
+## Revisit if
+
+- A repository's admission check shows it does not merge through GitHub.
