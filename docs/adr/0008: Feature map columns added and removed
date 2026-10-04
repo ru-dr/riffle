@@ -1,0 +1,45 @@
+# 0008: Feature map columns added and removed
+
+- **Date:** 2026-10-03
+- **Status:** Proposed
+- **Owners:** #1 Turning raw PR and commit data into model inputs,
+Feature engineering
+
+## Context
+
+The extractor's output columns have changed since the feature map in `riffle-data-research.pdf` was written.
+
+## Decision
+
+**Added**
+
+| Column | Meaning |
+| --- | --- |
+| `label_ci_fail_optional` | An auxiliary check (CodeQL, Scorecards, coverage) failed on the merge commit. Diagnostic only |
+| `label_szz_bug` | The PR introduced a line that a later fix commit repaired (SZZ, with `--szz`) |
+| `days_to_revert` | Days from merge to the first revert of the PR; null if none within 90 days |
+| `days_to_hotfix` | Days from merge to the first hotfix touching the same files; null if none within 90 days |
+| `days_to_szz_fix` | Days from merge to the earliest later fix of a line the PR introduced; null if none |
+| `merge_via` | How the PR was merged: `github` or `landed_commit` |
+| `mined_at` | UTC time the row was extracted |
+
+**Removed**
+
+| Column | Meaning |
+| --- | --- |
+| `label_mature` | Whether enough time had passed for the outcome to be known. Now computed at training time from `mined_at - merged_at` |
+
+## Options not taken
+
+| Option | Why not |
+| --- | --- |
+| Keep `label_mature` | Fixes one maturity threshold into the data |
+
+## Consequences
+
+- Output grows from 153 to 157 columns.
+- None of the added columns are model inputs.
+
+## Revisit if
+
+- The contract allows outcome windows above 90 days.
