@@ -1,0 +1,69 @@
+# One GitHub URL per line. Lines starting with # (and blank lines) are ignored.
+# Edit this list, then run:  python build_dataset.py --max-prs 200
+#
+# Full 100-repo corpus from site/content/docs/dataset-plan.md (v1 50 + v2 50).
+# Split (Train/Val/Test) is noted per repo for reference only; the miner ignores
+# comments. Many of these are giant — mind disk, rate limits, and the per-repo
+# pre-passes (--szz / --ci-history) before running the whole list at once.
+
+# ===================== Current 50 repositories (v1) =====================
+
+# --- Systems, languages, and developer tools ---
+https://github.com/kubernetes/kubernetes          # Train
+https://github.com/rust-lang/cargo                 # Train
+https://github.com/python/cpython                  # Train
+https://github.com/rust-lang/rust                  # Train (giant; bors rollups)
+https://github.com/llvm/llvm-project               # Train (giant)
+https://github.com/rust-lang/rust-clippy           # Train
+https://github.com/curl/curl                       # Val
+https://github.com/neovim/neovim                   # Test
+https://github.com/microsoft/vscode                # Train
+https://github.com/microsoft/TypeScript            # Train
+
+# --- Web and application frameworks ---
+https://github.com/facebook/react                  # Train
+https://github.com/nodejs/node                     # Train (lands via commit-queue bot)
+https://github.com/denoland/deno                   # Train
+https://github.com/django/django                   # Train (manual pushes)
+https://github.com/pallets/flask                   # Val
+https://github.com/rails/rails                     # Train
+https://github.com/laravel/framework               # Test
+https://github.com/spring-projects/spring-boot     # Train (manual merges)
+https://github.com/electron/electron               # Train
+https://github.com/vercel/next.js                  # Train
+
+# --- Databases and data systems ---
+https://github.com/ClickHouse/ClickHouse           # Train (giant)
+https://github.com/redis/redis                     # Test
+https://github.com/pingcap/tidb                    # Train
+https://github.com/apache/airflow                  # Train
+https://github.com/elastic/elasticsearch           # Test (giant)
+https://github.com/apache/kafka                    # Train
+https://github.com/apache/spark                    # Train (merged by script)
+https://github.com/apache/flink                    # Train (merged by committers)
+https://github.com/apache/druid                    # Val
+https://github.com/duckdb/duckdb                   # Train
+
+# --- Cloud, infrastructure, and observability ---
+https://github.com/docker/compose                  # Train
+https://github.com/moby/moby                       # Train
+https://github.com/hashicorp/terraform             # Train
+https://github.com/hashicorp/vault                 # Test
+https://github.com/ansible/ansible                 # Train
+https://github.com/prometheus/prometheus           # Val
+https://github.com/grafana/grafana                 # Train
+https://github.com/open-telemetry/opentelemetry-collector  # Train
+https://github.com/istio/istio                     # Train
+https://github.com/envoyproxy/envoy                # Train
+
+# --- ML, science, media, and end-user software ---
+https://github.com/pytorch/pytorch                 # Train (giant; merge bot, ghstack)
+https://github.com/tensorflow/tensorflow           # Train (giant; Copybara sync)
+https://github.com/scikit-learn/scikit-learn       # Train
+https://github.com/huggingface/transformers        # Train
+https://github.com/jupyter/notebook                # Test
+https://github.com/obsproject/obs-studio           # Val
+https://github.com/godotengine/godot               # Val (large open backlog)
+https://github.com/home-assistant/core             # Train (many dep bumps)
+https://github.com/nextcloud/server                # Train
+https://github.com/bitcoin/bitcoin                 # Train (maintainer merge script)

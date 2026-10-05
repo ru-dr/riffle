@@ -1,0 +1,8 @@
+.env
+out/
+clones/
+cloned_repos/
+ci_cache/
+data/
+*.parquet
+*.jsonl

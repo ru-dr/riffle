@@ -1,0 +1,25 @@
+# Core extraction needs only git (subprocess) + the standard library.
+# The following add optional feature stages:
+
+lizard>=1.17          # cyclomatic complexity (Source 2c, 4d) — recommended
+pandas>=2.0           # parquet output (optional; falls back to JSONL)
+pyarrow>=14.0         # parquet engine for pandas (optional)
+semgrep>=1.0          # static security/lint findings (Source 4d) — optional, SLOW
+                      # (runs rulesets over each PR diff; materially increases mine time.
+                      #  invoked as a CLI; pip install puts `semgrep` on PATH)
+
+# api_contract_change (Source 5) shells out to these, each optional and per-format:
+#   oasdiff            (OpenAPI)  -> https://github.com/oasdiff/oasdiff
+#   buf                (protobuf) -> https://buf.build/docs/installation
+#   graphql-inspector  (GraphQL)  -> npm i -g @graphql-inspector/cli
+# If a tool isn't installed, that spec's verdict degrades to missing (None).
+
+# No library needed for GitHub API / OSV — uses urllib from the stdlib.
+# Set GITHUB_TOKEN in the environment for API rate limits.
+
+# For LLM semantic flags (Source 6), install the OpenAI SDK and set LLM_API_KEY:
+#   pip install openai
+# By default it calls Claude Sonnet 5 via Anthropic's OpenAI-compatible endpoint
+# (LLM_API_KEY = an Anthropic API key). Swap models/providers with LLM_MODEL and
+# LLM_BASE_URL in .env. Enable the stage at runtime with the --llm flag.
+openai>=1.0            # optional; only needed with --llm
