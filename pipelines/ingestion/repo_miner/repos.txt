@@ -67,3 +67,67 @@ https://github.com/godotengine/godot               # Val (large open backlog)
 https://github.com/home-assistant/core             # Train (many dep bumps)
 https://github.com/nextcloud/server                # Train
 https://github.com/bitcoin/bitcoin                 # Train (maintainer merge script)
+
+# ===================== New 50 repositories (v2) =====================
+
+# --- Languages and compilers ---
+https://github.com/swiftlang/swift                 # Train (moved from apple/swift (2024))
+https://github.com/dotnet/roslyn                   # Train (maestro bot PRs)
+https://github.com/JuliaLang/julia                 # Test (backport labels)
+https://github.com/scala/scala3                    # Val (renamed from lampepfl/dotty)
+https://github.com/elixir-lang/elixir              # Test (core team pushes directly)
+https://github.com/haskell/cabal                   # Val (mergify merges)
+https://github.com/php/php-src                     # Train (gitHub canonical only since 2021)
+https://github.com/oven-sh/bun                     # Train (many bot-authored PRs)
+
+# --- Frontend and mobile ---
+https://github.com/angular/angular                 # Train (merged by merge tool)
+https://github.com/vuejs/core                      # Train (vue 2 history in vuejs/vue)
+https://github.com/sveltejs/svelte                 # Test (changesets release PRs)
+https://github.com/vitejs/vite                     # Val (renovate bot)
+https://github.com/withastro/astro                 # Train (changesets release PRs)
+https://github.com/flutter/flutter                 # Train (engine merged in Dec 2024)
+https://github.com/expo/expo                       # Train (monorepo)
+https://github.com/thunderbird/thunderbird-android # Train (formerly K-9 Mail)
+https://github.com/AntennaPod/AntennaPod           # Val (small)
+https://github.com/wordpress-mobile/WordPress-iOS  # Test (release-branch merges)
+
+# --- Security and networking ---
+https://github.com/openssl/openssl                 # Train (manual pushes after approval)
+https://github.com/keycloak/keycloak               # Train (dependabot heavy)
+https://github.com/aquasecurity/trivy              # Train (security incident Mar 2026)
+https://github.com/sigstore/cosign                 # Val (many dependency bumps)
+https://github.com/bitwarden/server                # Test (mixed licence)
+https://github.com/cilium/cilium                   # Train (backport PRs)
+https://github.com/caddyserver/caddy               # Train (v2 rewrite 2019)
+https://github.com/tailscale/tailscale             # Train
+
+# --- Data engineering and ML infrastructure ---
+https://github.com/apache/arrow                    # Train (jira to GitHub issues 2023)
+https://github.com/trinodb/trino                   # Train (renamed from prestosql)
+https://github.com/pola-rs/polars                  # Val
+https://github.com/dbt-labs/dbt                    # Train (renamed from dbt-labs/dbt-core)
+https://github.com/ray-project/ray                 # Train (external Buildkite CI)
+https://github.com/vllm-project/vllm               # Train (short history (2023 on))
+https://github.com/numpy/numpy                     # Train (sVN-era history)
+https://github.com/delta-io/delta                  # Test (check internal-sync commits)
+
+# --- Developer tools, package managers, and editors ---
+https://github.com/Homebrew/brew                   # Train (dependabot)
+https://github.com/astral-sh/uv                    # Train (short history (2023 on))
+https://github.com/pnpm/pnpm                       # Train (changesets)
+https://github.com/cli/cli                         # Val
+https://github.com/BurntSushi/ripgrep              # Train (very small)
+https://github.com/helix-editor/helix              # Test
+https://github.com/zed-industries/zed              # Train (private before Jan 2024)
+
+# --- Embedded, games, fintech, CMS, and social ---
+https://github.com/zephyrproject-rtos/zephyr       # Train (backport bot PRs)
+https://github.com/esphome/esphome                 # Val
+https://github.com/bevyengine/bevy                 # Train (merge queue)
+https://github.com/luanti-org/luanti               # Train (renamed from minetest (2024))
+https://github.com/tigerbeetle/tigerbeetle         # Test (small)
+https://github.com/actualbudget/actual             # Test (small)
+https://github.com/lightningnetwork/lnd            # Val
+https://github.com/WordPress/gutenberg             # Train (synced into WP core)
+https://github.com/mastodon/mastodon               # Train (renovate/Crowdin bots)

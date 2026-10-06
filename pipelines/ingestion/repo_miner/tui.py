@@ -201,6 +201,8 @@ class RiffleTUI(App):
                 yield Input("repos.txt", id="repos_file", compact=True)
                 yield Label("Output dataset")
                 yield Input("dataset.parquet", id="out", compact=True)
+                yield Label("Shard K/N (blank = all; 1/2 = v1, 2/2 = v2)")
+                yield Input("", id="shard", placeholder="e.g. 1/2", compact=True)
                 yield Label("Clone dir")
                 yield Input("cloned_repos", id="clone_dir", compact=True)
                 yield Label("Max PRs per repo (blank = all)")
@@ -258,6 +260,8 @@ class RiffleTUI(App):
                "--clone-dir", self._val("clone_dir") or "cloned_repos"]
         if self._val("max_prs"):
             cmd += ["--max-prs", self._val("max_prs")]
+        if self._val("shard"):
+            cmd += ["--shard", self._val("shard")]
         if self._val("workers"):
             cmd += ["--workers", self._val("workers")]
         if self._val("llm_conc"):
