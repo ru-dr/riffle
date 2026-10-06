@@ -177,6 +177,7 @@ class RiffleTUI(App):
         Binding("ctrl+t", "test_llm", "Test LLM"),
         Binding("ctrl+e", "test_run", "Test run"),
         Binding("ctrl+o", "view_test", "View test data"),
+        Binding("ctrl+g", "show_split", "Show split"),
         Binding("ctrl+l", "clear_log", "Clear log"),
         Binding("ctrl+q", "quit", "Quit"),
     ]
@@ -201,8 +202,10 @@ class RiffleTUI(App):
                 yield Input("repos.txt", id="repos_file", compact=True)
                 yield Label("Output dataset")
                 yield Input("dataset.parquet", id="out", compact=True)
-                yield Label("Shard K/N (blank = all; 1/2 = v1, 2/2 = v2)")
-                yield Input("", id="shard", placeholder="e.g. 1/2", compact=True)
+                yield Label("Number of PCs (1 = mine everything here)")
+                yield Input("1", id="pcs", type="integer", compact=True)
+                yield Label("This PC # (1..PCs)")
+                yield Input("1", id="pc_index", type="integer", compact=True)
                 yield Label("Clone dir")
                 yield Input("cloned_repos", id="clone_dir", compact=True)
                 yield Label("Max PRs per repo (blank = all)")
@@ -226,6 +229,7 @@ class RiffleTUI(App):
                 yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
                 yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
                 with Horizontal(id="buttons"):
+                    yield Button("Show split", id="split", variant="default")
                     yield Button("Test LLM", id="test", variant="primary")
                     yield Button("Test run", id="testrun", variant="warning")
                     yield Button("Start", id="start", variant="success")
@@ -260,8 +264,9 @@ class RiffleTUI(App):
                "--clone-dir", self._val("clone_dir") or "cloned_repos"]
         if self._val("max_prs"):
             cmd += ["--max-prs", self._val("max_prs")]
-        if self._val("shard"):
-            cmd += ["--shard", self._val("shard")]
+        shard = self._shard()
+        if shard:
+            cmd += ["--shard", shard]
         if self._val("workers"):
             cmd += ["--workers", self._val("workers")]
         if self._val("llm_conc"):
@@ -290,6 +295,44 @@ class RiffleTUI(App):
             if not (importlib.util.find_spec("pandas") and importlib.util.find_spec("pyarrow")):
                 out = out.rsplit(".", 1)[0] + ".jsonl"      # miner's fallback
         return [out]
+
+    def _shard(self) -> str | None:
+        """"K/N" for this PC, or None when mining everything on one machine."""
+        pcs, k = self._val("pcs"), self._val("pc_index")
+        n = int(pcs) if pcs.isdigit() else 1
+        i = int(k) if k.isdigit() else 1
+        return f"{i}/{n}" if n > 1 else None
+
+    def _shard_ok(self) -> bool:
+        pcs, k = self._val("pcs"), self._val("pc_index")
+        if not pcs.isdigit() or int(pcs) < 1:
+            self.notify("Number of PCs must be 1 or more.", severity="error")
+            return False
+        if int(pcs) > 1 and (not k.isdigit() or not 1 <= int(k) <= int(pcs)):
+            self.notify(f"This PC # must be between 1 and {pcs}.", severity="error")
+            return False
+        return True
+
+    @on(Button.Pressed, "#split")
+    def _split_btn(self) -> None:
+        self.action_show_split()
+
+    def action_show_split(self) -> None:
+        """Print how the repos file splits over the chosen number of PCs."""
+        if not self._shard_ok():
+            return
+        self.run_worker(self._run_split(), group="split")
+
+    async def _run_split(self) -> None:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, BUILD, "--repos-file", self._val("repos_file") or "repos.txt",
+            "--shard-plan", self._val("pcs") or "1", cwd=HERE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        out, _ = await proc.communicate()
+        me = self._val("pc_index") or "1"
+        for line in out.decode("utf-8", "replace").splitlines():
+            mine = line.strip().startswith(f"PC {me}/")
+            self._log(line, style="bold green" if mine else None)
 
     def _model(self) -> str:
         return str(self.query_one("#llm_model", Select).value)
@@ -344,6 +387,8 @@ class RiffleTUI(App):
     def action_start(self, test: bool = False) -> None:
         if self.proc is not None:
             self.notify("A run is already in progress.", severity="warning")
+            return
+        if not test and not self._shard_ok():
             return
         repos_file = self._val("repos_file") or "repos.txt"
         if not test and not os.path.isfile(os.path.join(HERE, repos_file)) and not os.path.isfile(repos_file):
@@ -401,6 +446,7 @@ class RiffleTUI(App):
         self.query_one("#stop", Button).disabled = not running
         self.query_one("#test", Button).disabled = running
         self.query_one("#testrun", Button).disabled = running
+        self.query_one("#split", Button).disabled = running
         for w in self.query("#form Input, #form Checkbox, #form Select"):
             w.disabled = running
 
