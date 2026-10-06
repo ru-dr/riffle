@@ -174,6 +174,13 @@ failing (before v1.6.0, repos that ship `.git-blame-ignore-revs`).
 drops that repo's rows, SZZ cache and checkpoint and mines it again. Its
 earlier LLM answers are kept and reused for PRs with the same commits, so the
 re-mine makes no new LLM calls for them.
+Coverage counts only PRs that touch files that already existed (a PR that only
+adds files has no history to blame): 95-100% is healthy, `<- check` (50-95%)
+means look for `[blame] warning` in `logs/run-*.log`, `<- re-mine` (under
+50%) means blame was failing. A re-mine only runs for repos in this PC's share
+(`--shard`); naming another PC's repo stops with nothing changed.
+`--auto-remine` (TUI: "Auto re-mine broken repos") runs the audit at Start and
+re-mines the flagged repos in this PC's share automatically.
 
 Configure the batch on the left (repos file, output, PR cap, workers, LLM /
 SZZ / CI toggles), press **ctrl+r** to start. The right side shows per-repo

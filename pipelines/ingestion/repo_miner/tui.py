@@ -438,6 +438,7 @@ class RiffleTUI(App):
                 yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
                 yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
                 yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
+                yield Checkbox("Auto re-mine broken repos", False, id="auto_remine", compact=True)
                 with Horizontal(id="buttons"):
                     yield Button("Show split", id="split", variant="default")
                     yield Button("Audit", id="audit", variant="default")
@@ -634,7 +635,8 @@ class RiffleTUI(App):
             cmd += ["--llm-concurrency", self._val("llm_conc")]
         cmd += ["--llm-model", self._model()]
         for wid, flag in [("llm", "--llm"), ("szz", "--szz"), ("ci_history", "--ci-history"),
-                          ("skip_existing", "--skip-existing"), ("keep_clones", "--keep-clones")]:
+                          ("skip_existing", "--skip-existing"), ("keep_clones", "--keep-clones"),
+                          ("auto_remine", "--auto-remine")]:
             if self._on(wid):
                 cmd.append(flag)
         if not self._on("scanners"):
@@ -700,7 +702,8 @@ class RiffleTUI(App):
             bad = line.rstrip().endswith("<- re-mine")
             if bad:
                 flagged.append(line.split()[0])
-            self._log(line, style="bold red" if bad else None)
+            self._log(line, style="bold red" if bad else
+                      "yellow" if line.rstrip().endswith("<- check") else None)
         if flagged:
             box = self.query_one("#remine", Input)
             have = [r.strip() for r in box.value.split(",") if r.strip()]
