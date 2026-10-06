@@ -157,7 +157,8 @@ it automatically. If `python3-venv` is missing, the doctor offers the `apt`
 command.
 
 The TUI log is selectable (drag, then ctrl+c); ctrl+y copies the whole log and
-ctrl+b opens the web view and copies its link. The web view (read-only, LAN,
+ctrl+b shows a QR code of the web view's link to scan with a phone (o opens
+it here, c copies the link). The web view (read-only, LAN,
 random key per launch) has log search, level filter, wrap / follow / pause /
 expand, copy and download, and keyboard shortcuts (`?` lists them).
 

@@ -18,7 +18,7 @@ no progress, saves every run's log under logs/, and remembers the form between
 launches (.tui_settings.json).
 
 Keys: ctrl+r start · ctrl+x stop · ctrl+l clear log · ctrl+y copy log ·
-ctrl+b web view (copies its link) · ctrl+q quit. Drag over the log or stats to
+ctrl+b web view QR code (o open here, c copy link) · ctrl+q quit. Drag over the log or stats to
 select text, then ctrl+c to copy it.
 Every launch first runs doctor.py, which checks git, the Python packages,
 GITHUB_TOKEN and the LLM setup and offers to fix them (install packages, save a
@@ -271,6 +271,81 @@ class DataViewer(ModalScreen):
             t.add_row(k, *([Text(types[k], style="cyan")] if types else []), *vals)
 
 
+def qr_text(data: str) -> Text | None:
+    """The data as a QR code drawn with half-block characters, two modules per
+    character cell. Always black on white (with a quiet zone), so a phone can
+    scan it whatever the terminal theme. None if segno isn't installed."""
+    try:
+        import segno
+    except ImportError:
+        return None
+    qr = segno.make(data, error="m", micro=False)
+    rows = [[bool(v) for v in r] for r in qr.matrix]
+    q = 2                                            # quiet zone, in modules
+    w = len(rows[0]) + 2 * q
+    rows = [[False] * w] * q + [[False] * q + r + [False] * q for r in rows] + [[False] * w] * q
+    if len(rows) % 2:
+        rows.append([False] * w)
+    out = Text(no_wrap=True, overflow="crop")
+    for top, bot in zip(rows[0::2], rows[1::2]):
+        for t, b in zip(top, bot):
+            out.append("▀", style=f"{'#000000' if t else '#ffffff'} on {'#000000' if b else '#ffffff'}")
+        out.append("\n")
+    return out
+
+
+class QRScreen(ModalScreen):
+    """Scan to open the web view on a phone; o opens it here, c copies it."""
+    BINDINGS = [Binding("escape,q,ctrl+b", "app.pop_screen", "Close"),
+                Binding("o", "open", "Open here"), Binding("c", "copy", "Copy link")]
+    DEFAULT_CSS = """
+    QRScreen { align: center middle; }
+    #qrbox { width: auto; height: auto; max-width: 95%; border: round $accent; background: $surface; padding: 1 2; }
+    #qrbox Static { width: auto; }
+    #qr_title { text-style: bold; margin-bottom: 1; }
+    #qr_hint { color: $text-muted; margin-top: 1; }
+    #qr_buttons { height: 3; width: auto; margin-top: 1; }
+    #qr_buttons Button { margin-right: 1; }
+    """
+
+    def __init__(self, url: str, local_url: str):
+        super().__init__()
+        self.url, self.local_url = url, local_url
+
+    def compose(self) -> ComposeResult:
+        code = qr_text(self.url)
+        with Vertical(id="qrbox"):
+            yield Static("Web view · scan with a phone on this Wi-Fi", id="qr_title")
+            yield Static(code if code is not None else
+                         Text("(QR needs the segno package: pip install segno)", style="yellow"))
+            yield Static(Text(self.url, style="bold cyan"), id="qr_url")
+            yield Static("Read-only. The key in the link changes every launch.", id="qr_hint")
+            with Horizontal(id="qr_buttons"):
+                yield Button("Open here (o)", id="qr_open", variant="primary")
+                yield Button("Copy link (c)", id="qr_copy")
+                yield Button("Close (esc)", id="qr_close")
+
+    def action_open(self) -> None:
+        webbrowser.open(self.local_url)
+        self.app.notify("Opened in this computer's browser")
+
+    def action_copy(self) -> None:
+        self.app._copy(self.url)
+        self.app.notify(f"Link copied: {self.url}")
+
+    @on(Button.Pressed, "#qr_open")
+    def _b_open(self) -> None:
+        self.action_open()
+
+    @on(Button.Pressed, "#qr_copy")
+    def _b_copy(self) -> None:
+        self.action_copy()
+
+    @on(Button.Pressed, "#qr_close")
+    def _b_close(self) -> None:
+        self.app.pop_screen()
+
+
 class RiffleTUI(App):
     TITLE = "Riffle miner"
     SUB_TITLE = f"build_dataset · v{__version__}"
@@ -298,7 +373,7 @@ class RiffleTUI(App):
         Binding("ctrl+g", "show_split", "Show split"),
         Binding("ctrl+l", "clear_log", "Clear log"),
         Binding("ctrl+y", "copy_log", "Copy log"),
-        Binding("ctrl+b", "open_dashboard", "Web view"),
+        Binding("ctrl+b", "open_dashboard", "Web view / QR"),
         Binding("ctrl+q", "quit", "Quit"),
     ]
 
@@ -424,8 +499,8 @@ class RiffleTUI(App):
             self.dash = None
             return
         self._log(f"[web] watch from any device on this Wi-Fi: {self.dash.url}", style="bold cyan")
-        self._log("[web] ctrl+b opens it here · read-only · the key changes every launch",
-                  style="cyan")
+        self._log("[web] ctrl+b shows a QR code to scan with your phone · read-only · "
+                  "the key changes every launch", style="cyan")
         self.query_one("#stats", Static).update(
             "Idle. Configure on the left, then Start (ctrl+r).\n"
             f"[b]Web view:[/b] {self.dash.url}")
@@ -435,9 +510,7 @@ class RiffleTUI(App):
         if self.dash is None:
             self.notify("Web view is off (RIFFLE_DASHBOARD=0 or no free port).", severity="warning")
             return
-        webbrowser.open(self.dash.local_url)
-        self._copy(self.dash.url)
-        self.notify(f"Link copied for other devices: {self.dash.url}", timeout=10)
+        self.push_screen(QRScreen(self.dash.url, self.dash.local_url))
 
     def _copy(self, text: str) -> bool:
         """Copy via the terminal (OSC 52) and the OS clipboard tool, so it works
