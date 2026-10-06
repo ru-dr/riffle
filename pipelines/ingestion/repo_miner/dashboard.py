@@ -148,286 +148,289 @@ PAGE = r"""<!doctype html>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,@@FAVICON@@">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-/* Tokens: the site's own palette (site/components/home/tokens.ts and the docs
-   themes in site/app/globals.css). */
+/* Built to the site's own rules (site/app/globals.css, site/app/docs/page.tsx,
+   site/components/docs/status.tsx): square hairline grids inside a framed
+   wrapper, Geist medium headings with tight tracking, 11px mono captions,
+   and tinted 4px status tags. No cards, no pills, no shadows but the chip. */
 :root{
   --sans:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --bg:#fbfaf7;--surface:#ffffff;--wash:rgba(22,23,29,.045);--stroke:#e5e4e7;
-  --ink:#16171d;--nickel:#3b3440;--grey:#867e8e;
-  --accent:#0f7a4f;--live:#00b442;--accent-soft:rgba(0,180,66,.1);
-  --warn:#a16207;--warn-soft:rgba(202,138,4,.12);--bad:#c0262d;--bad-soft:rgba(220,38,38,.09);
-  --term:#16171d;--term-ink:#f2f1f4;--term-grey:rgba(242,241,244,.48);--term-stroke:#2c2d34;
+  --ink:#16171d;--nickel:#3b3440;--grey:#867e8e;--accent:#0f7a4f;--live:#00b442;
+  --live-soft:rgba(0,180,66,.1);
+  --t-green:#16a34a;--t-green-bg:rgba(22,163,74,.12);--t-amber:#d97706;--t-amber-bg:rgba(217,119,6,.12);
+  --t-red:#dc2626;--t-red-bg:rgba(220,38,38,.1);--t-blue:#3b82f6;--t-blue-bg:rgba(59,130,246,.12);
+  --code-bg:#16171d;--code-ink:#f2f1f4;--code-grey:rgba(242,241,244,.48);--code-stroke:#2c2d34;
   --chip-shadow:0 2px 4px 0 rgba(0,0,0,.05);--chip-outline:1px solid rgba(59,52,64,.06);
 }
 @media (prefers-color-scheme:dark){:root{
   --bg:#16171d;--surface:#1e1f25;--wash:rgba(255,255,255,.055);--stroke:#2c2d34;
-  --ink:#f2f1f4;--nickel:rgba(242,241,244,.72);--grey:rgba(242,241,244,.48);
-  --accent:#7dd3a0;--live:#3ddc84;--accent-soft:rgba(125,211,160,.12);
-  --warn:#e3b341;--warn-soft:rgba(227,179,65,.12);--bad:#f47174;--bad-soft:rgba(244,113,116,.12);
-  --term:#1a1b20;--term-stroke:rgba(255,255,255,.08);
-  --chip-shadow:none;--chip-outline:1px solid var(--stroke);
+  --ink:#f2f1f4;--nickel:rgba(242,241,244,.72);--grey:rgba(242,241,244,.48);--accent:#7dd3a0;
+  --code-bg:#1a1b20;--code-stroke:rgba(255,255,255,.08);
+  --chip-shadow:none;--chip-outline:1px solid #2c2d34;
 }}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
 ::selection{background:rgba(15,122,79,.18)}
-.mono,.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.03em}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.cap{font:400 11px/1.4 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--grey)}
 
-/* The site's frame: the wrapper's own side borders are the vertical
-   hairlines, and each section rule ends on them with a small inward tick. */
-.wrap{margin-inline:auto;position:relative}
-@media (min-width:48rem){.wrap{max-width:min(91vw,75rem);border-left:1px solid var(--stroke);border-right:1px solid var(--stroke)}}
-.sec{position:relative;border-top:1px solid var(--stroke);padding:28px 24px}
-.sec::before,.sec::after{content:"";position:absolute;top:-5px;width:0;height:0;
+/* frame: the wrapper's side borders are the page's vertical rules */
+.wrap{margin-inline:auto;position:relative;min-height:100vh}
+@media (min-width:48rem){.wrap{max-width:calc(100vw - 2rem);border-left:1px solid var(--stroke);border-right:1px solid var(--stroke)}}
+@media (min-width:48rem) and (max-width:79.999rem){.wrap{max-width:91vw}}
+@media (min-width:103.5rem){.wrap{max-width:103.5rem}}
+/* every horizontal rule ends on the frame with a small inward tick */
+.rule{position:relative;border-top:1px solid var(--stroke)}
+.rule::before,.rule::after{content:"";position:absolute;top:-5px;width:0;height:0;
   border-top:5px solid transparent;border-bottom:5px solid transparent}
-.sec::before{left:0;border-left:5px solid var(--stroke)}
-.sec::after{right:0;border-right:5px solid var(--stroke)}
+.rule::before{left:0;border-left:5px solid var(--stroke)}
+.rule::after{right:0;border-right:5px solid var(--stroke)}
 
 /* header */
 header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:20px 24px}
-.brand{display:flex;align-items:center;gap:12px;min-width:0;color:var(--ink);text-decoration:none}
+@media (min-width:64rem){header{padding:28px 40px}}
+.brand{display:flex;align-items:center;gap:12px;color:var(--ink);text-decoration:none;min-width:0}
 .lockup{display:block;height:22px;width:auto;color:var(--ink)}
-.tag{border-radius:4px;padding:2px 6px;font:500 11px var(--mono);letter-spacing:.04em;text-transform:uppercase;
+.tag{display:inline-flex;align-items:center;border-radius:4px;padding:2px 6px;
+  font:400 11px var(--mono);letter-spacing:.04em;text-transform:uppercase;
   outline:1px solid var(--stroke);color:var(--grey);white-space:nowrap}
 .tag.ver{text-transform:none;letter-spacing:0}
-.right{display:flex;align-items:center;gap:10px}
+.hright{display:flex;align-items:center;gap:12px}
 .chip{display:inline-flex;align-items:center;gap:6px;border-radius:4px;padding:4px 12px;
   font:500 13px var(--mono);letter-spacing:-.03em;background:var(--surface);
   box-shadow:var(--chip-shadow);outline:var(--chip-outline);color:var(--grey);white-space:nowrap}
-.chip .ink{color:var(--ink)}
+.chip b{font-weight:500;color:var(--ink)}
 .sq{display:inline-flex;border-radius:2px;padding:2px;background:var(--wash)}
 .sq i{display:block;width:6px;height:6px;border-radius:1.1px;background:var(--grey)}
-.s-running .sq{background:var(--accent-soft)} .s-running .sq i{background:var(--live);animation:rf-pulse 2.8s ease-in-out infinite}
-.s-bad .sq{background:var(--bad-soft)} .s-bad .sq i{background:var(--bad)}
-.s-warn .sq{background:var(--warn-soft)} .s-warn .sq i{background:var(--warn)}
+.live .sq{background:var(--live-soft)} .live .sq i{background:var(--live);animation:rf-pulse 2.8s ease-in-out infinite}
+.stopped .sq{background:var(--t-amber-bg)} .stopped .sq i{background:var(--t-amber)}
+.dead .sq{background:var(--t-red-bg)} .dead .sq i{background:var(--t-red)}
 @keyframes rf-pulse{50%{opacity:.3}}
-@media (prefers-reduced-motion:reduce){.s-running .sq i{animation:none}}
-.updated{color:var(--grey);font:12px var(--mono)}
+@media (prefers-reduced-motion:reduce){.live .sq i{animation:none}}
+#updated{font:12px var(--mono);color:var(--grey)}
 #stale{display:none}
 
-/* section labels: the site's mono caption */
-.label{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px;
-  font:500 12px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--grey)}
-.label .count{color:var(--nickel)}
+/* intro: the docs page's lead block */
+.intro{padding:48px 24px 40px}
+@media (min-width:48rem){.intro{padding:64px 40px 44px}}
+.intro h1{margin:20px 0 0;font:500 2.25rem/1.08 var(--sans);letter-spacing:-.035em}
+@media (min-width:48rem){.intro h1{font-size:3rem}}
+.intro h1 .of{color:var(--grey)}
+.intro p{margin:20px 0 0;max-width:40rem;font:17px/1.6 var(--sans);color:var(--nickel)}
+.line{margin-top:32px;height:2px;background:var(--stroke);position:relative;overflow:hidden}
+.line i{position:absolute;inset:0 auto 0 0;width:0;background:var(--ink);transition:width .8s cubic-bezier(.2,.8,.2,1)}
 
-/* hero: overall progress */
-.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap}
-.pct{font:600 64px/1 var(--mono);letter-spacing:-.05em;color:var(--ink)}
-.pct small{font-size:24px;color:var(--grey);margin-left:2px;letter-spacing:0}
-.hero .sub{color:var(--grey);font-size:14px}
-.hero .prs{font:600 22px var(--mono);letter-spacing:-.03em}
-.track{height:6px;background:var(--wash);border-radius:999px;overflow:hidden}
-.track>i{display:block;height:100%;width:0;border-radius:inherit;background:var(--accent);
-  transition:width .8s cubic-bezier(.2,.8,.2,1)}
-.hero-track{margin-top:20px;height:8px}
+/* stat strips: one-pixel gaps over the stroke colour give exact hairlines */
+.grid{display:grid;gap:1px;background:var(--stroke)}
+.grid>*{background:var(--bg)}
+.g5{grid-template-columns:repeat(5,1fr)} .g3{grid-template-columns:repeat(3,1fr)}
+.stat{display:flex;flex-direction:column;gap:6px;padding:24px;min-width:0}
+@media (min-width:48rem){.stat{padding:24px 40px}}
+.stat .v{font:500 16px/1.3 var(--sans);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .v.num{font:500 22px/1.2 var(--sans);letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.stat .h{font:14px/1.45 var(--sans);color:var(--nickel)}
+.meter{margin-top:6px;height:2px;background:var(--stroke);position:relative;overflow:hidden}
+.meter i{position:absolute;inset:0 auto 0 0;width:0;background:var(--ink);transition:width .6s ease}
+.meter.warn i{background:var(--t-amber)} .meter.bad i{background:var(--t-red)}
+.v.warn{color:var(--t-amber)} .v.bad{color:var(--t-red)} .v.good{color:var(--accent)}
 
-/* stat grid: hairline cells, no floating cards */
-.stats{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--stroke)}
-.stats.three{grid-template-columns:repeat(3,1fr)}
-.cell{padding:18px 24px;border-left:1px solid var(--stroke);min-width:0}
-.cell:first-child{border-left:0}
-.cell .k{font:500 12px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--grey)}
-.cell .v{font:600 24px/1.25 var(--mono);letter-spacing:-.04em;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cell .h{font:13px var(--mono);letter-spacing:-.02em;color:var(--grey);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cell .track{margin-top:12px;height:4px}
-.lvl-ok{color:var(--accent)} .lvl-warn{color:var(--warn)} .lvl-bad{color:var(--bad)}
-.track.lvl-warn>i{background:var(--warn)} .track.lvl-bad>i{background:var(--bad)}
+/* repositories: the docs section card, with hairline rows */
+.section{padding:32px 24px 8px}
+@media (min-width:48rem){.section{padding:32px 40px 8px}}
+.shead{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.shead h2{margin:14px 0 0;font:500 1.35rem/1.2 var(--sans);letter-spacing:-.02em}
+.shead p{margin:8px 0 0;font:14px/1.55 var(--sans);color:var(--nickel)}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;margin-top:22px}
+.tabs button{appearance:none;cursor:pointer;border:0;background:transparent;border-radius:6px;
+  padding:5px 10px;font:14px var(--sans);color:var(--nickel);outline:1px solid transparent;transition:background .15s}
+.tabs button:hover{background:var(--wash)}
+.tabs button[aria-pressed="true"]{background:var(--surface);color:var(--ink);outline-color:var(--stroke)}
+.tabs .n{font:11px var(--mono);color:var(--grey);margin-left:6px}
+.list{margin:20px 0 0;padding:0;list-style:none;border-top:1px solid var(--stroke)}
+.row{display:grid;grid-template-columns:minmax(0,1.2fr) 96px minmax(0,1.3fr) 200px minmax(0,2fr);
+  gap:24px;align-items:center;padding:11px 0;border-bottom:1px solid var(--stroke)}
+.row .nm{font:14.5px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .stage{font:14px var(--sans);color:var(--nickel);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .prog{display:flex;align-items:center;gap:12px;min-width:0}
+.row .prog .meter{flex:1;margin:0}
+.row .prog span{font:12px var(--mono);color:var(--grey);min-width:56px;text-align:right}
+.row .facts{display:flex;flex-wrap:wrap;gap:2px 16px;font:12px var(--mono);color:var(--grey);min-width:0}
+.row .facts b{font-weight:400;color:var(--ink)}
+.st{display:inline-flex;align-items:center;justify-self:start;border-radius:4px;padding:2px 6px;
+  font:400 10.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.st-active{color:var(--t-blue);background:var(--t-blue-bg)}
+.st-warn{color:var(--t-amber);background:var(--t-amber-bg)}
+.st-failed{color:var(--t-red);background:var(--t-red-bg)}
+.st-done{color:var(--t-green);background:var(--t-green-bg)}
+.st-queued{color:var(--nickel);background:var(--wash)}
+.row.q .prog,.row.q .facts,.row.q .stage{visibility:hidden}
+.row.q .nm{color:var(--nickel)}
+.empty{padding:28px 0;color:var(--grey);font-size:14px}
 
-/* filters: the site's button spec (1px stroke, .5rem radius, white fill) */
-.filters{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto;text-transform:none;letter-spacing:0}
-.filters button{font:500 13px var(--sans);color:var(--nickel);background:var(--surface);
-  border:1px solid var(--stroke);border-radius:.5rem;padding:4px 10px;cursor:pointer;
-  transition:transform .15s ease,box-shadow .15s ease}
-.filters button:hover{transform:scale(1.03);box-shadow:0 2px 6px rgba(0,0,0,.05)}
-.filters button[aria-pressed="true"]{color:var(--bg);background:var(--ink);border-color:var(--ink)}
-.filters .n{font-family:var(--mono);opacity:.6;margin-left:5px}
-
-/* repo list */
-.repos{border:1px solid var(--stroke);border-radius:.5rem;background:var(--surface);overflow:hidden}
-.repo{display:grid;grid-template-columns:minmax(180px,1.3fr) minmax(150px,1.2fr) minmax(170px,1fr) minmax(0,1.8fr);
-  gap:16px;align-items:center;padding:13px 18px;border-top:1px solid var(--stroke)}
-.repo:first-child{border-top:0}
-.repo .name{display:flex;align-items:center;gap:10px;min-width:0;font:500 14px var(--mono);letter-spacing:-.03em}
-.repo .name span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.badge{display:inline-flex;align-items:center;font-size:13px;font-weight:500;padding:2px 8px;
-  border-radius:4px;background:var(--wash);color:var(--nickel);max-width:100%}
-.badge span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.repo .sq{flex:none}
-.st-active .badge{background:var(--accent-soft);color:var(--accent)}
-.st-active .sq{background:var(--accent-soft)} .st-active .sq i{background:var(--live);animation:rf-pulse 2.8s ease-in-out infinite}
-.st-warn .badge,.st-warn .sq{background:var(--warn-soft)} .st-warn .badge{color:var(--warn)} .st-warn .sq i{background:var(--warn)}
-.st-failed .badge,.st-failed .sq{background:var(--bad-soft)} .st-failed .badge{color:var(--bad)} .st-failed .sq i{background:var(--bad)}
-.st-done .badge{color:var(--accent)} .st-done .sq i{background:var(--accent)}
-.prog{display:flex;align-items:center;gap:10px}
-.prog .track{flex:1;height:4px}
-.prog .num{font-size:13px;color:var(--grey);min-width:64px;text-align:right}
-.meta{display:flex;flex-wrap:wrap;gap:4px 14px;font:12.5px var(--mono);letter-spacing:-.02em;color:var(--grey)}
-.meta b{font-weight:500;color:var(--ink)}
-.meta .ok b{color:var(--accent)}
-.repo.queued{padding-top:10px;padding-bottom:10px}
-.repo.queued .prog,.repo.queued .meta{visibility:hidden}
-.repo.queued .name{color:var(--nickel)}
-.empty{padding:28px;text-align:center;color:var(--grey)}
-
-/* log: the site's dark code block */
-.term{background:var(--term);color:var(--term-ink);border:1px solid var(--term-stroke);border-radius:.5rem;overflow:hidden}
-.term .bar{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--term-stroke);
-  font:12px var(--mono);color:var(--term-grey)}
-.term pre{margin:0;padding:12px 14px;max-height:380px;overflow:auto;font:12.5px/1.7 var(--mono);
-  white-space:pre-wrap;word-break:break-word}
-.term .l-warn{color:#e3b341} .term .l-bad{color:#f47174} .term .l-ok{color:#7dd3a0}
-.paths{margin-top:14px;font:12px var(--mono);color:var(--grey);word-break:break-all}
-.paths div{margin-top:2px}
-footer{padding:18px 24px;border-top:1px solid var(--stroke);font:12px var(--mono);color:var(--grey);
-  display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+/* log: the site's code panel */
+.code{margin-top:20px;background:var(--code-bg);border:1px solid var(--code-stroke);border-radius:4px;overflow:hidden}
+.code .bar{display:flex;justify-content:space-between;gap:12px;padding:10px 16px;border-bottom:1px solid var(--code-stroke);
+  font:12px var(--mono);color:var(--code-grey)}
+.code pre{margin:0;padding:14px 16px;max-height:400px;overflow:auto;color:var(--code-ink);
+  font:12.5px/1.75 var(--mono);white-space:pre-wrap;word-break:break-word}
+.code .w{color:#e3b341} .code .b{color:#f47174} .code .g{color:#7dd3a0}
+.paths{margin:16px 0 0;font:12px/1.7 var(--mono);color:var(--grey);word-break:break-all}
+footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:20px 24px;margin-top:32px}
+@media (min-width:48rem){footer{padding:20px 40px}}
 
 /* responsive */
-@media (max-width:980px){
-  .stats{grid-template-columns:repeat(3,1fr)}
-  .stats .cell:nth-child(n+4){border-top:1px solid var(--stroke)}
-  .stats .cell:nth-child(4){border-left:0}
-  .repo{grid-template-columns:1fr 1fr;gap:8px 16px}.repo .meta{grid-column:1/-1}
+@media (max-width:1100px){
+  .g5{grid-template-columns:repeat(3,1fr)}
+  .g5>.stat:last-child{grid-column:span 2}
+  .row{grid-template-columns:minmax(0,1fr) auto;gap:6px 16px}
+  .row .stage{grid-column:1/-1;order:3}.row .prog{grid-column:1/-1;order:4}.row .facts{grid-column:1/-1;order:5}
+  .row .st{order:2;justify-self:end}
+  .row.q .stage,.row.q .prog,.row.q .facts{display:none}
 }
 @media (max-width:640px){
-  header{padding:16px}.sec{padding:22px 16px}.updated,.tag.ver{display:none}
-  .cell .h{white-space:normal}
+  .g5,.g3{grid-template-columns:1fr 1fr}
+  .g5>.stat:last-child,.g3>.stat:last-child:nth-child(odd){grid-column:1/-1}
+  .stat{padding:18px 24px}
+  .intro h1{font-size:2rem}.intro p{font-size:16px}
+  #updated,.tag.ver{display:none}
   .lockup{height:19px}
-  .pct{font-size:48px}
-  .stats,.stats.three{grid-template-columns:1fr 1fr}
-  .cell{padding:14px 16px}.cell .v{font-size:19px}
-  .stats .cell{border-top:1px solid var(--stroke);border-left:1px solid var(--stroke)}
-  .stats .cell:nth-child(-n+2){border-top:0}.stats .cell:nth-child(odd){border-left:0}
-  .stats .cell:last-child:nth-child(odd){grid-column:1/-1}
-  .repo{grid-template-columns:1fr;padding:12px 14px}
-  .repo.queued{grid-template-columns:1fr auto}
-  .repo.queued .prog,.repo.queued .meta{display:none}
-  .filters{margin-left:0;width:100%}
-  footer{padding:16px}
 }
 </style></head><body>
 <div class="wrap">
 <header>
   <a class="brand" href="#" aria-label="Riffle miner">@@LOCKUP@@<span class="tag">Miner</span><span class="tag ver" id="ver">v—</span></a>
-  <div class="right">
-    <span class="updated" id="updated"></span>
-    <span class="chip s-bad" id="stale"><span class="sq"><i></i></span>offline</span>
-    <span class="chip" id="state"><span class="sq"><i></i></span><span class="ink" id="state_t">connecting</span></span>
+  <div class="hright">
+    <span id="updated"></span>
+    <span class="chip dead" id="stale"><span class="sq"><i></i></span>offline</span>
+    <span class="chip" id="state"><span class="sq"><i></i></span><b id="state_t">connecting</b></span>
   </div>
 </header>
 
-<section class="sec">
-  <div class="hero">
-    <div><div class="label" style="margin-bottom:8px">Progress</div><div class="pct" id="pct">0<small>%</small></div></div>
-    <div style="text-align:right"><div class="sub">PRs mined</div><div class="prs" id="prs">—</div></div>
-  </div>
-  <div class="track hero-track"><i id="pbar"></i></div>
+<section class="rule intro">
+  <div class="cap">Mining run</div>
+  <h1 id="headline">Waiting for a run</h1>
+  <p id="lede">Start a batch in the TUI. This page follows it live.</p>
+  <div class="line"><i id="pbar"></i></div>
 </section>
 
-<div class="stats">
-  <div class="cell"><div class="k">Elapsed</div><div class="v" id="elapsed">—</div></div>
-  <div class="cell"><div class="k">ETA</div><div class="v" id="eta">—</div><div class="h" id="rate">—</div></div>
-  <div class="cell"><div class="k">Repos</div><div class="v" id="repos">—</div></div>
-  <div class="cell"><div class="k">LLM ok / fail</div><div class="v" id="llm">—</div><div class="h" id="lat"></div></div>
-  <div class="cell"><div class="k">Breaker</div><div class="v" id="breaker">—</div></div>
+<div class="rule grid g5">
+  <div class="stat"><span class="cap">Elapsed</span><span class="v num" id="elapsed">—</span></div>
+  <div class="stat"><span class="cap">Time left</span><span class="v num" id="eta">—</span><span class="h" id="rate">—</span></div>
+  <div class="stat"><span class="cap">Repositories</span><span class="v num" id="repos">—</span><span class="h">done of total</span></div>
+  <div class="stat"><span class="cap">LLM ok / fail</span><span class="v num" id="llm">—</span><span class="h" id="lat">—</span></div>
+  <div class="stat"><span class="cap">Circuit breaker</span><span class="v" id="breaker">—</span><span class="h" id="breaker_h">LLM failures stop the batch</span></div>
 </div>
 
-<div class="stats three">
-  <div class="cell"><div class="k">Miner RAM</div><div class="v" id="ram">—</div>
-    <div class="h" id="peak"></div><div class="track" id="ram_t"><i></i></div></div>
-  <div class="cell"><div class="k">System memory</div><div class="v" id="free">—</div>
-    <div class="h" id="free_h"></div><div class="track" id="used_t"><i></i></div></div>
-  <div class="cell"><div class="k">CPU</div><div class="v" id="cpu">—</div>
-    <div class="h" id="cpu_h"></div><div class="track" id="cpu_t"><i></i></div></div>
+<div class="rule grid g3">
+  <div class="stat"><span class="cap">Miner memory</span><span class="v num" id="ram">—</span><span class="h" id="peak">—</span><div class="meter" id="ram_t"><i></i></div></div>
+  <div class="stat"><span class="cap">System memory</span><span class="v num" id="free">—</span><span class="h" id="free_h">—</span><div class="meter" id="used_t"><i></i></div></div>
+  <div class="stat"><span class="cap">CPU</span><span class="v num" id="cpu">—</span><span class="h" id="cpu_h">—</span><div class="meter" id="cpu_t"><i></i></div></div>
 </div>
 
-<section class="sec">
-  <div class="label">Repositories <span class="count" id="rcount"></span><div class="filters" id="filters"></div></div>
-  <div class="repos" id="rows"><div class="empty">No run yet.</div></div>
+<section class="rule section">
+  <div class="shead"><span class="cap">01</span><span class="cap" id="rcount"></span></div>
+  <div class="shead" style="display:block"><h2>Repositories</h2><p>Each repository in this PC's share, in mining order. Finished and failed ones sink to the bottom.</p></div>
+  <div class="tabs" id="filters"></div>
+  <ul class="list" id="rows"><li class="empty">No run yet.</li></ul>
 </section>
 
-<section class="sec">
-  <div class="label">Log</div>
-  <div class="term"><div class="bar"><span id="logname">miner.log</span><span>tail</span></div><pre id="log"></pre></div>
+<section class="rule section" style="margin-top:32px">
+  <div class="shead"><span class="cap">02</span><span class="cap" id="logname">log</span></div>
+  <div class="shead" style="display:block"><h2>Log</h2><p>The last lines the miner wrote, as the TUI shows them.</p></div>
+  <div class="code"><div class="bar"><span id="logfile">miner.log</span><span>tail</span></div><pre id="log"></pre></div>
   <div class="paths" id="paths"></div>
 </section>
-<footer><span>Riffle miner · read-only view</span><span id="foot_ver"></span></footer>
+
+<footer class="rule"><span class="cap">Riffle miner · read-only view</span><span class="cap" id="foot_ver"></span></footer>
 </div>
 <script>
 const key = new URLSearchParams(location.search).get("key") || "";
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-const sq = () => { const s = el("span", "sq"); s.appendChild(el("i")); return s; };
-const FILTERS = [["all","All"],["active","Active"],["warn","Attention"],["failed","Failed"],["done","Done"],["queued","Queued"]];
+const TABS = [["all","All"],["active","Active"],["warn","Attention"],["failed","Failed"],["done","Done"],["queued","Queued"]];
+const TAG = {active:"Mining", warn:"Attention", failed:"Failed", done:"Done", queued:"Queued"};
 let filter = "all", last = null, lastOk = 0;
 
-function setText(id, v){ $(id).textContent = (v === null || v === undefined || v === "") ? "—" : v; }
-function setLvl(id, lvl){ const e=$(id); e.classList.remove("lvl-ok","lvl-warn","lvl-bad"); if (lvl) e.classList.add("lvl-"+lvl); }
-function meter(id, frac, lvl){ const t=$(id); t.firstElementChild.style.width = Math.max(0, Math.min(1, frac||0))*100 + "%";
-  t.classList.remove("lvl-ok","lvl-warn","lvl-bad"); if (lvl && lvl !== "ok") t.classList.add("lvl-"+lvl); }
+const dash = v => (v === null || v === undefined || v === "") ? "—" : v;
+function setText(id, v){ $(id).textContent = dash(v); }
+function tone(id, t){ const e = $(id); e.classList.remove("warn","bad","good"); if (t) e.classList.add(t); }
+function meter(id, frac, lvl){ const m = $(id); m.firstElementChild.style.width = Math.max(0, Math.min(1, frac || 0)) * 100 + "%";
+  m.classList.remove("warn","bad"); if (lvl === "warn" || lvl === "bad") m.classList.add(lvl); }
 
-function renderFilters(rows){
-  const counts = {all: rows.length}; for (const r of rows) counts[r.status] = (counts[r.status]||0) + 1;
-  if (filter !== "all" && !counts[filter]) filter = "all";
+function tabs(rows){
+  const n = {all: rows.length}; for (const r of rows) n[r.status] = (n[r.status] || 0) + 1;
+  if (filter !== "all" && !n[filter]) filter = "all";
   const box = $("filters"); box.replaceChildren();
-  for (const [k, label] of FILTERS) {
-    if (k !== "all" && !counts[k]) continue;
+  for (const [k, label] of TABS) {
+    if (k !== "all" && !n[k]) continue;
     const b = el("button", null, label); b.type = "button"; b.setAttribute("aria-pressed", String(filter === k));
-    b.appendChild(el("span", "n", String(counts[k]||0)));
+    b.appendChild(el("span", "n", String(n[k] || 0)));
     b.onclick = () => { filter = k; if (last) render(last); };
     box.appendChild(b);
   }
 }
 
-function repoRow(r){
-  const row = el("div", "repo st-" + r.status + (r.status === "queued" ? " queued" : ""));
-  const name = el("div", "name"); name.appendChild(sq()); name.appendChild(el("span", null, r.name));
-  const st = el("div"); const badge = el("span", "badge"); badge.appendChild(el("span", null, r.stage)); st.appendChild(badge);
-  const prog = el("div", "prog"); const tr = el("div", "track"); const fill = el("i");
-  fill.style.width = (r.total ? Math.min(1, r.done / r.total) : 0) * 100 + "%"; tr.appendChild(fill);
-  prog.appendChild(tr); prog.appendChild(el("span", "num", r.prs));
-  const meta = el("div", "meta");
-  for (const [label, v, cls] of [["SZZ", r.szz, r.szz_level === "ok" ? "ok" : ""], ["ETA", r.eta], ["time", r.time],
-      ["rows", r.rows], ["skips", r.skips], ["LLM", r.llm], ["slowest", r.slowest]]) {
-    if (v === "—" && label !== "ETA") continue;
-    const m = el("span", cls); m.appendChild(document.createTextNode(label + " ")); m.appendChild(el("b", null, v)); meta.appendChild(m);
+function row(r){
+  const li = el("li", "row" + (r.status === "queued" ? " q" : ""));
+  li.appendChild(el("span", "nm", r.name));
+  li.appendChild(el("span", "st st-" + r.status, TAG[r.status] || r.status));
+  const plain = ["mining", "done", "queued"].includes((r.stage || "").toLowerCase());
+  li.appendChild(el("span", "stage", plain ? "" : r.stage));
+  const prog = el("span", "prog"); const m = el("span", "meter"); const fill = el("i");
+  fill.style.width = (r.total ? Math.min(1, r.done / r.total) : 0) * 100 + "%"; m.appendChild(fill);
+  prog.append(m, el("span", null, r.prs)); li.appendChild(prog);
+  const facts = el("span", "facts");
+  for (const [k, v] of [["szz", r.szz], ["eta", r.eta], ["time", r.time], ["rows", r.rows], ["llm", r.llm], ["slowest", r.slowest]]) {
+    if (!v || v === "—" || (k === "rows" && v === "0")) continue;
+    const f = el("span"); f.append(k + " ", el("b", null, v)); facts.appendChild(f);
   }
-  row.append(name, st, prog, meta);
-  return row;
+  li.appendChild(facts);
+  return li;
 }
 
 function render(s){
   last = s;
-  setText("ver", s.version ? "v" + s.version : ""); $("foot_ver").textContent = s.version ? "v" + s.version : "";
+  const v = s.version ? "v" + s.version : "";
+  setText("ver", v); $("foot_ver").textContent = v;
   const state = s.state || "idle";
-  const sc = state === "running" ? "s-running" : /killed|exit|breaker/.test(state) ? "s-bad" : state === "stopped" ? "s-warn" : "";
-  $("state").className = "chip " + sc; setText("state_t", state);
+  $("state").className = "chip " + (state === "running" ? "live" : /killed|exit|breaker/.test(state) ? "dead" : state === "stopped" ? "stopped" : "");
+  setText("state_t", state);
   const p = s.progress || 0;
-  $("pct").firstChild.nodeValue = (p * 100).toFixed(p < 0.1 ? 1 : 0);
   $("pbar").style.width = p * 100 + "%";
-  setText("prs", s.prs); setText("elapsed", s.elapsed); setText("eta", s.eta); setText("rate", s.rate);
-  setText("repos", s.repos); setText("llm", s.llm); $("lat").textContent = s.llm_latency ? "avg " + s.llm_latency : "";
-  setText("breaker", s.breaker ? "tripped" : (s.state ? "armed" : null)); setLvl("breaker", s.breaker ? "bad" : "ok");
+  const h = $("headline"); h.replaceChildren();
+  if (s.prs && s.prs.includes("/")) {
+    const [d, t] = s.prs.split("/");
+    h.append(Number(d).toLocaleString() + " ", el("span", "of", "of " + (t === "?" ? "?" : Number(t).toLocaleString()) + " PRs"));
+  } else h.textContent = state === "idle" ? "Waiting for a run" : "Starting";
+  $("lede").textContent = s.prs ? [ (p * 100).toFixed(p < 0.1 ? 1 : 0) + "% mined", s.repos && "repositories " + s.repos, s.rate, s.eta && "about " + s.eta + " left" ].filter(Boolean).join(" · ")
+                                : "Start a batch in the TUI. This page follows it live.";
+  setText("elapsed", s.elapsed); setText("eta", s.eta); setText("rate", s.rate);
+  setText("repos", s.repos); setText("llm", s.llm); setText("lat", s.llm_latency ? "average " + s.llm_latency + " per call" : null);
+  setText("breaker", s.breaker ? "Tripped" : (s.state && s.state !== "idle" ? "Armed" : null)); tone("breaker", s.breaker ? "bad" : null);
+  if (s.breaker) $("breaker_h").textContent = s.breaker;
   const r = s.resources || {};
-  setText("ram", r.rss); $("peak").textContent = r.peak ? "peak " + r.peak : ""; meter("ram_t", r.rss_frac, r.level);
-  setText("free", r.used_frac != null ? Math.round(r.used_frac * 100) + "% used" : null); setLvl("free", r.level === "ok" ? null : r.level);
-  $("free_h").textContent = r.free ? r.free + " free of " + r.total : ""; meter("used_t", r.used_frac, r.level);
-  setText("cpu", r.cpu ? r.cpu.split(" ")[0] : null); $("cpu_h").textContent = r.cpu ? "of " + r.cpu.split(" of ")[1] : "";
+  setText("ram", r.rss); setText("peak", r.peak ? "peak " + r.peak : null); meter("ram_t", r.rss_frac, r.level);
+  setText("free", r.used_frac != null ? Math.round(r.used_frac * 100) + "% used" : null); tone("free", r.level === "ok" ? null : r.level);
+  setText("free_h", r.free ? r.free + " free of " + r.total : null); meter("used_t", r.used_frac, r.level);
+  setText("cpu", r.cpu ? r.cpu.split(" ")[0] : null); setText("cpu_h", r.cpu ? "of " + r.cpu.split(" of ")[1] + " across all cores" : null);
   meter("cpu_t", r.cpu_frac);
   const rows = s.rows || [];
-  renderFilters(rows);
-  $("rcount").textContent = rows.length ? String(rows.length) : "";
+  tabs(rows);
+  $("rcount").textContent = rows.length ? rows.length + " repositories" : "";
   const box = $("rows"); box.replaceChildren();
   const shown = rows.filter(x => filter === "all" || x.status === filter);
-  if (!shown.length) box.appendChild(el("div", "empty", rows.length ? "Nothing here." : "No run yet."));
-  for (const x of shown) box.appendChild(repoRow(x));
+  if (!shown.length) box.appendChild(el("li", "empty", rows.length ? "Nothing in this view." : "No run yet."));
+  for (const x of shown) box.appendChild(row(x));
   const pre = $("log"); const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
   pre.replaceChildren();
-  for (const l of (s.log || [])) pre.appendChild(el("div", l.level ? "l-" + l.level : "", l.text));
+  for (const l of (s.log || [])) pre.appendChild(el("div", {warn:"w", bad:"b", ok:"g"}[l.level] || "", l.text));
   if (atEnd) pre.scrollTop = pre.scrollHeight;
-  if (s.log_path) $("logname").textContent = s.log_path.split("/").pop();
+  const lf = s.log_path ? s.log_path.split("/").pop() : "miner.log";
+  $("logfile").textContent = lf; $("logname").textContent = (s.log || []).length + " lines";
   const paths = $("paths"); paths.replaceChildren();
   if (s.out) paths.appendChild(el("div", null, "output  " + s.out));
   if (s.log_path) paths.appendChild(el("div", null, "log     " + s.log_path));
