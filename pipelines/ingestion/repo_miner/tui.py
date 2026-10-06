@@ -371,6 +371,7 @@ class RiffleTUI(App):
         Binding("ctrl+e", "test_run", "Test run"),
         Binding("ctrl+o", "view_test", "View test data"),
         Binding("ctrl+g", "show_split", "Show split"),
+        Binding("ctrl+k", "audit", "Audit data"),
         Binding("ctrl+l", "clear_log", "Clear log"),
         Binding("ctrl+y", "copy_log", "Copy log"),
         Binding("ctrl+b", "open_dashboard", "Web view / QR"),
@@ -421,6 +422,8 @@ class RiffleTUI(App):
                 yield Input(str(min(6, os.cpu_count() or 2)), id="workers", type="integer", compact=True)
                 yield Label("LLM concurrency")
                 yield Input("4", id="llm_conc", type="integer", compact=True)
+                yield Label("Re-mine repos (owner/name, comma-separated)")
+                yield Input("", id="remine", placeholder="e.g. rust-lang/cargo", compact=True)
                 yield Label("Test repo (Test run only)")
                 yield Input("https://github.com/pallets/flask", id="test_repo", compact=True)
                 yield Label("Test PRs")
@@ -437,6 +440,7 @@ class RiffleTUI(App):
                 yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
                 with Horizontal(id="buttons"):
                     yield Button("Show split", id="split", variant="default")
+                    yield Button("Audit", id="audit", variant="default")
                     yield Button("Test LLM", id="test", variant="primary")
                     yield Button("Test run", id="testrun", variant="warning")
                     yield Button("Start", id="start", variant="success")
@@ -590,7 +594,8 @@ class RiffleTUI(App):
                     pass
 
     def _save_settings(self) -> None:
-        data = {w.id: w.value for w in self._form_widgets() if w.id}
+        # "remine" is one-shot: remembering it would re-mine those repos on every Start
+        data = {w.id: w.value for w in self._form_widgets() if w.id and w.id != "remine"}
         try:
             with open(SETTINGS, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=1, default=str)
@@ -638,6 +643,8 @@ class RiffleTUI(App):
             cmd.append("--no-api-contract")
         if self._on("git_discovery"):
             cmd += ["--pr-discovery", "git"]
+        for repo in [r.strip() for r in self._val("remine").split(",") if r.strip()]:
+            cmd += ["--remine-repo", repo]
         return cmd
 
     def _output_paths(self, test: bool) -> list[str]:
@@ -672,6 +679,36 @@ class RiffleTUI(App):
     @on(Button.Pressed, "#split")
     def _split_btn(self) -> None:
         self.action_show_split()
+
+    @on(Button.Pressed, "#audit")
+    def _audit_btn(self) -> None:
+        self.action_audit()
+
+    def action_audit(self) -> None:
+        """Per-repo blame coverage of the output dataset; flags repos mined
+        while blame was failing and fills them into Re-mine repos."""
+        self.run_worker(self._run_audit(), group="audit")
+
+    async def _run_audit(self) -> None:
+        out = self._val("out") or "dataset.parquet"
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, BUILD, "--out", out, "--audit", cwd=HERE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        text, _ = await proc.communicate()
+        flagged = []
+        for line in text.decode("utf-8", "replace").splitlines():
+            bad = line.rstrip().endswith("<- re-mine")
+            if bad:
+                flagged.append(line.split()[0])
+            self._log(line, style="bold red" if bad else None)
+        if flagged:
+            box = self.query_one("#remine", Input)
+            have = [r.strip() for r in box.value.split(",") if r.strip()]
+            box.value = ", ".join(have + [r for r in flagged if r not in have])
+            self.notify(f"{len(flagged)} repo(s) need re-mining; added to 'Re-mine repos'. "
+                        "Press Start to fix them.", severity="warning", timeout=10)
+        else:
+            self.notify("Audit: every repo has blame data")
 
     def action_show_split(self) -> None:
         """Print how the repos file splits over the chosen number of PCs."""
@@ -816,6 +853,7 @@ class RiffleTUI(App):
         self.query_one("#test", Button).disabled = running
         self.query_one("#testrun", Button).disabled = running
         self.query_one("#split", Button).disabled = running
+        self.query_one("#audit", Button).disabled = running
         for w in self.query("#form Input, #form Checkbox, #form Select"):
             w.disabled = running
 
@@ -987,7 +1025,7 @@ class RiffleTUI(App):
                 r.skips += 1
             else:
                 r.rows += 1
-                if e.get("llm") == "ok":
+                if e.get("llm") in ("ok", "reused"):
                     r.llm_ok += 1
                     if e.get("llm_secs"):
                         self.stats.llm_secs.append(e["llm_secs"])
