@@ -23,3 +23,6 @@ semgrep>=1.0          # static security/lint findings (Source 4d) — optional, 
 # (LLM_API_KEY = an Anthropic API key). Swap models/providers with LLM_MODEL and
 # LLM_BASE_URL in .env. Enable the stage at runtime with the --llm flag.
 openai>=1.0            # optional; only needed with --llm
+
+# TUI (tui.py) — optional
+textual>=8.0

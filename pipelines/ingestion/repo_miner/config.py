@@ -7,6 +7,7 @@ slow/optional stages (LLM, scanners, API).
 """
 from __future__ import annotations
 
+import functools
 import os
 import re
 from dataclasses import dataclass, field
@@ -112,6 +113,24 @@ class Settings:
     blame_ignore_revs: str | None = None   # path to .git-blame-ignore-revs
     hunk_proximity_k: int = 5              # +/- lines counted as "near" a past fix
 
+    # repo-local mined features (contracts/mined_features.schema.json); defaults
+    # mirror the rules.mining / labels blocks in contracts/org_rules.schema.json
+    maturity_days: int = 30                # labels.maturity_days: a past PR counts once this old
+    similar_prs_k: int = 5
+    similar_prs_min_file_overlap: float = 0.2
+    similar_prs_lookback_days: int = 365
+    similar_prs_min_neighbours: int = 3
+    scrutiny_lookback_days: int = 180
+    scrutiny_exclude_bot_reviews: bool = True
+    scrutiny_min_prior_prs: int = 5
+    failure_mode_lookback_days: int = 365
+    failure_mode_min_bad_changes: int = 2
+    path_size_lookback_days: int = 365
+    path_size_min_prior_changes: int = 10
+    release_tag_pattern: str = r"^v?\d+\.\d+(\.\d+)?$"
+    release_min_releases: int = 3
+    release_interval_stat: str = "median"  # median | mean
+
     # author smoothing (empirical-Bayes toward repo mean)
     author_smoothing_alpha: float = 5.0
 
@@ -120,20 +139,36 @@ class Settings:
     enable_semgrep: bool = True
     enable_deps_cve: bool = True           # OSV + GHSA (network)
     enable_api_contract: bool = True       # oasdiff / buf / graphql-inspector
-    enable_llm: bool = False               # off by default; set true + key to use
+    enable_llm: bool = False               # off by default; --llm turns it on
     enable_github_api: bool = True         # PR list, CI checks, labels
     enable_ci_history: bool = False        # historical CI-fail-rate store (slow pre-pass)
     enable_szz: bool = False               # SZZ fix-tracing label (slow pre-pass)
+    enable_review_history: bool = True     # review events for revealed_path_scrutiny (2 API calls/PR)
     enable_declared_labels: bool = False   # declared_hotfix feature (1 timeline call/PR)
     declared_label_grace_s: int = 120      # include labels applied within Ns of open
     ci_cache_dir: str = "ci_cache"         # where the per-repo CI conclusion cache lives
 
     # networking
     github_token: str | None = field(default_factory=lambda: os.getenv("GITHUB_TOKEN"))
+    # LLM backend: "claude_cli" (headless `claude -p`, uses your Claude Code
+    # login — no API key) or "api" (OpenAI-compatible endpoint + LLM_API_KEY)
+    llm_backend: str = field(default_factory=lambda: os.getenv("LLM_BACKEND", "claude_cli"))
     llm_api_key: str | None = field(default_factory=lambda: os.getenv("LLM_API_KEY"))
-    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "claude-sonnet-5"))
+    llm_model: str = field(default_factory=lambda: os.getenv(
+        "LLM_MODEL",
+        "sonnet" if os.getenv("LLM_BACKEND", "claude_cli") == "claude_cli" else "claude-sonnet-5"))
     llm_base_url: str = field(
         default_factory=lambda: os.getenv("LLM_BASE_URL", "https://api.anthropic.com/v1/"))
+    llm_timeout: float = field(default_factory=lambda: float(os.getenv("LLM_TIMEOUT", "180")))
+    # circuit breaker: abort the run after this many consecutive LLM failures
+    llm_breaker_threshold: int = field(
+        default_factory=lambda: int(os.getenv("LLM_BREAKER_THRESHOLD", "5")))
+    llm_breaker_tripped: bool = False      # set by the miner when the breaker trips
+    llm_concurrency: int = field(default_factory=lambda: int(os.getenv("LLM_CONCURRENCY", "4")))
+    # PRs mined in parallel (threads; the work is mostly git subprocesses).
+    # Each worker may run lizard/semgrep, so keep this modest on small-RAM boxes.
+    workers: int = field(default_factory=lambda: int(
+        os.getenv("RIFFLE_WORKERS", str(min(6, os.cpu_count() or 2)))))
     request_timeout: float = 20.0
     max_prs: int | None = None             # cap PRs per repo (None = all)
     merge_signal: str = "auto"             # auto | github | landed (closed-PR -> landed-commit fallback)
@@ -156,11 +191,25 @@ def _match_any(path: str, patterns: list[str]) -> bool:
     return any(re.search(p, path, re.IGNORECASE) for p in patterns)
 
 
+def _union(patterns: list[str]) -> re.Pattern:
+    """One compiled alternation per rule — same matches as trying each pattern."""
+    return re.compile("|".join(f"(?:{p})" for p in patterns), re.IGNORECASE)
+
+
+_PATH_RULES_RE = {name: _union(pats) for name, pats in PATH_RULES.items()}
+_TEST_RE = _union(TEST_PATTERNS)
+_DOC_RE = _union(DOC_PATTERNS)
+_GENERATED_RE = _union(GENERATED_PATTERNS)
+
+
+@functools.lru_cache(maxsize=200_000)
 def path_flags(path: str) -> dict[str, bool]:
-    flags = {name: _match_any(path, pats) for name, pats in PATH_RULES.items()}
-    flags["is_test"] = _match_any(path, TEST_PATTERNS)
-    flags["is_doc"] = _match_any(path, DOC_PATTERNS)
-    flags["is_generated"] = _match_any(path, GENERATED_PATTERNS)
+    """Path classification flags. Memoized (called ~per file per commit per PR
+    in the history walk); callers treat the returned dict as read-only."""
+    flags = {name: bool(rx.search(path)) for name, rx in _PATH_RULES_RE.items()}
+    flags["is_test"] = bool(_TEST_RE.search(path))
+    flags["is_doc"] = bool(_DOC_RE.search(path))
+    flags["is_generated"] = bool(_GENERATED_RE.search(path))
     return flags
 
 
@@ -220,6 +269,7 @@ _GENERIC_TOP = {
 }
 
 
+@functools.lru_cache(maxsize=200_000)
 def subsystem_of(path: str) -> str:
     """Best-effort subsystem for a path (used by NS, SEXP, percentiles)."""
     parts = [p for p in path.split("/") if p]

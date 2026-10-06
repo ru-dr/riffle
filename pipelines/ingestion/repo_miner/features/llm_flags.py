@@ -6,17 +6,41 @@ returns a fixed JSON schema of enums/bools at temperature 0, and every
 line-anchored claim is verified to exist in the diff before we keep it. These
 are features for the model, never the verdict.
 
-Off by default (Settings.enable_llm). Provider-agnostic: implement _call_llm
-for your provider. When disabled, all flags come back None (treated as missing).
+Off by default (Settings.enable_llm). Two backends (Settings.llm_backend):
+  - "claude_cli" (default): headless `claude -p` with a JSON schema, using the
+    local Claude Code login — no API key needed.
+  - "api": any OpenAI-compatible endpoint, needs LLM_API_KEY.
+When disabled, all flags come back None (treated as missing).
+
+Circuit breaker: after Settings.llm_breaker_threshold consecutive failed calls,
+compute() raises LLMUnavailable so the run stops instead of silently writing a
+dataset with half-populated Source-6 columns.
 """
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
+import tempfile
+import threading
 import time
 
 import config
 import gitio
+
+
+class LLMUnavailable(RuntimeError):
+    """Raised when the circuit breaker trips (too many consecutive failures)."""
+
+
+_consecutive_failures = 0
+
+
+def last_call_failed() -> bool:
+    """True if the most recent compute() call's LLM request failed (its flags
+    are None because of an error, not because the LLM is disabled)."""
+    return _consecutive_failures > 0
 
 # fixed schema — enums keep the model honest and the columns stable
 FLAG_SCHEMA = {
@@ -49,16 +73,69 @@ _NULL_RESULT = {k: None for k in FLAG_SCHEMA}
 
 
 def compute(repo: str, base: str, head: str, st: config.Settings) -> dict:
-    if not st.enable_llm or not st.llm_api_key:
-        return dict(_NULL_RESULT)
+    """Synchronous fetch + resolve (kept for single-call use)."""
+    return resolve(fetch(repo, base, head, st), st)
+
+
+def fetch(repo: str, base: str, head: str, st: config.Settings) -> dict:
+    """
+    Thread-safe half: build the diff and call the LLM. Touches no shared state
+    besides the concurrency limiter, so the miner can run it in worker threads.
+    Returns {"status": "off"|"empty"|"ok"|"fail", "raw": dict|None}; pass the
+    result to resolve() in PR order.
+    """
+    if not st.enable_llm or (st.llm_backend == "api" and not st.llm_api_key):
+        return {"status": "off", "raw": None, "secs": 0.0}
     diff = gitio._run(repo, "diff", "-M", f"{base}...{head}", check=False)
+    if not diff.strip():
+        return {"status": "empty", "raw": None, "secs": 0.0}  # nothing to judge, not a failure
     diff = _redact_secrets(diff)
     if len(diff) > 60000:                       # crude token guard
         diff = diff[:60000]
-    raw = _call_llm(diff, st)
+    t0 = time.monotonic()
+    with _limiter(st):
+        if st.llm_backend == "claude_cli":
+            raw = _call_claude_cli(diff, st)
+        else:
+            raw = _call_llm(diff, st)
+    secs = time.monotonic() - t0
     if raw is None:
+        return {"status": "fail", "raw": None, "secs": secs}
+    return {"status": "ok", "raw": _validate(raw, diff), "secs": secs}
+
+
+def resolve(fetched: dict, st: config.Settings) -> dict:
+    """
+    Main-thread half: turn a fetch() result into the 23 flag columns and drive
+    the circuit breaker. Must be called in PR order so "consecutive" means
+    consecutive PRs, not whichever worker finished first.
+    """
+    global _consecutive_failures
+    status = fetched.get("status")
+    if status == "fail":
+        _consecutive_failures += 1
+        if _consecutive_failures >= st.llm_breaker_threshold:
+            raise LLMUnavailable(
+                f"{_consecutive_failures} consecutive LLM failures "
+                f"(backend={st.llm_backend}, model={st.llm_model})")
         return dict(_NULL_RESULT)
-    return _validate(raw, diff)
+    if status == "ok":
+        _consecutive_failures = 0
+        return dict(fetched["raw"])
+    return dict(_NULL_RESULT)
+
+
+_LIMITER = None
+_LIMITER_LOCK = threading.Lock()
+
+
+def _limiter(st: config.Settings) -> threading.Semaphore:
+    """Caps concurrent LLM calls (Settings.llm_concurrency) across workers."""
+    global _LIMITER
+    with _LIMITER_LOCK:
+        if _LIMITER is None:
+            _LIMITER = threading.BoundedSemaphore(max(1, st.llm_concurrency))
+    return _LIMITER
 
 
 def _redact_secrets(diff: str) -> str:
@@ -213,6 +290,73 @@ def _call_llm(diff: str, st: config.Settings):
     return None
 
 
+def _json_schema() -> dict:
+    """FLAG_SCHEMA as a JSON Schema, so `claude -p --json-schema` enforces the
+    exact keys/enums (still re-checked by _validate)."""
+    props = {}
+    for key, spec in FLAG_SCHEMA.items():
+        if spec == "bool":
+            props[key] = {"type": "boolean"}
+        elif spec == "int":
+            props[key] = {"type": "integer", "minimum": 0}
+        elif spec == "ordinal_1_5":
+            props[key] = {"type": "integer", "minimum": 1, "maximum": 5}
+        elif spec == "ordinal_0_3":
+            props[key] = {"type": "integer", "minimum": 0, "maximum": 3}
+        elif isinstance(spec, list):
+            props[key] = {"enum": spec}
+    return {"type": "object", "properties": props,
+            "required": list(FLAG_SCHEMA), "additionalProperties": False}
+
+
+_CLI_WORKDIR: str | None = None
+
+
+def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2):
+    """
+    Run headless Claude Code (`claude -p`) on the diff with a JSON schema.
+    Uses the local Claude Code login (no API key). Runs from an empty temp dir
+    with no tools, MCP, settings, or slash commands, so no CLAUDE.md, hooks, or
+    plugins leak into the judgement. Retries with backoff (rate limits), then
+    returns None on failure.
+    """
+    global _CLI_WORKDIR
+    with _LIMITER_LOCK:
+        if _CLI_WORKDIR is None:
+            _CLI_WORKDIR = tempfile.mkdtemp(prefix="riffle-llm-")
+    cmd = [
+        "claude", "-p",
+        "--output-format", "json",
+        "--model", st.llm_model,
+        "--setting-sources", "",
+        "--tools", "",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--no-session-persistence",
+        "--system-prompt", _SYSTEM + _schema_prompt(),
+        "--json-schema", json.dumps(_json_schema()),
+    ]
+    for attempt in range(retries + 1):
+        try:
+            p = subprocess.run(cmd, input="Git diff:\n\n" + diff, capture_output=True,
+                               text=True, timeout=st.llm_timeout, cwd=_CLI_WORKDIR,
+                               env=os.environ.copy())
+            if p.returncode == 0:
+                out = json.loads(p.stdout)
+                if not out.get("is_error"):
+                    obj = out.get("structured_output")
+                    if isinstance(obj, dict):
+                        return obj
+                    obj = _extract_json(out.get("result") or "")
+                    if obj is not None:
+                        return obj
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+            pass
+        if attempt < retries:
+            time.sleep(10 * (attempt + 1))
+    return None
+
+
 def _extract_json(text: str):
     """Pull a JSON object out of the model's reply, tolerating stray prose or
     ```json fences. Returns a dict or None."""
@@ -229,3 +373,43 @@ def _extract_json(text: str):
     except json.JSONDecodeError:
         return None
     return obj if isinstance(obj, dict) else None
+
+
+_TEST_DIFF = """diff --git a/app/auth.py b/app/auth.py
+--- a/app/auth.py
++++ b/app/auth.py
+@@ -10,7 +10,6 @@ def delete_user(request, user_id):
+-    if not request.user.is_admin:
+-        raise PermissionDenied()
+     try:
+         User.objects.get(id=user_id).delete()
+-    except User.DoesNotExist:
+-        raise NotFound()
++    except Exception:
++        pass
+"""
+
+
+def self_test(st: config.Settings) -> tuple[bool, str]:
+    """One LLM call on a known-risky sample diff (auth check removed, exception
+    swallowed). Returns (ok, message) — checks login, model, and headless mode."""
+    t0 = time.monotonic()
+    raw = _call_claude_cli(_TEST_DIFF, st, retries=0) if st.llm_backend == "claude_cli" \
+        else _call_llm(_TEST_DIFF, st)
+    secs = time.monotonic() - t0
+    if raw is None:
+        return False, (f"FAIL: no valid response from backend={st.llm_backend} "
+                       f"model={st.llm_model} after {secs:.1f}s "
+                       "(check `claude` login / model name / LLM_API_KEY)")
+    flags = _validate(raw, _TEST_DIFF)
+    filled = sum(v is not None for v in flags.values())
+    sane = flags.get("authz_check_change") in ("removed", "weakened") and \
+        flags.get("exception_swallowed") is True
+    return filled == len(FLAG_SCHEMA), (
+        f"{'OK' if filled == len(FLAG_SCHEMA) else 'PARTIAL'}: backend={st.llm_backend} "
+        f"model={st.llm_model} {secs:.1f}s, {filled}/{len(FLAG_SCHEMA)} flags, "
+        f"authz_check_change={flags.get('authz_check_change')}, "
+        f"exception_swallowed={flags.get('exception_swallowed')}, "
+        f"semantic_risk={flags.get('semantic_risk_1to5')}"
+        + ("" if sane else "  (warning: model missed the planted risks)"))
+
