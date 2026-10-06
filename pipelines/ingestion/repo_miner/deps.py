@@ -33,6 +33,7 @@ PY_PACKAGES = {
     "pyarrow": "pyarrow>=14.0",
     "lizard": "lizard>=1.17",
     "psutil": "psutil>=5.9",            # TUI RAM/CPU readout
+    "segno": "segno>=1.6",              # TUI QR code for the web view (pure Python)
 }
 # CLI tools pip can install -> pip spec
 PIP_CLIS = {"semgrep": "semgrep>=1.0"}

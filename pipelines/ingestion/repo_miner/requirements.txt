@@ -27,3 +27,4 @@ openai>=1.0            # optional; only needed with --llm
 # TUI (tui.py) — optional
 textual>=8.0
 psutil>=5.9           # TUI RAM/CPU readout
+segno>=1.6            # TUI QR code for the web view
