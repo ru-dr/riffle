@@ -189,6 +189,8 @@ def main():
     ap.add_argument("--clone-dir", default="cloned_repos",
                     help="directory to clone repos into")
     ap.add_argument("--max-prs", type=int, default=None)
+    ap.add_argument("--min-age-days", type=int, default=0,
+                    help="skip PRs merged in the last N days (passed through; 90 recommended)")
     ap.add_argument("--ci-history", action="store_true")
     ap.add_argument("--szz", action="store_true")
     ap.add_argument("--declared-labels", action="store_true")
@@ -323,6 +325,8 @@ def main():
                "--out", args.out, "--append"]
         if args.max_prs is not None:
             cmd += ["--max-prs", str(args.max_prs)]
+        if args.min_age_days:
+            cmd += ["--min-age-days", str(args.min_age_days)]
         if args.ci_history:
             cmd.append("--ci-history")
         if args.szz:

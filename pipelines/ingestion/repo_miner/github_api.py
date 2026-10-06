@@ -10,6 +10,7 @@ simple pagination. Kept dependency-free (urllib) on purpose.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 import os
 import sys
 import time
@@ -215,13 +216,19 @@ class GitHubAPI:
         merged_at / merge_commit_sha / base filled in (or None if unlinked).
         "github" disables the fallback; "landed" always uses it.
         """
+        cutoff = None
+        if getattr(self.st, "min_age_days", 0):
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=self.st.min_age_days)
+                      ).strftime("%Y-%m-%dT%H:%M:%SZ")
         mode = getattr(self.st, "merge_signal", "auto")
         use_landed = resolver is not None and mode == "landed"
         collected: list[dict] = []
         page = 1
-        # page limit scales with the cap (x3 covers closed-but-unmerged PRs)
+        # page limit scales with the cap (x3 covers closed-but-unmerged PRs);
+        # skipping recent PRs means paging past them, so allow far more pages
+        # (the loop still stops as soon as enough old-enough PRs are found)
         max_pages = (max(50, self.st.max_prs * 3 // 100 + 2)
-                     if self.st.max_prs else 2000)
+                     if self.st.max_prs and not cutoff else 2000)
         while page <= max_pages:
             status, data, _ = self._get(
                 f"/repos/{self.owner}/{self.repo}/pulls",
@@ -253,10 +260,15 @@ class GitHubAPI:
                     cand = resolver(pr)
                 else:
                     cand = None
+                if cand and cutoff and (cand.get("merged_at") or "") > cutoff:
+                    cand = None          # merged too recently for mature labels
                 if cand:
                     collected.append(cand)
             if self.st.max_prs and len(collected) >= self.st.max_prs + 100:
                 break            # enough for a recency cap (+1 page buffer)
+            if cutoff and page % 10 == 0:
+                print(f"[fetch] page {page}: {len(collected)} PRs merged before "
+                      f"{cutoff[:10]} so far", file=sys.stderr, flush=True)
             if len(data) < 100:
                 break            # last page
             page += 1
