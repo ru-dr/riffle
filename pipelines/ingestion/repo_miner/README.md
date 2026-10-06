@@ -92,6 +92,18 @@ recently may not have their outcome yet, so decide maturity at training time
 `--ci-history`, `--szz`, and `--llm` are off by default; their columns come back
 `null`/`False` until enabled.
 
+## Splitting, waiting, and resuming
+
+- `repos.txt` holds the full 100-repo corpus (v1 #1-50, v2 #51-100) from
+  `site/content/docs/dataset-plan.md`. `--shard 1/2` mines v1, `--shard 2/2`
+  mines v2 (any K/N works), so two machines can each take half. GitHub rate
+  limits are per account, so use a token from a different account on each.
+- Rate limits: GitHub calls sleep until the quota resets (or `Retry-After`)
+  and retry; 5xx/network errors back off and retry, then count as unobserved.
+- Stop any time (ctrl+c / TUI Stop). Finished PRs are in `<out>.partial.jsonl`
+  and finished repos are in `--out`; rerunning the same command (keep
+  `--skip-existing`) skips both and continues. `--remine` redoes every repo.
+
 ## Repo-local mined features
 
 The nine columns of `contracts/mined_features.schema.json`

@@ -30,6 +30,7 @@ Flags:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -43,6 +44,36 @@ import progress
 
 TEST_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "test_output", "test_dataset.jsonl")
+
+
+def _mined_repos(out: str) -> set[str]:
+    """Lower-cased "owner/name" of every repo already in the dataset, so a
+    rerun after a stop skips finished repos. A repo only lands in --out after
+    a clean, complete mine (a stopped one stays in its .partial.jsonl
+    checkpoint), so presence here means done. Checks the .jsonl fallback too."""
+    found: set[str] = set()
+    cands = [out]
+    if out.endswith(".parquet"):
+        cands.append(out.rsplit(".", 1)[0] + ".jsonl")
+    for path in cands:
+        if not os.path.isfile(path):
+            continue
+        try:
+            if path.endswith(".parquet"):
+                import pyarrow.parquet as pq
+                found |= {str(r).lower() for r in pq.read_table(path, columns=["repo"])
+                          .column("repo").to_pylist() if r}
+            else:
+                with open(path, encoding="utf-8") as fh:
+                    for line in fh:
+                        if line.strip():
+                            r = json.loads(line).get("repo")
+                            if r:
+                                found.add(str(r).lower())
+        except Exception as e:                              # noqa: BLE001
+            print(f"[resume] couldn't read {path} ({e}); not skipping any repo", flush=True)
+            return set()
+    return found
 
 
 def _write_test_parquet(jsonl_path: str) -> None:
@@ -115,6 +146,12 @@ def main():
                     help="extra attempts per repo if clone or mine fails (default 2, "
                          "so 3 total). The miner checkpoints, so a retried mine "
                          "resumes rather than redoing finished PRs.")
+    ap.add_argument("--shard", default=None, metavar="K/N",
+                    help="mine only chunk K of N contiguous chunks of the repos file, "
+                         "e.g. 1/2 = first half (v1 #1-50), 2/2 = second half (v2 #51-100)")
+    ap.add_argument("--remine", action="store_true",
+                    help="mine every repo even if it's already in --out (default: "
+                         "skip finished repos, so a rerun after a stop resumes)")
     ap.add_argument("--test", action="store_true",
                     help="test run: first repo only, --test-prs PRs, fresh output in "
                          "test_output/test_dataset.jsonl (readable JSON lines); clone kept")
@@ -131,6 +168,16 @@ def main():
             sys.exit(f"repos file not found: {args.repos_file}")
         with open(args.repos_file, encoding="utf-8") as fh:
             entries = [p for p in (_parse_url(line) for line in fh) if p]
+        if args.shard:
+            try:
+                k, n = (int(x) for x in args.shard.split("/"))
+                assert 1 <= k <= n
+            except (ValueError, AssertionError):
+                sys.exit(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
+            size = -(-len(entries) // n)                     # ceil
+            lo = (k - 1) * size
+            entries = entries[lo:lo + size]
+            print(f"[shard] {k}/{n}: repos #{lo + 1}-{lo + len(entries)}", flush=True)
     if not entries:
         sys.exit("no valid GitHub URLs found in the repos file")
     if args.test:
@@ -146,6 +193,10 @@ def main():
               flush=True)
 
     os.makedirs(args.clone_dir, exist_ok=True)
+    done_repos = set() if (args.remine or args.test) else _mined_repos(args.out)
+    if done_repos:
+        print(f"[resume] {len(done_repos)} repos already in {args.out}; skipping them "
+              f"(--remine to redo)", flush=True)
     here = os.path.dirname(os.path.abspath(__file__))
     miner = os.path.join(here, "mine_repo.py")
 
@@ -156,6 +207,11 @@ def main():
     for i, (owner, name, url) in enumerate(entries, 1):
         target = os.path.join(args.clone_dir, f"{owner}_{name}")
         print(f"=== [{i}/{len(entries)}] {owner}/{name} ===", flush=True)
+        if f"{owner}/{name}".lower() in done_repos:
+            print("[resume] already mined; skipping\n", flush=True)
+            ok += 1
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="ok (already mined)")
+            continue
         progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="clone")
 
         # --- clone (retried) — one clone kept across mine retries -------------
