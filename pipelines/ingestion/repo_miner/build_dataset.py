@@ -79,10 +79,19 @@ def balanced_shards(weights: list[int | None], n: int) -> list[list[int]]:
     return [sorted(sh) for sh in shards]           # keep file order within a shard
 
 
+def split_id(entries, weights, n: int) -> str:
+    """Short fingerprint of everything the split depends on (ordered repo list,
+    sizes, PC count). PCs that print the same ID got disjoint shares of the
+    same list; a different ID means a different repos.txt or PC count."""
+    import hashlib
+    key = "\n".join(f"{o}/{r}={w}" for (o, r, _), w in zip(entries, weights)) + f"\n{n}"
+    return hashlib.sha256(key.encode()).hexdigest()[:8]
+
+
 def _print_shard_plan(entries, weights, n: int) -> None:
     shards = balanced_shards(weights, n)
     totals = [sum(weights[i] or 0 for i in sh) for sh in shards]
-    print(f"[shard-plan] {len(entries)} repos over {n} PCs "
+    print(f"[shard-plan] split ID {split_id(entries, weights, n)}: {len(entries)} repos over {n} PCs "
           f"(heaviest/lightest PC: {max(totals) / max(1, min(totals)):.2f}x)")
     for k, sh in enumerate(shards, 1):
         names = ", ".join(f"{entries[i][0]}/{entries[i][1]}" for i in sh)
@@ -226,11 +235,13 @@ def main():
                 assert 1 <= k <= n
             except (ValueError, AssertionError):
                 sys.exit(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
+            sid = split_id(entries, weights, n)
             mine = balanced_shards(weights, n)[k - 1]
             total = sum(weights[i] or 0 for i in mine)
             entries = [entries[i] for i in mine]
-            print(f"[shard] PC {k}/{n}: {len(entries)} repos, ~{total:,} commits "
-                  f"(--shard-plan {n} shows every PC's list)", flush=True)
+            print(f"[shard] split ID {sid} · PC {k}/{n}: {len(entries)} repos, ~{total:,} "
+                  f"commits. Every PC must show the same split ID (same repos.txt and "
+                  f"PC count) or shares may overlap.", flush=True)
     if not entries:
         sys.exit("no valid GitHub URLs found in the repos file")
     if args.test:
