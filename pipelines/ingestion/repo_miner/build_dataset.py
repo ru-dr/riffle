@@ -46,6 +46,50 @@ TEST_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "test_output", "test_dataset.jsonl")
 
 
+_WEIGHT_RE = re.compile(r"\[~?([\d,]+) commits\]")
+
+
+def _parse_weight(line: str) -> int | None:
+    """Approx. commit count from a repos.txt line's "[~N commits]" tag."""
+    m = _WEIGHT_RE.search(line)
+    return int(m.group(1).replace(",", "")) if m else None
+
+
+def balanced_shards(weights: list[int | None], n: int) -> list[list[int]]:
+    """
+    Split item indices into n shards with EQUAL repo counts (differing by at
+    most 1) and balanced total weight (approx. commits: drives clone, history
+    walk and SZZ cost; with a fixed --max-prs the API/LLM cost per repo is the
+    same). Greedy: heaviest repo first, each to the lightest shard that still
+    has room. Deterministic, so every machine computes the same split.
+    Unknown weights count as the median.
+    """
+    known = sorted(w for w in weights if w)
+    median = known[len(known) // 2] if known else 1
+    w = [x or median for x in weights]
+    base, extra = divmod(len(w), n)
+    caps = [base + (1 if k < extra else 0) for k in range(n)]
+    shards: list[list[int]] = [[] for _ in range(n)]
+    totals = [0] * n
+    for i in sorted(range(len(w)), key=lambda i: (-w[i], i)):
+        k = min((k for k in range(n) if len(shards[k]) < caps[k]),
+                key=lambda k: (totals[k], k))
+        shards[k].append(i)
+        totals[k] += w[i]
+    return [sorted(sh) for sh in shards]           # keep file order within a shard
+
+
+def _print_shard_plan(entries, weights, n: int) -> None:
+    shards = balanced_shards(weights, n)
+    totals = [sum(weights[i] or 0 for i in sh) for sh in shards]
+    print(f"[shard-plan] {len(entries)} repos over {n} PCs "
+          f"(heaviest/lightest PC: {max(totals) / max(1, min(totals)):.2f}x)")
+    for k, sh in enumerate(shards, 1):
+        names = ", ".join(f"{entries[i][0]}/{entries[i][1]}" for i in sh)
+        print(f"  PC {k}/{n}: {len(sh)} repos, ~{totals[k - 1]:,} commits")
+        print(f"    {names}")
+
+
 def _mined_repos(out: str) -> set[str]:
     """Lower-cased "owner/name" of every repo already in the dataset, so a
     rerun after a stop skips finished repos. A repo only lands in --out after
@@ -147,8 +191,11 @@ def main():
                          "so 3 total). The miner checkpoints, so a retried mine "
                          "resumes rather than redoing finished PRs.")
     ap.add_argument("--shard", default=None, metavar="K/N",
-                    help="mine only chunk K of N contiguous chunks of the repos file, "
-                         "e.g. 1/2 = first half (v1 #1-50), 2/2 = second half (v2 #51-100)")
+                    help="this machine is PC K of N: mine only its share of the repos "
+                         "file. Shares have equal repo counts and balanced size (by the "
+                         "[~N commits] tags), and every PC computes the same split")
+    ap.add_argument("--shard-plan", type=int, default=None, metavar="N",
+                    help="print how the repos split over N PCs, then exit")
     ap.add_argument("--remine", action="store_true",
                     help="mine every repo even if it's already in --out (default: "
                          "skip finished repos, so a rerun after a stop resumes)")
@@ -167,17 +214,23 @@ def main():
         if not os.path.isfile(args.repos_file):
             sys.exit(f"repos file not found: {args.repos_file}")
         with open(args.repos_file, encoding="utf-8") as fh:
-            entries = [p for p in (_parse_url(line) for line in fh) if p]
+            lines = [line for line in fh if _parse_url(line)]
+        entries = [_parse_url(line) for line in lines]
+        weights = [_parse_weight(line) for line in lines]
+        if args.shard_plan:
+            _print_shard_plan(entries, weights, args.shard_plan)
+            return
         if args.shard:
             try:
                 k, n = (int(x) for x in args.shard.split("/"))
                 assert 1 <= k <= n
             except (ValueError, AssertionError):
                 sys.exit(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
-            size = -(-len(entries) // n)                     # ceil
-            lo = (k - 1) * size
-            entries = entries[lo:lo + size]
-            print(f"[shard] {k}/{n}: repos #{lo + 1}-{lo + len(entries)}", flush=True)
+            mine = balanced_shards(weights, n)[k - 1]
+            total = sum(weights[i] or 0 for i in mine)
+            entries = [entries[i] for i in mine]
+            print(f"[shard] PC {k}/{n}: {len(entries)} repos, ~{total:,} commits "
+                  f"(--shard-plan {n} shows every PC's list)", flush=True)
     if not entries:
         sys.exit("no valid GitHub URLs found in the repos file")
     if args.test:

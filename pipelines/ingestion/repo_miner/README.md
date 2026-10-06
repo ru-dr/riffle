@@ -95,9 +95,16 @@ recently may not have their outcome yet, so decide maturity at training time
 ## Splitting, waiting, and resuming
 
 - `repos.txt` holds the full 100-repo corpus (v1 #1-50, v2 #51-100) from
-  `site/content/docs/dataset-plan.md`. `--shard 1/2` mines v1, `--shard 2/2`
-  mines v2 (any K/N works), so two machines can each take half. GitHub rate
-  limits are per account, so use a token from a different account on each.
+  `site/content/docs/dataset-plan.md`, each tagged `[~N commits]`.
+- Several machines: `--shard K/N` makes this machine PC K of N. Each PC gets
+  an equal number of repos (±1) with balanced total size: heaviest repos
+  first, each to the lightest PC that still has room. With a fixed
+  `--max-prs` the API/LLM cost per repo is equal, so commit count is what
+  differs (clone, history walk, SZZ). The split is deterministic, so every
+  PC computes the same one. `--shard-plan N` prints it. In the TUI: set
+  "Number of PCs" and "This PC #", and "Show split" (ctrl+g) lists them.
+  GitHub rate limits are per account, so use a token from a different
+  account on each PC.
 - Rate limits: GitHub calls sleep until the quota resets (or `Retry-After`)
   and retry; 5xx/network errors back off and retry, then count as unobserved.
 - Stop any time (ctrl+c / TUI Stop). Finished PRs are in `<out>.partial.jsonl`
