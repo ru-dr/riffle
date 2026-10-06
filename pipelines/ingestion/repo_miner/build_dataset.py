@@ -375,13 +375,18 @@ def main():
             failed.append(f"{owner}/{name} (mine)")
             progress.emit("repo_failed", repo=f"{owner}/{name}", stage="mine")
 
-        # delete the clone before the next repo so disk never piles up (one clone
-        # on disk at a time). Mined rows are already in --out; per-repo caches
-        # (ci_cache/) and the .partial.jsonl checkpoint are kept. --keep-clones
-        # opts out; so does --skip-existing (which exists to reuse clones).
-        if not args.keep_clones and not args.skip_existing and os.path.isdir(target):
+        # delete the clone once its repo is fully mined, so disk never piles up
+        # (one clone on disk at a time). Its rows are in --out and a rerun skips
+        # finished repos, so the clone isn't needed again. This holds even with
+        # --skip-existing: that flag only reuses a clone left by a stopped or
+        # failed repo, which is kept so its resume doesn't re-clone. ci_cache/
+        # and checkpoints are kept. --keep-clones opts out.
+        if mined and not args.keep_clones and os.path.isdir(target):
             print(f"[clone] removing {target} (mining done)", flush=True)
             _rmtree(target)
+        elif not mined and os.path.isdir(target):
+            print(f"[clone] keeping {target} so a rerun resumes without re-cloning",
+                  flush=True)
         print(flush=True)
 
     if args.test and os.path.isfile(TEST_OUT):
