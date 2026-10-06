@@ -199,29 +199,48 @@ def _read_out(out: str):
 
 
 def _audit(out: str) -> list[str]:
-    """Print each repo's share of rows with blame data; return repos that look
-    mined with broken blame (almost no ownership data across 10+ rows)."""
+    """Blame coverage per repo, measured only on PRs that touch files that
+    already existed (AGE is set): a PR that only adds new files has no history
+    to blame, so it can't count against the repo. Among the rest coverage
+    should be ~100%. Returns the repos to re-mine (coverage under 50%)."""
     path, df = _read_out(out)
     if df is None or df.empty:
         print(f"[audit] nothing in {out}")
         return []
     cols = [c for c in _BLAME_COLS if c in df.columns]
-    bad = []
+    bad, check = [], []
     print(f"[audit] {path}: {len(df)} rows, {df['repo'].nunique()} repos")
-    print(f"  {'repo':40s} {'rows':>5s}  {'blame data':>10s}  {'szz+':>4s}")
+    print(f"  {'repo':40s} {'rows':>5s}  {'new-only':>8s}  {'blame':>6s}  {'szz+':>4s}")
     for repo, g in df.groupby("repo"):
-        filled = (g[cols].fillna(0) != 0).any(axis=1).mean() if cols else float("nan")
+        has = (g[cols].fillna(0) != 0).any(axis=1) if cols else pd_false(g)
+        existing = g["AGE"].notna() if "AGE" in g else has | True
+        n_new = int((~existing).sum())
+        cov = float(has[existing].mean()) if existing.any() else float("nan")
         szz = int(g["label_szz_bug"].fillna(False).astype(bool).sum()) if "label_szz_bug" in g else 0
-        flag = filled < 0.2 and len(g) >= 10
-        if flag:
-            bad.append(repo)
-        print(f"  {repo:40s} {len(g):5d}  {filled:9.0%}  {szz:4d}" + ("   <- re-mine" if flag else ""))
+        note = ""
+        if existing.sum() >= 10 and cov < 0.5:
+            bad.append(repo); note = "   <- re-mine"
+        elif existing.sum() >= 10 and cov < 0.95:
+            check.append(repo); note = "   <- check"
+        cov_s = "   n/a" if cov != cov else f"{cov:6.0%}"
+        print(f"  {repo:40s} {len(g):5d}  {n_new:8d}  {cov_s}  {szz:4d}{note}")
+    print("  (blame = share of PRs touching existing files that got blame data; "
+          "new-only = PRs that only add files, which have no history to blame)")
     if bad:
-        print("[audit] these look mined while blame was failing. Fix with:\n  python build_dataset.py "
+        print("[audit] re-mine: blame was failing for these. Fix with:\n  python build_dataset.py "
               + " ".join(f"--remine-repo {r}" for r in bad) + " <your usual flags>")
-    else:
-        print("[audit] every repo has blame data")
+    if check:
+        print("[audit] check: some blames failed for " + ", ".join(check) + ". Look for "
+              "'[blame] warning' in logs/run-*.log; one-off failures (a corrupt object, "
+              "an LFS file) are harmless, a pattern means re-mine after fixing the cause")
+    if not bad and not check:
+        print("[audit] every repo has blame data where there was history to blame")
     return bad
+
+
+def pd_false(g):
+    import pandas as pd
+    return pd.Series(False, index=g.index)
 
 
 def _save_llm_reuse(rows, path: str, repo: str) -> None:
@@ -326,6 +345,9 @@ def main():
     ap.add_argument("--remine-repo", action="append", default=[], metavar="OWNER/NAME",
                     help="drop this repo's rows, SZZ cache and checkpoint from --out, then "
                          "mine it again (repeatable). Use after --audit flags a repo")
+    ap.add_argument("--auto-remine", action="store_true",
+                    help="before mining, audit --out and re-mine every repo in this run's "
+                         "share whose blame data shows it was mined while blame was failing")
     ap.add_argument("--audit", action="store_true",
                     help="report each repo's share of rows with blame data and flag repos "
                          "mined while blame was failing, then exit")
@@ -344,7 +366,6 @@ def main():
     for repo in args.remine_repo:
         if repo.count("/") != 1:
             sys.exit(f"--remine-repo wants OWNER/NAME, got {repo!r}")
-        _drop_repo(args.out, repo)
 
     if args.test:
         entries = [p for p in [_parse_url(args.test_repo)] if p]
@@ -385,6 +406,32 @@ def main():
                 os.remove(f)                 # fresh file every test run
         print(f"[test] {entries[0][0]}/{entries[0][1]}, {args.max_prs} PRs -> {TEST_OUT}",
               flush=True)
+
+    # Re-mine only repos this run will actually mine (this PC's share), and
+    # drop their old rows only then; dropping a repo another PC mines would
+    # lose its rows here without replacing them.
+    mine_here = {f"{o}/{n}".lower() for o, n, _ in entries}
+    if args.auto_remine and not args.test:
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            flagged = _audit(args.out)
+        auto = [r for r in flagged if r.lower() in mine_here
+                and r.lower() not in {x.lower() for x in args.remine_repo}]
+        others = [r for r in flagged if r.lower() not in mine_here]
+        if auto:
+            print(f"[auto-remine] blame was failing for {', '.join(auto)}; re-mining them", flush=True)
+        else:
+            print("[auto-remine] audit found nothing to re-mine in this run's repos", flush=True)
+        if others:
+            print(f"[auto-remine] also flagged, but mined by another PC: {', '.join(others)}", flush=True)
+        args.remine_repo = list(args.remine_repo) + auto
+    for repo in args.remine_repo:
+        if repo.lower() not in mine_here:
+            sys.exit(f"--remine-repo {repo}: not in this run's repos"
+                     + (f" (this is PC {args.shard}; it's in another PC's share)" if args.shard else
+                        f" (not in {args.repos_file})") + ". Nothing was changed.")
+    for repo in args.remine_repo:
+        _drop_repo(args.out, repo)
 
     os.makedirs(args.clone_dir, exist_ok=True)
     done_repos = {} if (args.remine or args.test) else _mined_repos(args.out)
