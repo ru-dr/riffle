@@ -437,7 +437,7 @@ def set_blame_settings(flags: list[str], ignore_revs: str | None) -> None:
 
 # Blame failures used to vanish into an empty result, which silently emptied
 # line features and SZZ labels. Count them, and warn once per process.
-_BLAME_STATS = {"calls": 0, "fails": 0, "first_error": None}
+_BLAME_STATS = {"calls": 0, "fails": 0, "absent": 0, "first_error": None}
 
 
 def _note_blame_failure(path: str, stderr: str) -> None:
@@ -510,6 +510,12 @@ def _blame(repo: str, sha: str, path: str,
     )
     _BLAME_STATS["calls"] += 1
     if out.returncode != 0:
+        if "no such path" in (out.stderr or ""):
+            # Expected, not a failure: the file doesn't exist at that commit
+            # (a PR that adds it, blamed at its base). It has no history, which
+            # is exactly what an empty result means. No full-blame retry.
+            _BLAME_STATS["absent"] += 1
+            return {}
         _note_blame_failure(path, out.stderr)
         return None if ranges else {}
     result: dict[int, BlameLine] = {}

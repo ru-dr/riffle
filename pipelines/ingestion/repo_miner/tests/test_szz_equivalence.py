@@ -184,3 +184,35 @@ def test_blame_with_relative_ignore_revs_file(tmp_path, monkeypatch):
         assert len(gitio.blame_lines(rel_repo, "HEAD", "f.txt", [2])) >= 1
     finally:
         gitio.configure_blame()
+
+
+def test_blame_of_path_absent_at_commit_is_not_a_failure(synth_repo, capsys):
+    """A PR that adds a file blames it at its base, where it doesn't exist.
+    That's expected (no history), so it must not warn or count as a failure."""
+    gitio.configure_blame()
+    gitio._BLAME_STATS.update(calls=0, fails=0, absent=0, first_error=None)
+    assert gitio.blame_file(synth_repo, "HEAD", "does/not/exist.py") == {}
+    assert gitio.blame_lines(synth_repo, "HEAD", "does/not/exist.py", [1, 2]) == {}
+    st = gitio.blame_stats()
+    assert st["fails"] == 0 and st["absent"] == 2
+    assert "[blame] warning" not in capsys.readouterr().err
+
+
+def test_llm_reuse_skips_empty_answers_and_short_circuits_fetch(tmp_path):
+    """Re-mine reuses saved LLM answers for the same commits; an answer with
+    every flag null (the old call failed) is not reused, so it's asked again."""
+    from features import llm_flags
+    cols = list(llm_flags.FLAG_SCHEMA)
+    good = {c: None for c in cols}; good[cols[0]] = True
+    empty = {c: None for c in cols}
+    p = tmp_path / "x.llm_reuse.json"
+    p.write_text(json.dumps([{"base_sha": "b1", "head_sha": "h1", "flags": good},
+                             {"base_sha": "b2", "head_sha": "h2", "flags": empty}]))
+    try:
+        assert llm_flags.load_reuse(str(p)) == 1
+        st = config.Settings(); st.enable_llm = True; st.llm_backend = "claude_cli"
+        got = llm_flags.fetch("/nonexistent", "b1", "h1", st)     # never touches git or the LLM
+        assert got["status"] == "ok" and got["reused"] and got["raw"][cols[0]] is True
+        assert llm_flags.resolve(got, st) == good
+    finally:
+        llm_flags._REUSE.clear()

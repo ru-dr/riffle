@@ -167,6 +167,14 @@ API-price equivalent of those tokens, plus the Claude plan's current-session
 usage and reset countdown from Claude Code's own `/usage` (run headless; no
 tokens or quota). `RIFFLE_NO_PLAN_USAGE=1` turns the `/usage` poll off.
 
+Re-mining a repo: `python build_dataset.py --audit` (or Audit, ctrl+k, in the
+TUI) reports each repo's blame coverage and flags repos mined while blame was
+failing (before v1.6.0, repos that ship `.git-blame-ignore-revs`).
+`--remine-repo OWNER/NAME` (the TUI's "Re-mine repos" field, filled by Audit)
+drops that repo's rows, SZZ cache and checkpoint and mines it again. Its
+earlier LLM answers are kept and reused for PRs with the same commits, so the
+re-mine makes no new LLM calls for them.
+
 Configure the batch on the left (repos file, output, PR cap, workers, LLM /
 SZZ / CI toggles), press **ctrl+r** to start. The right side shows per-repo
 progress, PR/min, ETA, LLM ok/fail + latency, circuit-breaker state, and the

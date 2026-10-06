@@ -680,6 +680,11 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         progress.emit("stage", repo=f"{owner}/{name}", stage="ci history")
         ci_map = api.build_ci_conclusion_map(cache_path)
         print(f"[ci-history] {len(ci_map)} commits with a CI verdict", file=sys.stderr)
+    reuse_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.llm_reuse.json")
+    if st.enable_llm and os.path.isfile(reuse_path):
+        n_reuse = llm_flags.load_reuse(reuse_path)
+        print(f"[llm] re-mine: reusing {n_reuse} earlier LLM answers for unchanged PRs "
+              f"(no new calls for those)", file=sys.stderr, flush=True)
     szz_shas = None
     if st.enable_szz:
         szz_cache = os.path.join(st.ci_cache_dir, f"{owner}_{name}.szz.json")
@@ -802,7 +807,8 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                 st.llm_breaker_tripped = True
                 break
             progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="ok",
-                          llm=fetched.get("status"), llm_secs=fetched.get("secs"),
+                          llm="reused" if fetched.get("reused") else fetched.get("status"),
+                          llm_secs=fetched.get("secs"),
                           llm_usage=llm_flags.usage_snapshot() if st.enable_llm else None)
             if fetched.get("status") == "fail":
                 # LLM failed for this PR: hold the row until the next success
@@ -964,6 +970,9 @@ def main():
         progress.emit("repo_done", repo=f"{owner}/{name}", rows=len(rows), status="breaker")
         sys.exit(3)
     total, ok = _write(rows, out, append=args.append)
+    reuse_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.llm_reuse.json")
+    if ok and os.path.isfile(reuse_path):
+        os.remove(reuse_path)                       # one-shot: the re-mine is done
     usage = llm_flags.usage_snapshot() if st.enable_llm else None
     if usage:
         print(f"[llm] {owner}/{name}: {llm_flags.usage_summary(usage)}", file=sys.stderr, flush=True)

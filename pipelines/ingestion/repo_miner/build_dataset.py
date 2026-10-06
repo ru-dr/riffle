@@ -182,6 +182,104 @@ def _rmtree(path: str) -> None:
     shutil.rmtree(path, onerror=onerror)
 
 
+# Blame-derived columns. A repo mined while blame was failing (before v1.6.0,
+# for repos that ship .git-blame-ignore-revs) has these all empty or zero.
+_BLAME_COLS = ("max_file_top_author_share", "max_file_minor_contributor_count",
+               "min_mod_line_age_days_min", "max_mod_lines_distinct_authors")
+
+
+def _read_out(out: str):
+    """The dataset as a pandas DataFrame (parquet, or the .jsonl fallback)."""
+    import pandas as pd
+    for path in ([out] + ([out.rsplit(".", 1)[0] + ".jsonl"] if out.endswith(".parquet") else [])):
+        if os.path.isfile(path):
+            return path, (pd.read_parquet(path) if path.endswith(".parquet")
+                          else pd.read_json(path, lines=True))
+    return None, None
+
+
+def _audit(out: str) -> list[str]:
+    """Print each repo's share of rows with blame data; return repos that look
+    mined with broken blame (almost no ownership data across 10+ rows)."""
+    path, df = _read_out(out)
+    if df is None or df.empty:
+        print(f"[audit] nothing in {out}")
+        return []
+    cols = [c for c in _BLAME_COLS if c in df.columns]
+    bad = []
+    print(f"[audit] {path}: {len(df)} rows, {df['repo'].nunique()} repos")
+    print(f"  {'repo':40s} {'rows':>5s}  {'blame data':>10s}  {'szz+':>4s}")
+    for repo, g in df.groupby("repo"):
+        filled = (g[cols].fillna(0) != 0).any(axis=1).mean() if cols else float("nan")
+        szz = int(g["label_szz_bug"].fillna(False).astype(bool).sum()) if "label_szz_bug" in g else 0
+        flag = filled < 0.2 and len(g) >= 10
+        if flag:
+            bad.append(repo)
+        print(f"  {repo:40s} {len(g):5d}  {filled:9.0%}  {szz:4d}" + ("   <- re-mine" if flag else ""))
+    if bad:
+        print("[audit] these look mined while blame was failing. Fix with:\n  python build_dataset.py "
+              + " ".join(f"--remine-repo {r}" for r in bad) + " <your usual flags>")
+    else:
+        print("[audit] every repo has blame data")
+    return bad
+
+
+def _save_llm_reuse(rows, path: str, repo: str) -> None:
+    """Keep the LLM answers of rows about to be dropped, keyed by their commits,
+    so the re-mine reuses them instead of calling the LLM again. Their blame
+    features were wrong; their LLM answers weren't."""
+    from features import llm_flags
+    cols = [c for c in llm_flags.FLAG_SCHEMA if c in rows.columns]
+    if not cols or rows.empty:
+        return
+    recs = []
+    for r in rows.to_dict("records"):
+        flags = {c: (None if r.get(c) is None or r.get(c) != r.get(c) else r.get(c)) for c in cols}
+        if r.get("base_sha") and r.get("head_sha") and any(v is not None for v in flags.values()):
+            recs.append({"base_sha": r["base_sha"], "head_sha": r["head_sha"],
+                         "flags": {k: (v.item() if hasattr(v, "item") else v) for k, v in flags.items()}})
+    if recs:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(recs, fh)
+        print(f"[remine] {repo}: kept {len(recs)} LLM answers to reuse ({path})", flush=True)
+
+
+def _drop_repo(out: str, repo: str, cache_dir: str = "ci_cache") -> None:
+    """Remove one repo's rows from the dataset (atomic rewrite), plus its SZZ
+    cache and checkpoint lines, so the next run mines it from scratch."""
+    key = repo.lower()
+    owner, _, name = repo.partition("/")
+    path, df = _read_out(out)
+    if df is not None and "repo" in df.columns:
+        mine = df[df["repo"].str.lower() == key]
+        _save_llm_reuse(mine, os.path.join(cache_dir, f"{owner}_{name}.llm_reuse.json"), repo)
+        keep = df[df["repo"].str.lower() != key]
+        n = len(df) - len(keep)
+        if n:
+            tmp = path + ".tmp"
+            if path.endswith(".parquet"):
+                keep.to_parquet(tmp, index=False)
+            else:
+                keep.to_json(tmp, orient="records", lines=True)
+            os.replace(tmp, path)
+        print(f"[remine] {repo}: removed {n} rows from {path}", flush=True)
+    for f in (os.path.join(cache_dir, f"{owner}_{name}.szz.json"),
+              os.path.join(cache_dir, f"{owner}_{name}.szz.json.partial.jsonl")):
+        if os.path.isfile(f):
+            os.remove(f)
+            print(f"[remine] {repo}: removed {f}", flush=True)
+    ckpt = out + ".partial.jsonl"
+    if os.path.isfile(ckpt):
+        with open(ckpt, encoding="utf-8") as fh:
+            lines = fh.readlines()
+        kept = [l for l in lines if not l.strip() or (json.loads(l).get("repo") or "").lower() != key]
+        if len(kept) != len(lines):
+            with open(ckpt, "w", encoding="utf-8") as fh:
+                fh.writelines(kept)
+            print(f"[remine] {repo}: removed {len(lines) - len(kept)} checkpointed rows", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Clone a list of GitHub repos and mine them into one dataset.")
@@ -225,6 +323,12 @@ def main():
     ap.add_argument("--remine", action="store_true",
                     help="mine every repo even if it's already in --out (default: "
                          "skip finished repos, so a rerun after a stop resumes)")
+    ap.add_argument("--remine-repo", action="append", default=[], metavar="OWNER/NAME",
+                    help="drop this repo's rows, SZZ cache and checkpoint from --out, then "
+                         "mine it again (repeatable). Use after --audit flags a repo")
+    ap.add_argument("--audit", action="store_true",
+                    help="report each repo's share of rows with blame data and flag repos "
+                         "mined while blame was failing, then exit")
     ap.add_argument("--test", action="store_true",
                     help="test run: first repo only, --test-prs PRs, fresh output in "
                          "test_output/test_dataset.jsonl (readable JSON lines); clone kept")
@@ -233,6 +337,14 @@ def main():
                     help="repo used by --test instead of the repos file (default: "
                          "pallets/flask, the smallest repo in the corpus)")
     args = ap.parse_args()
+
+    if args.audit:
+        _audit(args.out)
+        return
+    for repo in args.remine_repo:
+        if repo.count("/") != 1:
+            sys.exit(f"--remine-repo wants OWNER/NAME, got {repo!r}")
+        _drop_repo(args.out, repo)
 
     if args.test:
         entries = [p for p in [_parse_url(args.test_repo)] if p]

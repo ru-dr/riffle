@@ -77,6 +77,26 @@ def compute(repo: str, base: str, head: str, st: config.Settings) -> dict:
     return resolve(fetch(repo, base, head, st), st)
 
 
+# Earlier LLM answers to reuse when a repo is re-mined (--remine-repo):
+# {(base_sha, head_sha): {flag column: value}}. Same commits, same diff, so the
+# answer still applies; reusing it saves the calls (time and plan quota).
+_REUSE: dict[tuple[str, str], dict] = {}
+
+
+def load_reuse(path: str) -> int:
+    """Load answers saved by build_dataset --remine-repo. Returns how many."""
+    _REUSE.clear()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for rec in json.load(fh):
+                flags = {k: rec["flags"].get(k) for k in FLAG_SCHEMA}
+                if any(v is not None for v in flags.values()):
+                    _REUSE[(rec["base_sha"], rec["head_sha"])] = flags
+    except (OSError, ValueError, KeyError, TypeError):
+        _REUSE.clear()
+    return len(_REUSE)
+
+
 def fetch(repo: str, base: str, head: str, st: config.Settings) -> dict:
     """
     Thread-safe half: build the diff and call the LLM. Touches no shared state
@@ -86,6 +106,8 @@ def fetch(repo: str, base: str, head: str, st: config.Settings) -> dict:
     """
     if not st.enable_llm or (st.llm_backend == "api" and not st.llm_api_key):
         return {"status": "off", "raw": None, "secs": 0.0}
+    if (base, head) in _REUSE:
+        return {"status": "ok", "raw": dict(_REUSE[(base, head)]), "secs": 0.0, "reused": True}
     diff = gitio._run(repo, "diff", "-M", f"{base}...{head}", check=False)
     if not diff.strip():
         return {"status": "empty", "raw": None, "secs": 0.0}  # nothing to judge, not a failure
