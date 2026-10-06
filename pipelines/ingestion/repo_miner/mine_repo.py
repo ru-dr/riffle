@@ -33,7 +33,7 @@ import sys
 import time
 from collections import defaultdict, deque, Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import config
 import gitio
@@ -223,6 +223,9 @@ def _discover_prs_git(repo: str, owner: str, name: str, api,
         first_sha = hits[-1][0]            # oldest linked commit for this PR
         items.append((num, head_sha, head_time, first_sha))
     items.sort(key=lambda x: x[2], reverse=True)   # newest-merged first
+    if st.min_age_days:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=st.min_age_days)
+        items = [it for it in items if it[2] <= cutoff]
     if st.max_prs:
         items = items[: st.max_prs]
 
@@ -842,6 +845,9 @@ def main():
     ap.add_argument("--out", default=None,
                     help="output .parquet or .jsonl (defaults to <owner>_<n>.parquet)")
     ap.add_argument("--max-prs", type=int, default=None)
+    ap.add_argument("--min-age-days", type=int, default=0,
+                    help="skip PRs merged in the last N days so labels are mature "
+                         "(90 recommended: covers the 30-day maturity and 90-day SZZ windows)")
     ap.add_argument("--llm", action="store_true",
                     help="enable LLM semantic flags (Source 6); default backend is headless "
                          "Claude Code (`claude -p`); LLM_BACKEND=api uses LLM_API_KEY")
@@ -902,6 +908,7 @@ def main():
 
     st = config.Settings()
     st.max_prs = args.max_prs
+    st.min_age_days = args.min_age_days
     if args.llm:
         st.enable_llm = True
     if args.no_llm:

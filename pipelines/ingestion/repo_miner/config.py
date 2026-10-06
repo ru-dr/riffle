@@ -171,6 +171,10 @@ class Settings:
         os.getenv("RIFFLE_WORKERS", str(min(6, os.cpu_count() or 2)))))
     request_timeout: float = 20.0
     max_prs: int | None = None             # cap PRs per repo (None = all)
+    # skip PRs merged in the last N days, so the cap picks PRs old enough for
+    # their outcome labels to be mature (0 = off). 90 covers maturity_days (30)
+    # and szz_maturity_days (90).
+    min_age_days: int = 0
     merge_signal: str = "auto"             # auto | github | landed (closed-PR -> landed-commit fallback)
     pr_discovery: str = "api"              # api (PR-list endpoint) | git (commit-message linkage, API enriches)
 

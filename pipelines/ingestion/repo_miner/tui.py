@@ -209,7 +209,9 @@ class RiffleTUI(App):
                 yield Label("Clone dir")
                 yield Input("cloned_repos", id="clone_dir", compact=True)
                 yield Label("Max PRs per repo (blank = all)")
-                yield Input("300", id="max_prs", type="integer", compact=True)
+                yield Input("100", id="max_prs", type="integer", compact=True)
+                yield Label("Skip PRs merged in last N days (mature labels)")
+                yield Input("90", id="min_age", type="integer", compact=True)
                 yield Label("PR workers")
                 yield Input(str(min(6, os.cpu_count() or 2)), id="workers", type="integer", compact=True)
                 yield Label("LLM concurrency")
@@ -264,6 +266,8 @@ class RiffleTUI(App):
                "--clone-dir", self._val("clone_dir") or "cloned_repos"]
         if self._val("max_prs"):
             cmd += ["--max-prs", self._val("max_prs")]
+        if self._val("min_age") and self._val("min_age") != "0":
+            cmd += ["--min-age-days", self._val("min_age")]
         shard = self._shard()
         if shard:
             cmd += ["--shard", shard]

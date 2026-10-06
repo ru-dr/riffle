@@ -105,6 +105,11 @@ recently may not have their outcome yet, so decide maturity at training time
   "Number of PCs" and "This PC #", and "Show split" (ctrl+g) lists them.
   GitHub rate limits are per account, so use a token from a different
   account on each PC.
+- `--min-age-days N` (TUI: "Skip PRs merged in last N days", default 90)
+  skips PRs merged in the last N days, so `--max-prs` picks PRs whose labels
+  are mature. Busy repos merge 100 PRs in days, so without it most rows would
+  be too young to train on. 90 covers the 30-day maturity and 90-day SZZ
+  windows. Costs extra PR-list pages on busy repos.
 - Rate limits: GitHub calls sleep until the quota resets (or `Retry-After`)
   and retry; 5xx/network errors back off and retry, then count as unobserved.
 - Stop any time (ctrl+c / TUI Stop). Finished PRs are in `<out>.partial.jsonl`
