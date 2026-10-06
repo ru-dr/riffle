@@ -128,6 +128,101 @@ def resolve(fetched: dict, st: config.Settings) -> dict:
 _LIMITER = None
 _LIMITER_LOCK = threading.Lock()
 
+# Running LLM usage for this process (one miner = one repo), retries included.
+# claude -p reports tokens and total_cost_usd per call; on a Claude Pro/Max
+# login that cost is Claude Code's estimate of API pricing, not a charge.
+_USAGE_LOCK = threading.Lock()
+_USAGE = {"calls": 0, "input": 0, "output": 0, "cache_write": 0, "cache_read": 0,
+          "cost_usd": 0.0, "cost_known": False}
+
+
+def _add_usage(inp: int = 0, out: int = 0, cache_write: int = 0, cache_read: int = 0,
+               cost: float | None = None) -> None:
+    with _USAGE_LOCK:
+        _USAGE["calls"] += 1
+        _USAGE["input"] += int(inp or 0)
+        _USAGE["output"] += int(out or 0)
+        _USAGE["cache_write"] += int(cache_write or 0)
+        _USAGE["cache_read"] += int(cache_read or 0)
+        if cost is not None:
+            _USAGE["cost_usd"] += float(cost)
+            _USAGE["cost_known"] = True
+
+
+def usage_snapshot() -> dict:
+    with _USAGE_LOCK:
+        return dict(_USAGE, cost_usd=round(_USAGE["cost_usd"], 6))
+
+
+_PLAN_RE = None
+
+
+def claude_plan_usage(timeout: float = 45) -> list[dict] | None:
+    """Plan limits from Claude Code's own /usage, run headless (`claude -p
+    /usage`). It is a local command: no model call, no tokens, no quota.
+    Returns [{"label": "Session", "pct": 32, "resets": "Oct 6, 4pm (...)"}, ...]
+    (session, and week lines when the plan reports them), or None when claude
+    isn't installed, isn't on a subscription, or the output can't be read."""
+    import re
+    import shutil
+    global _PLAN_RE
+    if shutil.which("claude") is None:
+        return None
+    if _PLAN_RE is None:
+        _PLAN_RE = re.compile(r"^Current ([^:]+):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s*(.+))?$")
+    try:
+        p = subprocess.run(["claude", "-p", "/usage", "--output-format", "json"],
+                           capture_output=True, text=True, timeout=timeout,
+                           cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL)
+        text = json.loads(p.stdout).get("result") or ""
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError):
+        return None
+    out = []
+    for line in text.splitlines():
+        m = _PLAN_RE.match(line.strip())
+        if m:
+            resets = (m.group(3) or "").strip() or None
+            out.append({"label": m.group(1).strip().capitalize(), "pct": float(m.group(2)),
+                        "resets": resets, "resets_at": _parse_reset(resets)})
+    return out or None
+
+
+def _parse_reset(text: str | None) -> float | None:
+    """'Oct 6, 3:59pm (America/New_York)' -> Unix time, so the UI can show a
+    live countdown. The year isn't printed: take this year, or next year if
+    that would be in the past (a reset is always ahead)."""
+    import re
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    if not text:
+        return None
+    m = re.match(r"([A-Za-z]{3})\w*\s+(\d{1,2}),?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*(?:\(([^)]+)\))?",
+                 text.strip(), re.I)
+    if not m:
+        return None
+    mon, day, hh, mm, ap, tz = m.groups()
+    try:
+        zone = ZoneInfo(tz) if tz else None
+        now = datetime.now(zone)
+        h = int(hh) % 12 + (12 if ap.lower() == "pm" else 0)
+        month = datetime.strptime(mon.title(), "%b").month
+        when = now.replace(month=month, day=int(day), hour=h, minute=int(mm or 0), second=0, microsecond=0)
+        if when.timestamp() < now.timestamp() - 3600:
+            when = when.replace(year=when.year + 1)
+        return when.timestamp()
+    except (ValueError, KeyError, OSError):
+        return None
+
+
+def usage_summary(u: dict | None = None) -> str:
+    u = u or usage_snapshot()
+    if not u["calls"]:
+        return "no LLM calls"
+    total_in = u["input"] + u["cache_write"] + u["cache_read"]
+    cost = f" · ${u['cost_usd']:.2f} at API prices" if u["cost_known"] else ""
+    return (f"{u['calls']} calls · {total_in:,} tokens in ({u['cache_read']:,} cache read, "
+            f"{u['cache_write']:,} cache write) · {u['output']:,} out{cost}")
+
 
 def _limiter(st: config.Settings) -> threading.Semaphore:
     """Caps concurrent LLM calls (Settings.llm_concurrency) across workers."""
@@ -268,6 +363,9 @@ def _call_llm(diff: str, st: config.Settings):
                     {"role": "user", "content": "Git diff:\n\n" + diff},
                 ],
             )
+            u = getattr(resp, "usage", None)
+            if u is not None:
+                _add_usage(getattr(u, "prompt_tokens", 0), getattr(u, "completion_tokens", 0))
             text = (resp.choices[0].message.content or "") if resp.choices else ""
             return _extract_json(text)
         except Exception as e:                           # noqa: BLE001
@@ -341,8 +439,13 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2):
             p = subprocess.run(cmd, input="Git diff:\n\n" + diff, capture_output=True,
                                text=True, timeout=st.llm_timeout, cwd=_CLI_WORKDIR,
                                env=os.environ.copy())
+            out = json.loads(p.stdout) if p.stdout.strip() else {}
+            u = out.get("usage") or {}
+            if u or out.get("total_cost_usd") is not None:
+                _add_usage(u.get("input_tokens"), u.get("output_tokens"),
+                           u.get("cache_creation_input_tokens"), u.get("cache_read_input_tokens"),
+                           out.get("total_cost_usd"))
             if p.returncode == 0:
-                out = json.loads(p.stdout)
                 if not out.get("is_error"):
                     obj = out.get("structured_output")
                     if isinstance(obj, dict):

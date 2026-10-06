@@ -112,12 +112,13 @@ def _print_shard_plan(entries, weights, n: int) -> None:
             print(f"    - {entries[i][0]}/{entries[i][1]}  ({w})")
 
 
-def _mined_repos(out: str) -> set[str]:
+def _mined_repos(out: str) -> dict[str, int]:
     """Lower-cased "owner/name" of every repo already in the dataset, so a
     rerun after a stop skips finished repos. A repo only lands in --out after
     a clean, complete mine (a stopped one stays in its .partial.jsonl
-    checkpoint), so presence here means done. Checks the .jsonl fallback too."""
-    found: set[str] = set()
+    checkpoint), so presence here means done. Checks the .jsonl fallback too.
+    Returns {repo: rows already mined}, so the TUI can count them as done."""
+    found: dict[str, int] = {}
     cands = [out]
     if out.endswith(".parquet"):
         cands.append(out.rsplit(".", 1)[0] + ".jsonl")
@@ -127,18 +128,19 @@ def _mined_repos(out: str) -> set[str]:
         try:
             if path.endswith(".parquet"):
                 import pyarrow.parquet as pq
-                found |= {str(r).lower() for r in pq.read_table(path, columns=["repo"])
-                          .column("repo").to_pylist() if r}
+                for r in pq.read_table(path, columns=["repo"]).column("repo").to_pylist():
+                    if r:
+                        found[str(r).lower()] = found.get(str(r).lower(), 0) + 1
             else:
                 with open(path, encoding="utf-8") as fh:
                     for line in fh:
                         if line.strip():
                             r = json.loads(line).get("repo")
                             if r:
-                                found.add(str(r).lower())
+                                found[str(r).lower()] = found.get(str(r).lower(), 0) + 1
         except Exception as e:                              # noqa: BLE001
             print(f"[resume] couldn't read {path} ({e}); not skipping any repo", flush=True)
-            return set()
+            return {}
     return found
 
 
@@ -273,7 +275,7 @@ def main():
               flush=True)
 
     os.makedirs(args.clone_dir, exist_ok=True)
-    done_repos = set() if (args.remine or args.test) else _mined_repos(args.out)
+    done_repos = {} if (args.remine or args.test) else _mined_repos(args.out)
     if done_repos:
         print(f"[resume] {len(done_repos)} repos already in {args.out}; skipping them "
               f"(--remine to redo)", flush=True)
@@ -290,7 +292,9 @@ def main():
         if f"{owner}/{name}".lower() in done_repos:
             print("[resume] already mined; skipping\n", flush=True)
             ok += 1
-            progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="ok (already mined)")
+            n_done = done_repos[f"{owner}/{name}".lower()]
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=n_done, total=n_done,
+                          status="ok", already=True)
             continue
         progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="clone")
 
