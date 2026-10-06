@@ -19,6 +19,7 @@ import urllib.request
 import urllib.error
 
 import config
+import progress
 
 API = "https://api.github.com"
 
@@ -159,6 +160,8 @@ class GitHubAPI:
                     reset = e.headers.get("X-RateLimit-Reset")
                     # secondary rate limit: honor Retry-After, then retry
                     if retry_after:
+                        progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}",
+                                      wait=min(int(retry_after) + 1, 300))
                         time.sleep(min(int(retry_after) + 1, 300))
                         continue
                     # primary rate limit (quota exhausted): wait for the reset
@@ -169,6 +172,8 @@ class GitHubAPI:
                         wait = max(1, int(reset) - int(time.time())) + 1
                         print(f"[api] rate limit hit; waiting {min(wait, 3600)}s",
                               file=sys.stderr, flush=True)
+                        progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}",
+                                      wait=min(wait, 3600))
                         time.sleep(min(wait, 3600))
                         continue
                     # a 403 without rate-limit signals is a genuine permission
@@ -266,6 +271,8 @@ class GitHubAPI:
                     collected.append(cand)
             if self.st.max_prs and len(collected) >= self.st.max_prs + 100:
                 break            # enough for a recency cap (+1 page buffer)
+            progress.emit("stage", repo=f"{self.owner}/{self.repo}",
+                          stage=f"fetching PRs p{page}")
             if cutoff and page % 10 == 0:
                 print(f"[fetch] page {page}: {len(collected)} PRs merged before "
                       f"{cutoff[:10]} so far", file=sys.stderr, flush=True)

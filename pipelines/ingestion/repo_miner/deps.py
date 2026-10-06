@@ -22,6 +22,7 @@ PY_PACKAGES = {
     "pandas": "pandas>=2.0",
     "pyarrow": "pyarrow>=14.0",
     "lizard": "lizard>=1.17",
+    "psutil": "psutil>=5.9",            # TUI RAM/CPU readout
 }
 # CLI tools pip can install -> pip spec
 PIP_CLIS = {"semgrep": "semgrep>=1.0"}
@@ -39,7 +40,7 @@ def missing() -> list[str]:
     return specs
 
 
-def ensure() -> None:
+def ensure(require_textual: bool = True) -> None:
     need = missing()
     if need and not os.getenv("RIFFLE_NO_INSTALL"):
         in_venv = sys.prefix != sys.base_prefix
@@ -56,7 +57,7 @@ def ensure() -> None:
     for exe, how in SYSTEM_CLIS.items():
         if shutil.which(exe) is None:
             print(f"[deps] '{exe}' not found on PATH: {how}", file=sys.stderr)
-    if importlib.util.find_spec("textual") is None:
+    if require_textual and importlib.util.find_spec("textual") is None:
         sys.exit("[deps] textual is required for the TUI: pip install textual")
 
 

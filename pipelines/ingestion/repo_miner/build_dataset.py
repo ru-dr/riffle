@@ -106,9 +106,10 @@ def _print_shard_plan(entries, weights, n: int) -> None:
     print(f"[shard-plan] split ID {split_id(entries, weights, n)}: {len(entries)} repos over {n} PCs "
           f"(heaviest/lightest PC: {max(totals) / max(1, min(totals)):.2f}x)")
     for k, sh in enumerate(shards, 1):
-        names = ", ".join(f"{entries[i][0]}/{entries[i][1]}" for i in sh)
         print(f"  PC {k}/{n}: {len(sh)} repos, ~{totals[k - 1]:,} commits")
-        print(f"    {names}")
+        for i in sh:                                  # one repo per line
+            w = f"~{weights[i]:,} commits" if weights[i] else "untagged"
+            print(f"    - {entries[i][0]}/{entries[i][1]}  ({w})")
 
 
 def _mined_repos(out: str) -> set[str]:
@@ -317,7 +318,7 @@ def main():
         if not cloned:
             print("[clone] giving up after retries; skipping repo\n", flush=True)
             failed.append(f"{owner}/{name} (clone)")
-            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="clone")
+            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="clone", rc=rc)
             continue
 
         # --- mine (retried; checkpoint makes a retry resume, not redo) --------
@@ -373,7 +374,7 @@ def main():
         if not mined:
             print("[mine] giving up after retries; moving on", flush=True)
             failed.append(f"{owner}/{name} (mine)")
-            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="mine")
+            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="mine", rc=rc)
 
         # delete the clone once its repo is fully mined, so disk never piles up
         # (one clone on disk at a time). Its rows are in --out and a rerun skips
