@@ -139,9 +139,17 @@ The nine columns of `contracts/mined_features.schema.json`
 ## TUI
 
 ```bash
-pip install textual
 python tui.py
 ```
+
+Every launch first runs the environment doctor (`doctor.py`). It checks
+Python, git, the Python packages, `GITHUB_TOKEN` (verified against GitHub, so
+the `.env.example` placeholder doesn't count), the LLM setup, optional
+API-diff tools, disk and RAM, and offers fixes: it pip-installs missing
+packages, asks for a token and saves it to `.env` (private, gitignored), and
+offers the install command for git / Claude Code. Run it on its own with
+`python doctor.py`, or `python doctor.py --check` to only report (exit 1 on a
+failure). `RIFFLE_NO_DOCTOR=1` skips it.
 
 Configure the batch on the left (repos file, output, PR cap, workers, LLM /
 SZZ / CI toggles), press **ctrl+r** to start. The right side shows per-repo

@@ -7,3 +7,5 @@ data/
 *.parquet
 *.jsonl
 test_output/
+logs/
+.tui_settings.json

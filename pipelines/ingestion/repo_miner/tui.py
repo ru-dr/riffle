@@ -12,9 +12,15 @@ structured events it writes to a temp file (RIFFLE_EVENTS, see progress.py), so
 the TUI never parses log text. Stop sends SIGINT; the miner's checkpoint makes
 a later Start (with "reuse clones" on) resume instead of redoing PRs.
 
+Also shows live RAM/CPU of the whole miner process tree, names what killed a
+run (e.g. out of memory), counts down GitHub rate-limit waits, flags repos with
+no progress, saves every run's log under logs/, and remembers the form between
+launches (.tui_settings.json).
+
 Keys: ctrl+r start · ctrl+x stop · ctrl+l clear log · ctrl+q quit
-Missing Python dependencies (textual, pandas, pyarrow, lizard, semgrep) are
-installed on first launch by deps.py; RIFFLE_NO_INSTALL=1 skips that.
+Every launch first runs doctor.py, which checks git, the Python packages,
+GITHUB_TOKEN and the LLM setup and offers to fix them (install packages, save a
+token to .env). RIFFLE_NO_DOCTOR=1 skips it; RIFFLE_NO_INSTALL=1 never installs.
 """
 from __future__ import annotations
 
@@ -25,12 +31,37 @@ import signal
 import sys
 import tempfile
 import time
+import webbrowser
 from collections import deque
 from dataclasses import dataclass, field
 
 import deps
+from version import __version__
 
-deps.ensure()                     # install missing dependencies before importing textual
+# Environment doctor on every launch, before the UI takes over the terminal:
+# checks git / packages / GITHUB_TOKEN / LLM and offers to fix them. Skip with
+# RIFFLE_NO_DOCTOR=1 (then only missing Python packages are auto-installed).
+if os.getenv("RIFFLE_NO_DOCTOR"):
+    deps.ensure()
+else:
+    import doctor
+    _usable, _results = doctor.run()
+    if not _usable:
+        sys.exit("Fix the items above (or run `python doctor.py`), then start the TUI again.")
+    if any(r.status == doctor.FAIL for r in _results) and sys.stdin.isatty():
+        try:
+            input("Press Enter to open the TUI… ")
+        except EOFError:
+            pass
+    deps.ensure()                 # no-op when the doctor already installed everything
+
+import config  # noqa: E402  (loads .env, so GITHUB_TOKEN from it counts)
+import dashboard  # noqa: E402
+
+try:
+    import psutil  # noqa: E402
+except ImportError:               # RAM/CPU readout is optional
+    psutil = None
 
 from rich.text import Text  # noqa: E402
 from textual import on  # noqa: E402
@@ -47,6 +78,27 @@ MODELS = [("Sonnet (default)", "sonnet"), ("Opus", "opus"), ("Haiku (fast/cheap)
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(HERE, "build_dataset.py")
 TEST_OUT = os.path.join(HERE, "test_output", "test_dataset.jsonl")
+LOG_DIR = os.path.join(HERE, "logs")
+SETTINGS = os.path.join(HERE, ".tui_settings.json")
+STALL_SECS = 10 * 60              # a mining repo with no event this long is flagged
+# exit codes that mean "killed by a signal", which on Linux is almost always the
+# kernel OOM killer (SIGKILL) when nobody pressed Stop
+KILLED = {-9: "SIGKILL", 137: "SIGKILL"}
+
+
+def _exit_reason(rc: int | None) -> str | None:
+    if rc in KILLED:
+        return "killed (likely out of memory)"
+    if rc is not None and rc < 0:
+        try:
+            return f"killed ({signal.Signals(-rc).name})"
+        except ValueError:
+            return f"killed (signal {-rc})"
+    return None
+
+
+def _fmt_bytes(n: float) -> str:
+    return f"{n / 2**30:.1f} GB" if n >= 2**30 else f"{n / 2**20:.0f} MB"
 
 
 def _fmt_secs(s: float | None) -> str:
@@ -71,6 +123,13 @@ class RepoStat:
     llm_fail: int = 0
     started: float | None = None
     ended: float | None = None
+    szz_t0: float | None = None          # first SZZ progress event (time, done)
+    szz_d0: int = 0
+    szz: str = "—"                       # SZZ column: — / scanning / 45% / cached / done
+    last_event: float | None = None      # for the no-progress warning
+    rl_until: float | None = None        # GitHub rate-limit wait ends at
+    slowest: float = 0.0                 # slowest PR (s)
+    first_pr: float | None = None        # first PR finished this run (for the ETA)
 
 
 @dataclass
@@ -81,6 +140,9 @@ class RunStats:
     llm_secs: deque = field(default_factory=lambda: deque(maxlen=200))
     breaker: str | None = None
     batch_ok: int | None = None
+    rss: int = 0                         # miner process tree, bytes
+    rss_peak: int = 0
+    cpu: float = 0.0                     # percent of one core, summed over the tree
 
 
 class DataViewer(ModalScreen):
@@ -156,7 +218,7 @@ class DataViewer(ModalScreen):
 
 class RiffleTUI(App):
     TITLE = "Riffle miner"
-    SUB_TITLE = "build_dataset"
+    SUB_TITLE = f"build_dataset · v{__version__}"
     CSS = """
     #form { width: 42; border: round $primary; padding: 0 1; }
     #form Input { margin-bottom: 0; }
@@ -165,10 +227,11 @@ class RiffleTUI(App):
     #buttons { height: 3; margin-top: 1; }
     #buttons Button { width: 1fr; }
     #main { padding: 0 1; }
-    #stats { height: 6; border: round $secondary; padding: 0 1; }
+    #stats { height: 8; border: round $secondary; padding: 0 1; }
     #overall { height: 1; margin: 0 0 1 0; }
     #repos { height: 1fr; min-height: 6; border: round $secondary; }
     #log { height: 1fr; min-height: 6; border: round $secondary; }
+    #token_warn { color: $warning; margin-top: 1; }
     .breaker { color: $error; text-style: bold; }
     """
     BINDINGS = [
@@ -179,6 +242,7 @@ class RiffleTUI(App):
         Binding("ctrl+o", "view_test", "View test data"),
         Binding("ctrl+g", "show_split", "Show split"),
         Binding("ctrl+l", "clear_log", "Clear log"),
+        Binding("ctrl+b", "open_dashboard", "Web view"),
         Binding("ctrl+q", "quit", "Quit"),
     ]
 
@@ -192,12 +256,20 @@ class RiffleTUI(App):
         self.max_prs: int | None = None
         self.test_mode = False
         self.out_paths: list[str] = []
+        self.log_fh = None
+        self.log_path: str | None = None
+        self._procs: dict[int, object] = {}  # psutil.Process by pid (keeps cpu_percent state)
+        self.log_tail: deque = deque(maxlen=150)   # for the web dashboard
+        self._final_state = "finished"
+        self._res: dict = {}                       # last RAM/CPU reading, for the dashboard
+        self.dash = None if os.getenv("RIFFLE_DASHBOARD") == "0" else dashboard.Dashboard()
 
     # ---------------------------------------------------------------- layout
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
             with VerticalScroll(id="form"):
+                yield Static("", id="token_warn")
                 yield Label("Repos file")
                 yield Input("repos.txt", id="repos_file", compact=True)
                 yield Label("Output dataset")
@@ -240,17 +312,116 @@ class RiffleTUI(App):
                 yield Static("Idle. Configure on the left, then Start (ctrl+r).", id="stats")
                 yield ProgressBar(id="overall", show_eta=False)
                 yield DataTable(id="repos", zebra_stripes=True, cursor_type="row")
-                yield RichLog(id="log", max_lines=5000, wrap=False, highlight=False)
+                yield RichLog(id="log", max_lines=5000, wrap=True, highlight=False)
         yield Footer()
 
     def on_mount(self) -> None:
         t = self.query_one("#repos", DataTable)
         for key, label in [("repo", "Repo"), ("stage", "Stage"), ("prs", "PRs"),
-                           ("rows", "Rows"), ("skips", "Skips"), ("llm", "LLM ok/fail"),
-                           ("time", "Time")]:
+                           ("szz", "SZZ"), ("rows", "Rows"), ("skips", "Skips"),
+                           ("llm", "LLM ok/fail"), ("time", "Time"), ("eta", "ETA"),
+                           ("slowest", "Slowest PR")]:
             t.add_column(label, key=key)
+        self._load_settings()
+        self._check_token()
+        self._start_dashboard()
         self.set_interval(0.25, self._poll_events)
         self.set_interval(1.0, self._render_stats)
+
+    # ------------------------------------------------------------- dashboard
+    def _start_dashboard(self) -> None:
+        if self.dash is None:
+            return
+        if not self.dash.start():
+            self._log("[web] could not open a port for the web view", style="yellow")
+            self.dash = None
+            return
+        self._log(f"[web] watch from any device on this Wi-Fi: {self.dash.url}", style="bold cyan")
+        self._log("[web] ctrl+b opens it here · read-only · the key changes every launch",
+                  style="cyan")
+        self.query_one("#stats", Static).update(
+            "Idle. Configure on the left, then Start (ctrl+r).\n"
+            f"[b]Web view:[/b] {self.dash.url}")
+        self._publish()
+
+    def action_open_dashboard(self) -> None:
+        if self.dash is None:
+            self.notify("Web view is off (RIFFLE_DASHBOARD=0 or no free port).", severity="warning")
+            return
+        webbrowser.open(self.dash.local_url)
+        self.notify(f"Other devices: {self.dash.url}", timeout=10)
+
+    @staticmethod
+    def _level(style: str | None) -> str | None:
+        st = style or ""
+        return "bad" if "red" in st else "warn" if "yellow" in st else \
+            "ok" if "green" in st else None
+
+    def _publish(self, summary: dict | None = None) -> None:
+        """Hand the web view a snapshot of what the TUI shows right now."""
+        if self.dash is None:
+            return
+        now = time.time()
+        rows = []
+        try:
+            t = self.query_one("#repos", DataTable)
+            names = [str(t.get_row_at(i)[0]) for i in range(t.row_count)]
+        except Exception:                              # noqa: BLE001
+            names = list(self.repos)
+        for name in names:
+            r = self.repos.get(name)
+            if r is None:
+                continue
+            v = self._row_values(r, now)
+            rows.append({k: (str(x) if not isinstance(x, str) else x) for k, x in v.items()
+                         if not k.endswith("_style")}
+                        | {"stage_level": self._level(v["stage_style"]),
+                           "szz_level": self._level(v["szz_style"]),
+                           "done": r.done, "total": r.total,
+                           "status": ("failed" if r.stage.startswith("failed") or r.stage == "BREAKER"
+                                      else "done" if r.ended else "queued" if r.stage == "queued"
+                                      else "warn" if v["stage_style"] and "yellow" in v["stage_style"]
+                                      else "active")})
+        snap = {"version": __version__, "state": "idle", "rows": rows, "now": now,
+                "log": [{"text": txt, "level": lvl} for txt, lvl in self.log_tail],
+                "out": "  +  ".join(self.out_paths), "log_path": self.log_path,
+                "resources": self._res}
+        if summary:
+            snap.update(summary)
+        self.dash.publish(snap)
+
+    # -------------------------------------------------------------- settings
+    def _form_widgets(self):
+        return self.query("#form Input, #form Checkbox, #form Select")
+
+    def _load_settings(self) -> None:
+        """Restore the form from the last Start (missing/old keys are ignored)."""
+        try:
+            with open(SETTINGS, encoding="utf-8") as fh:
+                saved = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            return
+        for w in self._form_widgets():
+            if w.id in saved:
+                try:
+                    w.value = saved[w.id]
+                except Exception:                     # noqa: BLE001  (e.g. model removed)
+                    pass
+
+    def _save_settings(self) -> None:
+        data = {w.id: w.value for w in self._form_widgets() if w.id}
+        try:
+            with open(SETTINGS, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=1, default=str)
+        except OSError:
+            pass
+
+    def _check_token(self) -> bool:
+        ok = bool(os.environ.get("GITHUB_TOKEN"))
+        self.query_one("#token_warn", Static).update(
+            "" if ok else "⚠ GITHUB_TOKEN not set (shell or .env): GitHub rate limits "
+                          "will pause runs for up to an hour at a time.")
+        return ok
 
     # ---------------------------------------------------------------- actions
     def _val(self, wid: str) -> str:
@@ -334,8 +505,12 @@ class RiffleTUI(App):
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         out, _ = await proc.communicate()
         me = self._val("pc_index") or "1"
+        mine = False                      # inside this PC's section (header + repos)
         for line in out.decode("utf-8", "replace").splitlines():
-            mine = line.strip().startswith(f"PC {me}/")
+            if line.strip().startswith("PC "):
+                mine = line.strip().startswith(f"PC {me}/")
+            elif not line.startswith("    "):
+                mine = False
             self._log(line, style="bold green" if mine else None)
 
     def _model(self) -> str:
@@ -411,12 +586,20 @@ class RiffleTUI(App):
         os.close(fd)
         self.events_pos = 0
         self.out_paths = self._output_paths(test)
+        self._save_settings()
+        self._open_log()
+        self._procs.clear()
+        if not self._check_token():
+            self.notify("GITHUB_TOKEN is not set: expect hour-long rate-limit waits.",
+                        severity="warning", timeout=8)
         cmd = self._build_cmd()
         if test:
             cmd += ["--test", "--test-prs", self._val("test_prs") or "10", "--test-repo",
                     self._val("test_repo") or "https://github.com/pallets/flask"]
         self._log(f"$ {' '.join(cmd[2:])}", style="bold")
         self._log(f"[tui] saving to: {'  +  '.join(self.out_paths)}", style="cyan")
+        if self.log_path:
+            self._log(f"[tui] log file: {self.log_path}", style="cyan")
         self.run_worker(self._run_proc(cmd), exclusive=True, group="proc")
         self._set_running(True)
 
@@ -468,7 +651,9 @@ class RiffleTUI(App):
                 break
             text = line.decode("utf-8", "replace").rstrip()
             if text.startswith("[pr "):
-                continue          # per-PR lines are shown in the table instead
+                if self.log_fh:   # per-PR lines go to the table, but keep them on disk
+                    self.log_fh.write(time.strftime("%H:%M:%S ") + text + "\n")
+                continue
             style = ("bold red" if "breaker" in text or "FAILED" in text or "[error" in text
                      else "yellow" if text.startswith(("[warn", "[skip")) else None)
             self._log(text, style=style)
@@ -479,8 +664,11 @@ class RiffleTUI(App):
         self._render_stats()
         self._set_running(False)
         msg = {0: "finished", 3: "stopped by LLM circuit breaker"}.get(rc, f"exited with code {rc}")
-        if rc < 0 or rc == 130:
+        if rc == 130 or rc == -signal.SIGINT:
             msg = "stopped"
+        elif _exit_reason(rc):
+            msg = f"{_exit_reason(rc)}, exit {rc}"
+        self._final_state = msg
         self._log(f"[tui] batch {msg} after {_fmt_secs(self.stats.ended - self.stats.started)}",
                   style="bold green" if rc == 0 else "bold red")
         self.notify(f"Batch {msg}", severity="information" if rc == 0 else "error")
@@ -494,6 +682,11 @@ class RiffleTUI(App):
             self._log(f"[test] saved -> {TEST_OUT} (+ .parquet)  ctrl+o to view, p to switch",
                       style="bold green")
             self.push_screen(DataViewer(TEST_OUT))
+        if self.stats.rss_peak:
+            self._log(f"[tui] peak miner RAM: {_fmt_bytes(self.stats.rss_peak)}", style="cyan")
+        if self.log_fh:
+            self.log_fh.close()
+            self.log_fh = None
 
     @staticmethod
     def _row_count(path: str) -> int | str:
@@ -506,8 +699,25 @@ class RiffleTUI(App):
         except Exception:                                   # noqa: BLE001
             return "?"
 
+    def _open_log(self) -> None:
+        """One plain-text log per run under logs/, so a crash leaves evidence."""
+        if self.log_fh:
+            self.log_fh.close()
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            self.log_path = os.path.join(LOG_DIR, time.strftime("run-%Y%m%d-%H%M%S.log"))
+            self.log_fh = open(self.log_path, "a", encoding="utf-8", buffering=1)
+        except OSError:
+            self.log_fh, self.log_path = None, None
+
     def _log(self, text: str, style: str | None = None) -> None:
         self.query_one("#log", RichLog).write(Text(text, style=style or ""))
+        self.log_tail.append((text, self._level(style)))
+        if self.log_fh:
+            try:
+                self.log_fh.write(time.strftime("%H:%M:%S ") + text + "\n")
+            except OSError:
+                pass
 
     # ----------------------------------------------------------------- events
     def _poll_events(self) -> None:
@@ -531,26 +741,56 @@ class RiffleTUI(App):
     def _repo(self, name: str) -> RepoStat:
         if name not in self.repos:
             self.repos[name] = RepoStat(name)
-            self.query_one("#repos", DataTable).add_row(name, "queued", "—", "0", "0", "—", "—",
-                                                        key=name)
+            self.query_one("#repos", DataTable).add_row(
+                name, "queued", "—", "—", "0", "0", "—", "—", "—", "—", key=name)
         return self.repos[name]
 
     def _apply(self, e: dict) -> None:
         ev, t = e.get("ev"), e.get("t", time.time())
+        resort = False
+        if "repo" in e:
+            r0 = self._repo(e["repo"])
+            r0.last_event = t
+            if ev != "rate_limit":
+                r0.rl_until = None            # any other event means the wait is over
         if ev == "batch_start":
             for name in e.get("repos", []):
                 self._repo(name)
         elif ev == "repo_queue":
             r = self._repo(e["repo"])
             r.stage = "cloning" if e.get("stage") == "clone" else "starting"
+        elif ev == "stage":
+            r = self._repo(e["repo"])
+            r.stage = e.get("stage", r.stage)
+        elif ev == "rate_limit":
+            r = self._repo(e["repo"])
+            r.rl_until = t + (e.get("wait") or 0)
+        elif ev == "szz" and e.get("finished"):
+            r = self._repo(e["repo"])
+            r.szz = "cached" if e.get("cached") else "done"
+        elif ev == "szz":
+            r = self._repo(e["repo"])
+            d, n = e.get("done", 0), e.get("total") or 0
+            r.szz = f"{100 * d // n}%" if n else "scanning"
+            if r.szz_t0 is None and n:
+                r.szz_t0, r.szz_d0 = t, d
+            pct = f"{100 * d // n}% " if n else ""
+            eta = ""
+            if r.szz_t0 is not None and d > r.szz_d0 and t > r.szz_t0:
+                eta = " ETA " + _fmt_secs((n - d) * (t - r.szz_t0) / (d - r.szz_d0))
+            r.stage = f"szz {pct}{d}/{n}{eta}" if n else "szz scanning"
         elif ev == "repo_start":
             r = self._repo(e["repo"])
             r.stage, r.total, r.resumed, r.started = "mining", e.get("total"), e.get("resumed", 0), t
             r.done = r.resumed
+            resort = True
         elif ev == "pr":
             r = self._repo(e["repo"])
             r.done += 1
             self.stats.pr_times.append(t)
+            r.slowest = max(r.slowest, e.get("secs") or 0.0)
+            if r.first_pr is None:
+                r.first_pr = t
             if e.get("status") == "skip":
                 r.skips += 1
             else:
@@ -570,34 +810,85 @@ class RiffleTUI(App):
             r.ended = t
             r.rows = e.get("rows", r.rows)
             r.stage = "done" if e.get("status") == "ok" else e.get("status", "done")
+            resort = True
         elif ev == "repo_failed":
             r = self._repo(e["repo"])
-            r.stage, r.ended = f"failed ({e.get('stage')})", t
+            why = _exit_reason(e.get("rc"))
+            r.stage, r.ended = f"failed ({e.get('stage')})" + (f" · {why}" if why else ""), t
+            resort = True
+            if why:
+                self._log(f"[tui] {e['repo']}: {e.get('stage')} {why} (exit {e.get('rc')})",
+                          style="bold red")
         elif ev == "batch_done":
             self.stats.batch_ok = e.get("ok")
         if "repo" in e:
             self._update_row(self.repos[e["repo"]])
+        if resort:
+            self._sort_rows()
 
-    def _update_row(self, r: RepoStat) -> None:
-        t = self.query_one("#repos", DataTable)
+    def _sort_rows(self) -> None:
+        """Active repos first, then queued, finished/failed last (stable)."""
+        order = {name: i for i, name in enumerate(self.repos)}
+
+        def rank(name) -> tuple:
+            r = self.repos.get(str(name))
+            if r is None:
+                return (3, 0)
+            if r.ended:
+                return (2, order[r.name])
+            return (1 if r.stage == "queued" else 0, order[r.name])
+        try:
+            self.query_one("#repos", DataTable).sort("repo", key=rank)
+        except Exception:                             # noqa: BLE001
+            pass
+
+    def _stage_text(self, r: RepoStat, now: float) -> Text:
+        if r.rl_until and now < r.rl_until:
+            return Text(f"rate-limited {_fmt_secs(r.rl_until - now)}", style="bold yellow")
+        idle = now - r.last_event if r.last_event else 0
+        if not r.ended and r.stage == "mining" and idle >= STALL_SECS:
+            return Text(f"mining · no progress {_fmt_secs(idle)}", style="bold yellow")
+        style = "bold red" if r.stage == "BREAKER" or r.stage.startswith("failed") \
+            else "green" if r.stage == "done" else ""
+        return Text(r.stage, style=style)
+
+    def _row_values(self, r: RepoStat, now: float) -> dict:
+        """Display values for one repo row (shared by the table and web view)."""
+        stage = self._stage_text(r, now)
         prs = f"{r.done}/{r.total}" if r.total is not None else "—"
         llm = f"{r.llm_ok}/{r.llm_fail}" if (r.llm_ok or r.llm_fail) else "—"
         el = None
         if r.started:
-            el = (r.ended or time.time()) - r.started
-        style = "bold red" if r.stage == "BREAKER" or r.stage.startswith("failed") \
-            else "green" if r.stage == "done" else ""
-        stage = Text(r.stage, style=style)
-        for col, val in [("stage", stage), ("prs", prs), ("rows", str(r.rows)),
-                         ("skips", str(r.skips)), ("llm", llm), ("time", _fmt_secs(el))]:
+            el = (r.ended or now) - r.started
+        # per-repo ETA from this run's PR rate (resumed PRs excluded)
+        eta = "—"
+        mined = r.done - r.resumed
+        if not r.ended and r.total and r.first_pr and mined >= 2 and now > r.first_pr:
+            rate = (mined - 1) / (now - r.first_pr)
+            if rate > 0:
+                eta = _fmt_secs((r.total - r.done) / rate)
+        szz_style = "green" if r.szz in ("cached", "done") else ""
+        return {"name": r.name, "stage": stage.plain, "stage_style": str(stage.style or ""),
+                "prs": prs, "szz": r.szz, "szz_style": szz_style, "rows": str(r.rows),
+                "skips": str(r.skips), "llm": llm, "time": _fmt_secs(el), "eta": eta,
+                "slowest": _fmt_secs(r.slowest) if r.slowest else "—"}
+
+    def _update_row(self, r: RepoStat) -> None:
+        t = self.query_one("#repos", DataTable)
+        v = self._row_values(r, time.time())
+        for col, val in [("stage", Text(v["stage"], style=v["stage_style"])), ("prs", v["prs"]),
+                         ("szz", Text(v["szz"], style=v["szz_style"])), ("rows", v["rows"]),
+                         ("skips", v["skips"]), ("llm", v["llm"]), ("time", v["time"]),
+                         ("eta", v["eta"]), ("slowest", v["slowest"])]:
             try:
-                t.update_cell(r.name, col, val)
+                t.update_cell(r.name, col, val, update_width=True)
             except Exception:                         # row not yet rendered
                 pass
 
     # ------------------------------------------------------------------ stats
     def _render_stats(self) -> None:
         if self.stats.started is None:
+            self._publish()
             return
         now = self.stats.ended or time.time()
         elapsed = now - self.stats.started
@@ -633,18 +924,77 @@ class RiffleTUI(App):
         if self.proc and eta:
             parts.append(f"ETA {_fmt_secs(eta)}")
         line1 = "  ·  ".join(parts)
+        res = self._resources()
+        if res:
+            line1 += "\n" + res
         line2 = (f"LLM ok {llm_ok}  fail {llm_fail}  ·  avg latency "
                  f"{f'{lat:.1f}s' if lat else '—'}  ·  breaker "
                  + (f"[bold red]{self.stats.breaker}[/]" if self.stats.breaker else "[green]armed[/]"))
         line3 = ("[b]Saving to:[/b] " if self.proc else "[b]Saved to:[/b] ") + \
             "\n            ".join(self.out_paths)
+        if self.log_path:
+            line3 += f"\n[b]Log:[/b] {self.log_path}"
+        if self.dash:
+            line3 += f"\n[b]Web view:[/b] {self.dash.url}"
         self.query_one("#stats", Static).update(line1 + "\n" + line2 + "\n" + line3)
         bar = self.query_one("#overall", ProgressBar)
         if total and not unknown:
             bar.update(total=total, progress=done)
         for r in self.repos.values():
-            if r.stage == "mining":
+            if r.started and not r.ended or r.rl_until:
                 self._update_row(r)
+        self._publish({
+            "state": state if self.proc or not self.stats.ended else self._final_state,
+            "elapsed": _fmt_secs(elapsed), "repos": f"{repos_done}/{len(self.repos)}",
+            "prs": f"{done}/{total if total and not unknown else '?'}",
+            "rate": f"{rate * 60:.1f} PR/min" if rate else None,
+            "eta": _fmt_secs(eta) if self.proc and eta else None,
+            "progress": (done / total) if total and not unknown else 0,
+            "llm": f"{llm_ok} / {llm_fail}", "llm_latency": f"{lat:.1f}s" if lat else None,
+            "breaker": self.stats.breaker,
+        })
+
+    def _resources(self) -> str | None:
+        """RAM/CPU of the miner process tree (build_dataset → mine_repo → git,
+        claude, SZZ workers), plus free system RAM. Amber/red as RAM runs low."""
+        if psutil is None or self.proc is None:
+            if psutil is None or not self.stats.rss_peak:
+                return None
+            return f"peak RAM {_fmt_bytes(self.stats.rss_peak)}"
+        try:
+            root = psutil.Process(self.proc.pid)
+            tree = [root, *root.children(recursive=True)]
+        except psutil.Error:
+            return None
+        rss = cpu = 0.0
+        alive = set()
+        for p in tree:
+            try:
+                proc = self._procs.setdefault(p.pid, p)   # reuse: cpu_percent needs history
+                alive.add(p.pid)
+                rss += proc.memory_info().rss
+                cpu += proc.cpu_percent(None)
+            except psutil.Error:
+                continue
+        for pid in set(self._procs) - alive:
+            del self._procs[pid]
+        vm = psutil.virtual_memory()
+        self.stats.rss, self.stats.cpu = int(rss), cpu
+        self.stats.rss_peak = max(self.stats.rss_peak, int(rss))
+        free = vm.available / vm.total
+        color = "bold red" if free < 0.07 else "yellow" if free < 0.15 else "green"
+        self._res = {"rss": _fmt_bytes(rss), "peak": _fmt_bytes(self.stats.rss_peak),
+                     "free": _fmt_bytes(vm.available), "total": _fmt_bytes(vm.total),
+                     "cpu": f"{cpu:.0f}% of {psutil.cpu_count() * 100}%",
+                     "level": self._level(color),
+                     # numeric, for the web view's meters
+                     "rss_frac": round(rss / vm.total, 4),
+                     "used_frac": round(1 - free, 4),
+                     "cpu_frac": round(min(1.0, cpu / (psutil.cpu_count() * 100)), 4)}
+        warn = "  ← low memory" if free < 0.15 else ""
+        return (f"RAM [{color}]{_fmt_bytes(rss)}[/] (peak {_fmt_bytes(self.stats.rss_peak)})  ·  "
+                f"free [{color}]{_fmt_bytes(vm.available)}[/] of {_fmt_bytes(vm.total)}  ·  "
+                f"CPU {cpu:.0f}% of {psutil.cpu_count() * 100}%{warn}")
 
 
 if __name__ == "__main__":

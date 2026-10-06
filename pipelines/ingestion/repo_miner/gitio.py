@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -105,7 +106,7 @@ def commit_parents(repo: str, sha: str) -> list[str]:
 # --------------------------------------------------------------------------
 # Commit walking
 # --------------------------------------------------------------------------
-@dataclass
+@dataclass(slots=True)
 class Commit:
     sha: str
     author_email: str
@@ -161,42 +162,78 @@ def _numstat_cache(repo: str) -> dict:
 
 def _numstat_cache_locked(repo: str, key: str) -> dict:
     if key not in _NUMSTAT_CACHE:
-        out = _run(repo, "log", "--all", "--numstat", "-M", f"--format={_NUMSTAT_FMT}")
-        _NUMSTAT_CACHE[key] = {c.sha: (c, rows) for c, rows in _parse_numstat_log(out)}
+        _NUMSTAT_CACHE[key] = {
+            c.sha: (c, rows) for c, rows in _stream_numstat_log(
+                repo, "log", "--all", "--numstat", "-M", f"--format={_NUMSTAT_FMT}")}
     return _NUMSTAT_CACHE[key]
+
+
+def _stream_numstat_log(repo: str, *args: str):
+    """Yield parsed (Commit, rows) records from a `git log --numstat` as git
+    writes them, instead of holding the whole output (hundreds of MB on a large
+    repo) in memory as one string first. Same records as _parse_numstat_log on
+    the same output; raises GitError on failure like _run(check=True)."""
+    cmd = ["git", "-C", repo, *args]
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err,
+                                text=True, encoding="utf-8", errors="replace")
+        rec: list[str] = []
+        for line in proc.stdout:
+            if line.startswith("\x1e"):
+                if rec:
+                    parsed = _parse_numstat_record("".join(rec))
+                    if parsed:
+                        yield parsed
+                rec = [line[1:]]
+            else:
+                rec.append(line)
+        if rec:
+            parsed = _parse_numstat_record("".join(rec))
+            if parsed:
+                yield parsed
+        if proc.wait() != 0:
+            err.seek(0)
+            raise GitError(f"{' '.join(cmd)}\n{err.read().decode(errors='replace').strip()}")
 
 
 def _parse_numstat_log(out: str) -> list[tuple["Commit", list[tuple[int, int, str]]]]:
     result: list[tuple[Commit, list[tuple[int, int, str]]]] = []
     for rec in out.split("\x1e"):
-        if not rec.strip():
-            continue
-        lines = rec.split("\n")
-        parts = lines[0].split("\x1f")
-        if len(parts) < 6:
-            continue
-        sha, ae, an, cI, par, subj = parts[:6]
-        rows: list[tuple[int, int, str]] = []
-        for ln in lines[1:]:
-            ln = ln.rstrip("\r")
-            if not ln.strip():
-                continue
-            cols = ln.split("\t")
-            if len(cols) != 3:
-                continue
-            a, d, path = cols
-            added = 0 if a == "-" else int(a)
-            deleted = 0 if d == "-" else int(d)
-            if " => " in path:
-                path = _resolve_rename(path)
-            rows.append((added, deleted, path))
-        commit = Commit(
-            sha=sha, author_email=ae.lower().strip(), author_name=an,
-            committed=_parse_git_epoch(cI),
-            subject=subj, parents=par.split() if par else [],
-        )
-        result.append((commit, rows))
+        parsed = _parse_numstat_record(rec)
+        if parsed:
+            result.append(parsed)
     return result
+
+
+def _parse_numstat_record(rec: str) -> tuple["Commit", list[tuple[int, int, str]]] | None:
+    """One \\x1e-delimited `git log --numstat` record -> (Commit, rows)."""
+    if not rec.strip():
+        return None
+    lines = rec.split("\n")
+    parts = lines[0].split("\x1f")
+    if len(parts) < 6:
+        return None
+    sha, ae, an, cI, par, subj = parts[:6]
+    rows: list[tuple[int, int, str]] = []
+    for ln in lines[1:]:
+        ln = ln.rstrip("\r")
+        if not ln.strip():
+            continue
+        cols = ln.split("\t")
+        if len(cols) != 3:
+            continue
+        a, d, path = cols
+        added = 0 if a == "-" else int(a)
+        deleted = 0 if d == "-" else int(d)
+        if " => " in path:
+            path = _resolve_rename(path)
+        rows.append((added, deleted, path))
+    commit = Commit(
+        sha=sha, author_email=ae.lower().strip(), author_name=an,
+        committed=_parse_git_epoch(cI),
+        subject=subj, parents=par.split() if par else [],
+    )
+    return commit, rows
 
 
 def iter_commits(
@@ -324,7 +361,7 @@ def file_loc_at(repo: str, sha: str, path: str) -> int:
 # --------------------------------------------------------------------------
 # Blame (line-level history) — as of a base commit
 # --------------------------------------------------------------------------
-@dataclass
+@dataclass(slots=True)
 class BlameLine:
     final_lineno: int
     orig_commit: str
@@ -362,7 +399,7 @@ def configure_blame(ignore_revs_file: str | None = None,
     blame_file.cache_clear()
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=64)
 def blame_file(repo: str, sha: str, path: str) -> dict[int, BlameLine]:
     """
     Porcelain blame of `path` as of `sha`. Returns {lineno: BlameLine}.
@@ -374,15 +411,80 @@ def blame_file(repo: str, sha: str, path: str) -> dict[int, BlameLine]:
     configure_blame() so moves/whitespace/known-noise commits don't skew
     line ownership.
     """
+    return _blame(repo, sha, path, [])
+
+
+def blame_settings() -> tuple[list[str], str | None]:
+    """The current blame flags and ignore-revs file, so a worker process (which
+    does not inherit configure_blame()'s globals under spawn/forkserver) can be
+    given the same settings via set_blame_settings()."""
+    return list(_BLAME_FLAGS), _BLAME_IGNORE_REVS
+
+
+def set_blame_settings(flags: list[str], ignore_revs: str | None) -> None:
+    global _BLAME_FLAGS, _BLAME_IGNORE_REVS
+    _BLAME_FLAGS = list(flags)
+    _BLAME_IGNORE_REVS = ignore_revs
+    blame_file.cache_clear()
+
+
+def _line_ranges(lines: Iterable[int], pad: int = 0,
+                 gap: int = 3) -> list[tuple[int, int]]:
+    """Sorted, merged (start, end) ranges covering `lines`, each widened by
+    `pad` lines; ranges closer than `gap` lines are joined so one -L covers a
+    whole hunk cluster."""
+    ranges: list[tuple[int, int]] = []
+    for ln in sorted(set(lines)):
+        lo, hi = max(1, ln - pad), ln + pad
+        if ranges and lo <= ranges[-1][1] + gap:
+            ranges[-1] = (ranges[-1][0], max(hi, ranges[-1][1]))
+        else:
+            ranges.append((lo, hi))
+    return ranges
+
+
+# Context lines blamed around each requested line. -M scores a moved block by
+# the size of the blame entry it sits in, so a bare -L range can make a short
+# moved block miss the threshold and be blamed on the mover instead. ±20 lines
+# matched full-file blame on every line in the flask/itsdangerous fix history.
+BLAME_LINES_PAD = 20
+
+
+def blame_lines(repo: str, sha: str, path: str, lines: Iterable[int],
+                pad: int = BLAME_LINES_PAD) -> dict[int, BlameLine]:
+    """
+    Blame only `lines` of `path` as of `sha` (one -L per merged range, one git
+    call), padded by `pad` context lines. Same flags as blame_file(). Without
+    -M the requested lines always match a full-file blame; with -M the padding
+    makes that hold in practice (see BLAME_LINES_PAD). Uncached: SZZ blames
+    each (parent, path) once, so a cache would never hit and would only evict
+    blame_file() entries. Falls back to a full blame if git rejects a range
+    (a start past the end of the file; an end past it is clamped by git).
+    """
+    ranges = _line_ranges(lines, pad)
+    if not ranges:
+        return {}
+    result = _blame(repo, sha, path, ranges)
+    if result is None:
+        result = _blame(repo, sha, path, []) or {}
+    return result
+
+
+def _blame(repo: str, sha: str, path: str,
+           ranges: list[tuple[int, int]]) -> dict[int, BlameLine] | None:
+    """Run porcelain blame (whole file when `ranges` is empty). Returns {} for a
+    failed whole-file blame and None for a failed ranged one."""
     cmd = ["git", "-C", repo, "blame", "--line-porcelain", *_BLAME_FLAGS]
     if _BLAME_IGNORE_REVS:
         cmd += ["--ignore-revs-file", _BLAME_IGNORE_REVS]
+    for start, end in ranges:
+        cmd += ["-L", f"{start},{end}"]
     cmd += [sha, "--", path]
     out = subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if out.returncode != 0:
-        return {}
+        return None if ranges else {}
     result: dict[int, BlameLine] = {}
     cur_commit = None
     cur_email = None

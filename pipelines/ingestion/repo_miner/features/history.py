@@ -38,10 +38,18 @@ def _decay(days: float, half_life: float) -> float:
 
 
 def build_repo_index(repo: str, base: str, st: config.Settings,
-                     ci_map: dict | None = None) -> dict:
+                     ci_map: dict | None = None,
+                     paths: list[str] | None = None) -> dict:
     """
     One pass over all commits up to `base` building per-file and per-author
     aggregates. Returned index is reused for every file in the PR.
+
+    paths: when given (the PR's changed files), per-file aggregates and the
+    co-change matrix are kept only for these paths — the only ones the feature
+    functions read — instead of every file in history. On a large repo that is
+    the difference between a few entries and millions per PR (one vendor bump
+    touching 5k files alone adds 25M co-change pairs). Values for the kept
+    paths, author aggregates and the repo-wide hotspot ranking are unchanged.
 
     ci_map: optional {commit_sha: 'failure'|'success'} from the historical CI
     pre-pass; when present, per-file and per-author post-merge CI-fail rates are
@@ -67,6 +75,11 @@ def build_repo_index(repo: str, base: str, st: config.Settings,
     cochange: dict[str, Counter] = defaultdict(Counter)  # type: ignore
 
     year_ago = base_time - timedelta(days=365)
+    keep = None if paths is None else set(paths)
+    # commits per file in the last 365d, for EVERY file (the hotspot ranking is
+    # repo-wide). A key is added on a file's first appearance, so iteration
+    # order — and with it the tie order in the ranking — matches file_commits.
+    churn365: dict[str, int] = {}
 
     author_commits: dict[str, int] = defaultdict(int)
     author_last: dict[str, datetime] = {}
@@ -115,7 +128,14 @@ def build_repo_index(repo: str, base: str, st: config.Settings,
             nf_pop.append(len(paths))
             entropy_pop.append(_commit_entropy(rows))
 
+        recent = c.committed >= year_ago
         for p in paths:
+            if p not in churn365:
+                churn365[p] = 0
+            if recent:
+                churn365[p] += 1
+            if keep is not None and p not in keep:
+                continue
             file_commits[p].append((c.committed, c.sha, c.subject, c.author_email))
             file_authors[p].add(c.author_email)
             if is_hotfix and c.committed >= year_ago:
@@ -138,6 +158,8 @@ def build_repo_index(repo: str, base: str, st: config.Settings,
                     file_last_fix[p] = c.committed
         # co-change: files touched together
         for p in paths:
+            if keep is not None and p not in keep:
+                continue
             for q in paths:
                 if p != q:
                     cochange[p][q] += 1
@@ -149,11 +171,9 @@ def build_repo_index(repo: str, base: str, st: config.Settings,
     # so we score complexity for just those (a file with zero recent churn has
     # hotspot 0 whatever its complexity) — keeps this cheap on large repos.
     hotspot_scores: dict[str, float] = {}
-    window_start = base_time - timedelta(days=365)
     blobs = gitio.tree_blobs(repo, base)
-    for p, plist in file_commits.items():
-        churn365 = sum(1 for t, _, _, _ in plist if t >= window_start)
-        if churn365 <= 0:
+    for p, churn in churn365.items():
+        if churn <= 0:
             continue
         if config.lang_of(p) is None:   # lizard can't score it: skip the read
             continue
@@ -163,7 +183,7 @@ def build_repo_index(repo: str, base: str, st: config.Settings,
         ccn = _blob_ccn(repo, blob, p)
         if not ccn:                  # None (no tool / unsupported) or 0
             continue
-        hotspot_scores[p] = churn365 * ccn
+        hotspot_scores[p] = churn * ccn
 
     ranked = sorted(hotspot_scores.items(), key=lambda kv: kv[1], reverse=True)
     hotspot_rank = {p: i + 1 for i, (p, _) in enumerate(ranked)}       # 1 = hottest

@@ -451,7 +451,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     row.update(diff_stats.compute(repo, base_sha, head_sha, st))
 
     # --- Source 2: repo history (build index once, per-file, author, coupling)
-    idx = history.build_repo_index(repo, base_sha, st, ci_map)
+    idx = history.build_repo_index(repo, base_sha, st, ci_map, paths=changed)
     per_file: dict[str, dict] = {}
     for path in changed:
         pf = history.per_file_features(repo, base_sha, path, idx, st)
@@ -634,6 +634,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     rows: list[dict] = []
     discovery = getattr(st, "pr_discovery", "api")
 
+    progress.emit("stage", repo=f"{owner}/{name}", stage="fetching PRs")
     if discovery == "git":
         # git-primary: discover merged PRs from the commit log; the API only
         # enriches each one (no closed-PR list pagination, uniform across merge
@@ -676,6 +677,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         cache_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.json")
         print("[ci-history] building historical CI-fail store (cached after first run)...",
               file=sys.stderr, flush=True)
+        progress.emit("stage", repo=f"{owner}/{name}", stage="ci history")
         ci_map = api.build_ci_conclusion_map(cache_path)
         print(f"[ci-history] {len(ci_map)} commits with a CI verdict", file=sys.stderr)
     szz_shas = None
@@ -683,8 +685,21 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         szz_cache = os.path.join(st.ci_cache_dir, f"{owner}_{name}.szz.json")
         print("[szz] tracing fix-forward defects (slow; cached after first run)...",
               file=sys.stderr, flush=True)
-        szz_shas = build_szz_index(repo, st, szz_cache)
-        print(f"[szz] {len(szz_shas)} bug-introducing commits identified", file=sys.stderr)
+        szz_cached = os.path.isfile(szz_cache)      # build_szz_index returns it as-is
+        szz_shas = build_szz_index(
+            repo, st, szz_cache,
+            on_progress=lambda d, n: progress.emit(
+                "szz", repo=f"{owner}/{name}", done=d, total=n))
+        print(f"[szz] {len(szz_shas)} bug-introducing commits identified"
+              f"{' (from cache)' if szz_cached else ''}", file=sys.stderr)
+        progress.emit("szz", repo=f"{owner}/{name}", finished=True, cached=szz_cached,
+                      bugs=len(szz_shas))
+
+    # Load the repo-wide commit history now, under a visible stage, instead of
+    # silently inside the first PR (~1.5 min on a Kubernetes-sized repo). The
+    # same cache is used either way, so output is unchanged.
+    progress.emit("stage", repo=f"{owner}/{name}", stage="loading history")
+    gitio._numstat_cache(repo)
 
     # crash-safe checkpoint + resume: rows are flushed to <out>.partial.jsonl as
     # they're computed, so a crash mid-repo doesn't lose hours of work; a re-run

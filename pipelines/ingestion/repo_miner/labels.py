@@ -33,6 +33,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 import config
@@ -165,14 +168,18 @@ def ci_fail_labels(api, pr: dict) -> tuple[str | None, str | None]:
 
 
 def build_szz_index(repo: str, st: config.Settings,
-                    cache_path: str | None = None) -> dict:
+                    cache_path: str | None = None,
+                    on_progress=None) -> dict:
     """
     SZZ fix-tracing: {bug_introducing_sha: [(fix_sha, fix_time_iso), ...]}.
     For every fix commit, blame the lines it modifies at the fix's parent to
     find the commit that last touched them — that commit is bug-introducing.
     Keeping the fix sha and time lets the label (a) exclude fixes made inside
     the same PR and (b) record how long after merge the fix came. Cached per
-    repo (slow: one blame per file per fix commit). Blame honors the run's
+    repo. Each fix commit blames only its changed lines (-L), fix commits run
+    in a process pool (st.workers), and finished ones are checkpointed to
+    <cache>.partial.jsonl so a crash resumes. on_progress(done, total), if
+    given, is called as fix commits finish (for the TUI). Blame honors the run's
     configure_blame() flags (-w/-M and optional ignore-revs), so formatting
     sweeps and moves are less likely to be mis-blamed as bug-introducing.
     Noisy by nature (~0.6 precision) — an additional, softer label.
@@ -190,32 +197,113 @@ def build_szz_index(repo: str, st: config.Settings,
         except (OSError, json.JSONDecodeError):
             pass
 
-    index: dict = {}
+    # fix commits in log order, as (sha, parent, fix_time, paths)
+    if on_progress:
+        on_progress(0, 0)                       # 0/0 = still scanning history
+    tasks = []
     for c, rows in gitio.iter_commits_with_files(repo, "HEAD"):
         if not c.parents or not config.is_fix_text(c.subject):
             continue
-        parent = c.parents[0]
         fix_time = c.committed.astimezone(timezone.utc).isoformat()
-        for _a, _d, path in rows:
-            old_lines = gitio.deleted_or_modified_lines(repo, parent, c.sha, path)
-            if not old_lines:
-                continue
-            blame = gitio.blame_file(repo, parent, path)
-            for ln in old_lines:
-                bl = blame.get(ln)
-                if bl and bl.orig_commit:
-                    fixes = index.setdefault(bl.orig_commit, [])
-                    if (c.sha, fix_time) not in fixes:
-                        fixes.append((c.sha, fix_time))
+        tasks.append((c.sha, c.parents[0], fix_time, [p for _a, _d, p in rows]))
+
+    # Crash-safe checkpoint: each fix commit's bug-introducing shas are appended
+    # to <cache>.partial.jsonl as it finishes, and a re-run skips those.
+    ckpt = (cache_path + ".partial.jsonl") if cache_path else None
+    done: dict[str, list[str]] = {}
+    if ckpt and os.path.isfile(ckpt):
+        try:
+            with open(ckpt, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                        done[rec["sha"]] = rec["bugs"]
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        continue              # torn last line from a crash
+        except OSError:
+            pass
+
+    todo = [t for t in tasks if t[0] not in done]
+    if on_progress:
+        on_progress(len(done), len(tasks))
+    if todo:
+        print(f"[szz] {len(tasks)} fix commits ({len(done)} checkpointed), "
+              f"blaming {len(todo)} with {max(1, min(st.workers, len(todo)))} workers...",
+              file=sys.stderr, flush=True)
+        t0 = time.time()
+        log_every = max(1, len(todo) // 100)        # a log line per 1%
+        emit_every = max(1, len(todo) // 1000)      # a TUI update per 0.1%
+        ck = None
+        if ckpt:
+            os.makedirs(os.path.dirname(ckpt) or ".", exist_ok=True)
+            ck = open(ckpt, "a", encoding="utf-8")
+        try:
+            workers = max(1, min(st.workers, len(todo)))
+            with ProcessPoolExecutor(
+                    max_workers=workers, initializer=gitio.set_blame_settings,
+                    initargs=gitio.blame_settings()) as pool:
+                futs = [pool.submit(_szz_fix_bugs, repo, sha, parent, paths)
+                        for sha, parent, _t, paths in todo]
+                for n, fut in enumerate(as_completed(futs), 1):
+                    sha, bugs = fut.result()
+                    done[sha] = bugs
+                    if ck:
+                        ck.write(json.dumps({"sha": sha, "bugs": bugs}) + "\n")
+                        ck.flush()
+                    if on_progress and (n % emit_every == 0 or n == len(todo)):
+                        on_progress(len(done), len(tasks))
+                    if n % log_every == 0 or n == len(todo):
+                        el = time.time() - t0
+                        eta = el / n * (len(todo) - n)
+                        print(f"[szz] {len(done)}/{len(tasks)} fix commits blamed "
+                              f"({100 * len(done) // len(tasks)}%, "
+                              f"{n / el if el else 0:.1f}/s, ETA {eta / 60:.0f}m)",
+                              file=sys.stderr, flush=True)
+        finally:
+            if ck:
+                ck.close()
+
+    # Assemble in log order so the index (keys and list order) is exactly what
+    # the serial loop produced, however the workers finished.
+    index: dict = {}
+    for sha, _parent, fix_time, _paths in tasks:
+        for bug in done.get(sha, []):
+            fixes = index.setdefault(bug, [])
+            if (sha, fix_time) not in fixes:
+                fixes.append((sha, fix_time))
 
     if cache_path:
         try:
             os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
-            with open(cache_path, "w", encoding="utf-8") as fh:
+            tmp = cache_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(index, fh)
+            os.replace(tmp, cache_path)
+            if ckpt and os.path.isfile(ckpt):
+                os.remove(ckpt)
         except OSError:
             pass
     return index
+
+
+def _szz_fix_bugs(repo: str, sha: str, parent: str,
+                  paths: list[str]) -> tuple[str, list[str]]:
+    """One fix commit's bug-introducing commits, in first-seen order (path
+    order, then line order). Runs in a worker process: blames only the lines
+    the fix deletes or modifies, at the fix's parent."""
+    bugs: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        old_lines = gitio.deleted_or_modified_lines(repo, parent, sha, path)
+        if not old_lines:
+            continue
+        blame = gitio.blame_lines(repo, parent, path, old_lines)
+        for ln in old_lines:
+            bl = blame.get(ln)
+            if bl and bl.orig_commit and bl.orig_commit not in seen:
+                seen.add(bl.orig_commit)
+                bugs.append(bl.orig_commit)
+    return sha, bugs
 
 
 def szz_delay(repo: str, pr: dict, base: str, head: str,
