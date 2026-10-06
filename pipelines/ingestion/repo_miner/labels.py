@@ -231,6 +231,7 @@ def build_szz_index(repo: str, st: config.Settings,
               f"blaming {len(todo)} with {max(1, min(st.workers, len(todo)))} workers...",
               file=sys.stderr, flush=True)
         t0 = time.time()
+        blame_calls = blame_fails = 0
         log_every = max(1, len(todo) // 100)        # a log line per 1%
         emit_every = max(1, len(todo) // 1000)      # a TUI update per 0.1%
         ck = None
@@ -245,7 +246,9 @@ def build_szz_index(repo: str, st: config.Settings,
                 futs = [pool.submit(_szz_fix_bugs, repo, sha, parent, paths)
                         for sha, parent, _t, paths in todo]
                 for n, fut in enumerate(as_completed(futs), 1):
-                    sha, bugs = fut.result()
+                    sha, bugs, b_calls, b_fails = fut.result()
+                    blame_calls += b_calls
+                    blame_fails += b_fails
                     done[sha] = bugs
                     if ck:
                         ck.write(json.dumps({"sha": sha, "bugs": bugs}) + "\n")
@@ -262,6 +265,11 @@ def build_szz_index(repo: str, st: config.Settings,
         finally:
             if ck:
                 ck.close()
+        if blame_fails:
+            print(f"[szz] WARNING: {blame_fails} of {blame_calls} blames failed "
+                  f"({100 * blame_fails // max(1, blame_calls)}%); those fixes trace to "
+                  f"nothing, so SZZ labels for this repo are undercounted",
+                  file=sys.stderr, flush=True)
 
     # Assemble in log order so the index (keys and list order) is exactly what
     # the serial loop produced, however the workers finished.
@@ -271,6 +279,11 @@ def build_szz_index(repo: str, st: config.Settings,
             fixes = index.setdefault(bug, [])
             if (sha, fix_time) not in fixes:
                 fixes.append((sha, fix_time))
+
+    if len(tasks) >= 100 and not index:
+        print(f"[szz] WARNING: {len(tasks)} fix commits traced to 0 bug-introducing "
+              f"commits; that almost always means blame is failing, not a clean repo",
+              file=sys.stderr, flush=True)
 
     if cache_path:
         try:
@@ -287,10 +300,12 @@ def build_szz_index(repo: str, st: config.Settings,
 
 
 def _szz_fix_bugs(repo: str, sha: str, parent: str,
-                  paths: list[str]) -> tuple[str, list[str]]:
+                  paths: list[str]) -> tuple[str, list[str], int, int]:
     """One fix commit's bug-introducing commits, in first-seen order (path
     order, then line order). Runs in a worker process: blames only the lines
-    the fix deletes or modifies, at the fix's parent."""
+    the fix deletes or modifies, at the fix's parent. Also returns how many
+    blames ran and failed, so the parent can warn instead of failing silently."""
+    before = gitio.blame_stats()
     bugs: list[str] = []
     seen: set[str] = set()
     for path in paths:
@@ -303,7 +318,8 @@ def _szz_fix_bugs(repo: str, sha: str, parent: str,
             if bl and bl.orig_commit and bl.orig_commit not in seen:
                 seen.add(bl.orig_commit)
                 bugs.append(bl.orig_commit)
-    return sha, bugs
+    after = gitio.blame_stats()
+    return sha, bugs, after["calls"] - before["calls"], after["fails"] - before["fails"]
 
 
 def szz_delay(repo: str, pr: dict, base: str, head: str,

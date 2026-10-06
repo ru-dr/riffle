@@ -129,7 +129,7 @@ def test_resume_from_partial_checkpoint(synth_repo, tmp_path):
              if c.parents and config.is_fix_text(c.subject)]
     with open(cache + ".partial.jsonl", "w") as fh:
         for sha in fixes[: len(fixes) // 2]:
-            _sha, bugs = labels._szz_fix_bugs(
+            _sha, bugs, _calls, _fails = labels._szz_fix_bugs(
                 synth_repo, sha, gitio._run(synth_repo, "rev-parse", sha + "^").strip(),
                 [p for _, _, p in gitio.numstat(synth_repo, sha)])
             fh.write(json.dumps({"sha": sha, "bugs": bugs}) + "\n")
@@ -147,3 +147,40 @@ def test_line_ranges_merge():
 @pytest.mark.skipif(not os.getenv("SZZ_EQUIV_REPO"), reason="set SZZ_EQUIV_REPO")
 def test_equivalent_on_real_repo(tmp_path):
     _assert_equivalent(os.environ["SZZ_EQUIV_REPO"], tmp_path)
+
+
+def test_resolve_rename_forms():
+    cases = {
+        "src/{a => b}/x.rs": "src/b/x.rs",
+        "a.rs => b.rs": "b.rs",
+        "a/{b => }/c": "a/c",
+        "a/{ => b}/c": "a/b/c",
+        "plain.rs": "plain.rs",
+        # literal braces outside the rename (rust-lang/rust's test suite)
+        "tests/ui/{foo}.rs => tests/ui/bar.rs": "tests/ui/bar.rs",
+        "x/{} => y": "y",
+    }
+    for raw, want in cases.items():
+        assert gitio._resolve_rename(raw) == want, raw
+
+
+def test_blame_with_relative_ignore_revs_file(tmp_path, monkeypatch):
+    """A repo's .git-blame-ignore-revs given relative to our cwd must still
+    work, although blame runs as `git -C <repo>` (it used to fail silently)."""
+    root = tmp_path / "work"
+    repo = root / "cloned_repos" / "r"
+    repo.mkdir(parents=True)
+    _git(str(repo), "init", "-q", "-b", "main")
+    _commit(str(repo), "init", 0, {"f.txt": "a\nb\nc\n"})
+    _commit(str(repo), "fix: b", 1, {"f.txt": "a\nB\nc\n"})
+    first = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD~1"],
+                           capture_output=True, text=True, check=True).stdout
+    (repo / ".git-blame-ignore-revs").write_text(first)
+    monkeypatch.chdir(root)
+    rel_repo = os.path.join("cloned_repos", "r")
+    try:
+        gitio.configure_blame(ignore_revs_file=os.path.join(rel_repo, ".git-blame-ignore-revs"))
+        assert len(gitio.blame_file(rel_repo, "HEAD", "f.txt")) == 3
+        assert len(gitio.blame_lines(rel_repo, "HEAD", "f.txt", [2])) >= 1
+    finally:
+        gitio.configure_blame()

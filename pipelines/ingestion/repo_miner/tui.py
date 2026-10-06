@@ -17,7 +17,9 @@ run (e.g. out of memory), counts down GitHub rate-limit waits, flags repos with
 no progress, saves every run's log under logs/, and remembers the form between
 launches (.tui_settings.json).
 
-Keys: ctrl+r start · ctrl+x stop · ctrl+l clear log · ctrl+q quit
+Keys: ctrl+r start · ctrl+x stop · ctrl+l clear log · ctrl+y copy log ·
+ctrl+b web view (copies its link) · ctrl+q quit. Drag over the log or stats to
+select text, then ctrl+c to copy it.
 Every launch first runs doctor.py, which checks git, the Python packages,
 GITHUB_TOKEN and the LLM setup and offers to fix them (install packages, save a
 token to .env). RIFFLE_NO_DOCTOR=1 skips it; RIFFLE_NO_INSTALL=1 never installs.
@@ -41,6 +43,7 @@ from version import __version__
 # Environment doctor on every launch, before the UI takes over the terminal:
 # checks git / packages / GITHUB_TOKEN / LLM and offers to fix them. Skip with
 # RIFFLE_NO_DOCTOR=1 (then only missing Python packages are auto-installed).
+deps.use_project_venv()           # re-run inside repo_miner/.venv if one exists
 if os.getenv("RIFFLE_NO_DOCTOR"):
     deps.ensure()
 else:
@@ -57,6 +60,7 @@ else:
 
 import config  # noqa: E402  (loads .env, so GITHUB_TOKEN from it counts)
 import dashboard  # noqa: E402
+from features import llm_flags  # noqa: E402
 
 try:
     import psutil  # noqa: E402
@@ -70,7 +74,8 @@ from textual.binding import Binding  # noqa: E402
 from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
 from textual.screen import ModalScreen  # noqa: E402
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input,  # noqa: E402
-                             Label, ProgressBar, RichLog, Select, Static)
+                             Label, Log, ProgressBar, Select, Static)
+from rich.highlighter import Highlighter  # noqa: E402
 
 MODELS = [("Sonnet (default)", "sonnet"), ("Opus", "opus"), ("Haiku (fast/cheap)", "haiku"),
           ("Fable 5.1", "claude-fable-5-1")]
@@ -95,6 +100,55 @@ def _exit_reason(rc: int | None) -> str | None:
         except ValueError:
             return f"killed (signal {-rc})"
     return None
+
+
+class _LevelHighlighter(Highlighter):
+    """Colours whole log lines by level, the way the old RichLog styles did.
+    The log panel is a Log widget (not RichLog) because Log supports mouse
+    selection and copy; RichLog does not."""
+    def highlight(self, text) -> None:
+        line = text.plain
+        if ("breaker" in line or "FAILED" in line or "[error" in line or "WARNING" in line
+                or "killed" in line or "out of memory" in line):
+            text.stylize("bold red")
+        elif line.startswith(("[warn", "[skip", "[api] rate limit", "[stop]", "[blame] warning")):
+            text.stylize("yellow")
+        elif line.startswith(("[web]", "[tui] saving", "[tui] log file", "[tui] saved", "[tui] peak")):
+            text.stylize("cyan")
+        elif line.startswith(("$ ", "[test]")):
+            text.stylize("bold")
+
+
+def _system_copy(text: str) -> bool:
+    """Put text on the OS clipboard via the platform tool, for terminals that
+    ignore OSC 52 (e.g. GNOME Terminal). Returns True on success."""
+    import shutil
+    import subprocess
+    for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"],
+                ["pbcopy"], ["clip"]):
+        if shutil.which(cmd[0]):
+            try:
+                subprocess.run(cmd, input=text.encode(), timeout=5, check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except (OSError, subprocess.SubprocessError):
+                continue
+    return False
+
+
+def _fmt_tokens(n: int) -> str:
+    return f"{n / 1e6:.2f}M" if n >= 1e6 else f"{n / 1e3:.1f}k" if n >= 1e3 else str(n)
+
+
+def _sum_usage(repos) -> dict | None:
+    """This run's LLM usage: every repo miner reports its own running total."""
+    us = [r.llm_usage for r in repos if r.llm_usage]
+    if not us:
+        return None
+    tot = {k: sum(u.get(k) or 0 for u in us) for k in ("calls", "input", "output", "cache_write", "cache_read", "cost_usd")}
+    tot["cost_known"] = any(u.get("cost_known") for u in us)
+    tot["tokens_in"] = tot["input"] + tot["cache_write"] + tot["cache_read"]
+    return tot
 
 
 def _fmt_bytes(n: float) -> str:
@@ -130,6 +184,7 @@ class RepoStat:
     rl_until: float | None = None        # GitHub rate-limit wait ends at
     slowest: float = 0.0                 # slowest PR (s)
     first_pr: float | None = None        # first PR finished this run (for the ETA)
+    llm_usage: dict | None = None        # cumulative claude usage of this repo's miner
 
 
 @dataclass
@@ -227,7 +282,7 @@ class RiffleTUI(App):
     #buttons { height: 3; margin-top: 1; }
     #buttons Button { width: 1fr; }
     #main { padding: 0 1; }
-    #stats { height: 8; border: round $secondary; padding: 0 1; }
+    #stats { height: 9; border: round $secondary; padding: 0 1; }
     #overall { height: 1; margin: 0 0 1 0; }
     #repos { height: 1fr; min-height: 6; border: round $secondary; }
     #log { height: 1fr; min-height: 6; border: round $secondary; }
@@ -242,6 +297,7 @@ class RiffleTUI(App):
         Binding("ctrl+o", "view_test", "View test data"),
         Binding("ctrl+g", "show_split", "Show split"),
         Binding("ctrl+l", "clear_log", "Clear log"),
+        Binding("ctrl+y", "copy_log", "Copy log"),
         Binding("ctrl+b", "open_dashboard", "Web view"),
         Binding("ctrl+q", "quit", "Quit"),
     ]
@@ -260,7 +316,9 @@ class RiffleTUI(App):
         self.log_path: str | None = None
         self._procs: dict[int, object] = {}  # psutil.Process by pid (keeps cpu_percent state)
         self.log_tail: deque = deque(maxlen=150)   # for the web dashboard
+        self.log_lines: deque = deque(maxlen=5000) # unwrapped, for ctrl+y copy
         self._final_state = "finished"
+        self.plan_usage: list[dict] | None = None   # Claude plan limits from `claude -p /usage`
         self._res: dict = {}                       # last RAM/CPU reading, for the dashboard
         self.dash = None if os.getenv("RIFFLE_DASHBOARD") == "0" else dashboard.Dashboard()
 
@@ -312,7 +370,7 @@ class RiffleTUI(App):
                 yield Static("Idle. Configure on the left, then Start (ctrl+r).", id="stats")
                 yield ProgressBar(id="overall", show_eta=False)
                 yield DataTable(id="repos", zebra_stripes=True, cursor_type="row")
-                yield RichLog(id="log", max_lines=5000, wrap=True, highlight=False)
+                yield Log(id="log", max_lines=5000, highlight=True)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -322,11 +380,40 @@ class RiffleTUI(App):
                            ("llm", "LLM ok/fail"), ("time", "Time"), ("eta", "ETA"),
                            ("slowest", "Slowest PR")]:
             t.add_column(label, key=key)
+        self.query_one("#log", Log).highlighter = _LevelHighlighter()
         self._load_settings()
         self._check_token()
         self._start_dashboard()
         self.set_interval(0.25, self._poll_events)
         self.set_interval(1.0, self._render_stats)
+        if not os.getenv("RIFFLE_NO_PLAN_USAGE"):
+            self._refresh_plan()
+            self.set_interval(60, self._refresh_plan)
+
+    # ----------------------------------------------------------- plan usage
+    def _refresh_plan(self) -> None:
+        self.run_worker(self._plan_worker, thread=True, exclusive=True, group="plan")
+
+    def _plan_worker(self) -> None:
+        res = llm_flags.claude_plan_usage()
+        if res is not None:
+            self.plan_usage = res
+
+    def _plan_text(self) -> str:
+        if not self.plan_usage:
+            return ""
+        parts = []
+        for p in self.plan_usage:
+            col = "red" if p["pct"] >= 90 else "yellow" if p["pct"] >= 70 else "green"
+            when = ""
+            if p.get("resets_at"):
+                left = p["resets_at"] - time.time()
+                at = time.strftime("%-I:%M%p", time.localtime(p["resets_at"])).lower()
+                when = f" · resets in {_fmt_secs(left)} ({at})" if left > 0 else " · resetting now"
+            elif p.get("resets"):
+                when = f" · resets {p['resets'].split(' (')[0]}"
+            parts.append(f"{p['label'].lower()} [{col}]{p['pct']:.0f}%[/]{when}")
+        return "Claude plan: " + " · ".join(parts)
 
     # ------------------------------------------------------------- dashboard
     def _start_dashboard(self) -> None:
@@ -349,7 +436,27 @@ class RiffleTUI(App):
             self.notify("Web view is off (RIFFLE_DASHBOARD=0 or no free port).", severity="warning")
             return
         webbrowser.open(self.dash.local_url)
-        self.notify(f"Other devices: {self.dash.url}", timeout=10)
+        self._copy(self.dash.url)
+        self.notify(f"Link copied for other devices: {self.dash.url}", timeout=10)
+
+    def _copy(self, text: str) -> bool:
+        """Copy via the terminal (OSC 52) and the OS clipboard tool, so it works
+        whichever one this terminal supports."""
+        try:
+            self.copy_to_clipboard(text)
+        except Exception:                              # noqa: BLE001
+            pass
+        return _system_copy(text)
+
+    def action_copy_log(self) -> None:
+        text = "\n".join(self.log_lines)
+        if not text:
+            self.notify("The log is empty.", severity="warning")
+            return
+        ok = self._copy(text)
+        where = "clipboard" if ok else "clipboard (via the terminal)"
+        extra = f" · full log also at {self.log_path}" if self.log_path else ""
+        self.notify(f"Copied {len(self.log_lines)} log lines to the {where}{extra}", timeout=6)
 
     @staticmethod
     def _level(style: str | None) -> str | None:
@@ -385,7 +492,8 @@ class RiffleTUI(App):
         snap = {"version": __version__, "state": "idle", "rows": rows, "now": now,
                 "log": [{"text": txt, "level": lvl} for txt, lvl in self.log_tail],
                 "out": "  +  ".join(self.out_paths), "log_path": self.log_path,
-                "resources": self._res}
+                "resources": self._res, "plan_usage": self.plan_usage,
+                "llm_usage": _sum_usage(self.repos.values())}
         if summary:
             snap.update(summary)
         self.dash.publish(snap)
@@ -614,7 +722,8 @@ class RiffleTUI(App):
             pass
 
     def action_clear_log(self) -> None:
-        self.query_one("#log", RichLog).clear()
+        self.query_one("#log", Log).clear()
+        self.log_lines.clear()
 
     async def action_quit(self) -> None:
         if self.proc is not None:
@@ -711,7 +820,15 @@ class RiffleTUI(App):
             self.log_fh, self.log_path = None, None
 
     def _log(self, text: str, style: str | None = None) -> None:
-        self.query_one("#log", RichLog).write(Text(text, style=style or ""))
+        log = self.query_one("#log", Log)
+        # Log doesn't soft-wrap, so wrap here to the panel width (keeps the
+        # "no horizontal overflow" behaviour while staying selectable)
+        width = max(40, (log.scrollable_content_region.width or log.size.width or 100) - 1)
+        import textwrap
+        for part in (textwrap.wrap(text, width, subsequent_indent="  ", break_on_hyphens=False,
+                                   drop_whitespace=False) or [""]):
+            log.write_line(part)
+        self.log_lines.append(text)
         self.log_tail.append((text, self._level(style)))
         if self.log_fh:
             try:
@@ -789,6 +906,8 @@ class RiffleTUI(App):
             r.done += 1
             self.stats.pr_times.append(t)
             r.slowest = max(r.slowest, e.get("secs") or 0.0)
+            if e.get("llm_usage"):
+                r.llm_usage = e["llm_usage"]
             if r.first_pr is None:
                 r.first_pr = t
             if e.get("status") == "skip":
@@ -809,7 +928,12 @@ class RiffleTUI(App):
             r = self._repo(e["repo"])
             r.ended = t
             r.rows = e.get("rows", r.rows)
-            r.stage = "done" if e.get("status") == "ok" else e.get("status", "done")
+            if e.get("llm_usage"):
+                r.llm_usage = e["llm_usage"]
+            if e.get("already"):          # mined in an earlier run: count it as done
+                r.total = r.done = r.resumed = r.rows
+            r.stage = ("done (earlier run)" if e.get("already") else "done") \
+                if e.get("status") == "ok" else e.get("status", "done")
             resort = True
         elif ev == "repo_failed":
             r = self._repo(e["repo"])
@@ -849,7 +973,7 @@ class RiffleTUI(App):
         if not r.ended and r.stage == "mining" and idle >= STALL_SECS:
             return Text(f"mining · no progress {_fmt_secs(idle)}", style="bold yellow")
         style = "bold red" if r.stage == "BREAKER" or r.stage.startswith("failed") \
-            else "green" if r.stage == "done" else ""
+            else "green" if r.stage.startswith("done") else ""
         return Text(r.stage, style=style)
 
     def _row_values(self, r: RepoStat, now: float) -> dict:
@@ -888,6 +1012,12 @@ class RiffleTUI(App):
     # ------------------------------------------------------------------ stats
     def _render_stats(self) -> None:
         if self.stats.started is None:
+            idle = "Idle. Configure on the left, then Start (ctrl+r)."
+            if self.dash:
+                idle += f"\n[b]Web view:[/b] {self.dash.url}"
+            if self._plan_text():
+                idle += "\n" + self._plan_text()
+            self.query_one("#stats", Static).update(idle)
             self._publish()
             return
         now = self.stats.ended or time.time()
@@ -927,9 +1057,18 @@ class RiffleTUI(App):
         res = self._resources()
         if res:
             line1 += "\n" + res
+        usage = _sum_usage(self.repos.values())
+        utxt = ""
+        if usage:
+            utxt = (f"  ·  tokens in {_fmt_tokens(usage['tokens_in'])} "
+                    f"(cache {_fmt_tokens(usage['cache_read'])}) / out {_fmt_tokens(usage['output'])}"
+                    + (f"  ·  ${usage['cost_usd']:.2f} at API prices" if usage["cost_known"] else ""))
         line2 = (f"LLM ok {llm_ok}  fail {llm_fail}  ·  avg latency "
-                 f"{f'{lat:.1f}s' if lat else '—'}  ·  breaker "
+                 f"{f'{lat:.1f}s' if lat else '—'}{utxt}  ·  breaker "
                  + (f"[bold red]{self.stats.breaker}[/]" if self.stats.breaker else "[green]armed[/]"))
+        plan = self._plan_text()
+        if plan:
+            line2 += "\n" + plan
         line3 = ("[b]Saving to:[/b] " if self.proc else "[b]Saved to:[/b] ") + \
             "\n            ".join(self.out_paths)
         if self.log_path:
@@ -951,6 +1090,7 @@ class RiffleTUI(App):
             "eta": _fmt_secs(eta) if self.proc and eta else None,
             "progress": (done / total) if total and not unknown else 0,
             "llm": f"{llm_ok} / {llm_fail}", "llm_latency": f"{lat:.1f}s" if lat else None,
+            "llm_usage": usage,
             "breaker": self.stats.breaker,
         })
 

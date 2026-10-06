@@ -9,3 +9,4 @@ data/
 test_output/
 logs/
 .tui_settings.json
+.venv/

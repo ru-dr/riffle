@@ -244,7 +244,8 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;pa
 .shead{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .shead h2{margin:14px 0 0;font:500 1.35rem/1.2 var(--sans);letter-spacing:-.02em}
 .shead p{margin:8px 0 0;font:14px/1.55 var(--sans);color:var(--nickel)}
-.tabs{display:flex;flex-wrap:wrap;gap:4px;margin-top:22px}
+.tabs{display:flex;flex-wrap:wrap;gap:4px}
+.rtools{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;margin-top:22px}
 .tabs button{appearance:none;cursor:pointer;border:0;background:transparent;border-radius:6px;
   padding:5px 10px;font:14px var(--sans);color:var(--nickel);outline:1px solid transparent;transition:background .15s}
 .tabs button:hover{background:var(--wash)}
@@ -278,6 +279,52 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;pa
 .code pre{margin:0;padding:14px 16px;max-height:400px;overflow:auto;color:var(--code-ink);
   font:12.5px/1.75 var(--mono);white-space:pre-wrap;word-break:break-word}
 .code .w{color:#e3b341} .code .b{color:#f47174} .code .g{color:#7dd3a0}
+/* toolbar: the docs header's outline buttons (Ask AI / Search docs) */
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:20px}
+.btn{appearance:none;display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;cursor:pointer;
+  border-radius:6px;border:1px solid var(--stroke);background:var(--surface);color:var(--ink);
+  font:500 13px var(--sans);transition:background .15s,border-color .15s;white-space:nowrap}
+.btn:hover{border-color:var(--grey)}
+.btn[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn[aria-pressed="true"] kbd{color:var(--bg);border-color:rgba(255,255,255,.25)}
+kbd{font:400 10.5px var(--mono);color:var(--grey);border:1px solid var(--stroke);border-radius:3px;padding:0 4px;line-height:16px}
+.seg{display:inline-flex;border:1px solid var(--stroke);border-radius:6px;overflow:hidden;background:var(--surface)}
+.seg button{appearance:none;border:0;background:transparent;cursor:pointer;height:28px;padding:0 10px;
+  font:500 13px var(--sans);color:var(--nickel);border-left:1px solid var(--stroke)}
+.seg button:first-child{border-left:0}
+.seg button[aria-pressed="true"]{background:var(--wash);color:var(--ink)}
+.search{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 10px;min-width:220px;flex:1;max-width:340px;
+  border:1px solid var(--stroke);border-radius:6px;background:var(--surface)}
+.search input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--ink);font:13px var(--sans)}
+.search input::placeholder{color:var(--grey)}
+.search:focus-within{border-color:var(--grey)}
+.grow{flex:1}
+.hits{font:12px var(--mono);color:var(--grey);white-space:nowrap}
+.code pre.nowrap{white-space:pre;overflow-x:auto;word-break:normal}
+.code pre div{padding:0 2px}
+.code mark{background:rgba(227,179,65,.35);color:inherit;border-radius:2px}
+.code .bar .acts{display:flex;gap:14px}
+.code .bar button{appearance:none;border:0;background:transparent;cursor:pointer;color:var(--code-grey);font:12px var(--mono);padding:0}
+.code .bar button:hover{color:var(--code-ink)}
+.paused-note{display:none;font:12px var(--mono);color:var(--t-amber)}
+body.paused .paused-note{display:inline}
+body.expanded .wrap>*:not(.logsec){display:none}
+body.expanded .logsec{border-top:0}
+body.expanded .code pre{max-height:calc(100vh - 230px)}
+.row .nm{cursor:copy}
+/* touch screens have no keyboard: drop the key hints and the shortcuts button */
+@media (hover:none){kbd,#b_help{display:none}}
+/* toast */
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(12px);opacity:0;pointer-events:none;
+  background:var(--ink);color:var(--bg);font:500 13px var(--sans);padding:8px 14px;border-radius:6px;transition:all .2s ease;z-index:30}
+#toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+/* shortcuts overlay */
+#help{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(22,23,29,.35);z-index:40;padding:16px}
+#help.on{display:flex}
+#help .box{background:var(--bg);border:1px solid var(--stroke);width:min(440px,100%);padding:24px 28px}
+#help h3{margin:10px 0 16px;font:500 1.35rem var(--sans);letter-spacing:-.02em}
+#help dl{display:grid;grid-template-columns:auto 1fr;gap:9px 18px;margin:0;font-size:14px;color:var(--nickel)}
+#help dt{text-align:right}
 .paths{margin:16px 0 0;font:12px/1.7 var(--mono);color:var(--grey);word-break:break-all}
 footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:20px 24px;margin-top:32px}
 @media (min-width:48rem){footer{padding:20px 40px}}
@@ -331,55 +378,104 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
   <div class="stat"><span class="cap">CPU</span><span class="v num" id="cpu">—</span><span class="h" id="cpu_h">—</span><div class="meter" id="cpu_t"><i></i></div></div>
 </div>
 
+<div class="rule grid g3">
+  <div class="stat"><span class="cap">LLM tokens in</span><span class="v num" id="tok_in">—</span><span class="h" id="tok_in_h">exact, this run, all repositories</span></div>
+  <div class="stat"><span class="cap">LLM tokens out</span><span class="v num" id="tok_out">—</span><span class="h" id="tok_out_h">—</span></div>
+  <div class="stat"><span class="cap">Claude plan</span><span class="v num" id="plan">—</span><span class="h" id="plan_h">from Claude Code's /usage</span><div class="meter" id="plan_t"><i></i></div></div>
+</div>
+
 <section class="rule section">
   <div class="shead"><span class="cap">01</span><span class="cap" id="rcount"></span></div>
   <div class="shead" style="display:block"><h2>Repositories</h2><p>Each repository in this PC's share, in mining order. Finished and failed ones sink to the bottom.</p></div>
-  <div class="tabs" id="filters"></div>
+  <div class="rtools"><div class="tabs" id="filters"></div>
+    <label class="search"><span class="cap">find</span><input id="rq" type="search" placeholder="Filter repositories" autocomplete="off"></label></div>
   <ul class="list" id="rows"><li class="empty">No run yet.</li></ul>
 </section>
 
-<section class="rule section" style="margin-top:32px">
+<section class="rule section logsec" style="margin-top:32px">
   <div class="shead"><span class="cap">02</span><span class="cap" id="logname">log</span></div>
-  <div class="shead" style="display:block"><h2>Log</h2><p>The last lines the miner wrote, as the TUI shows them.</p></div>
-  <div class="code"><div class="bar"><span id="logfile">miner.log</span><span>tail</span></div><pre id="log"></pre></div>
+  <div class="shead" style="display:block"><h2>Log</h2><p>The last lines the miner wrote, as the TUI shows them. Select any text to copy it; updates hold while you do.</p></div>
+  <div class="toolbar">
+    <label class="search"><span class="cap">/</span><input id="lq" type="search" placeholder="Search the log" autocomplete="off"></label>
+    <div class="seg" id="lvl"><button type="button" data-l="all" aria-pressed="true">All</button><button type="button" data-l="warn">Warnings</button><button type="button" data-l="bad">Errors</button></div>
+    <span class="hits" id="hits"></span>
+    <span class="grow"></span>
+    <button class="btn" type="button" id="b_wrap" aria-pressed="true">Wrap <kbd>w</kbd></button>
+    <button class="btn" type="button" id="b_follow" aria-pressed="true">Follow <kbd>f</kbd></button>
+    <button class="btn" type="button" id="b_pause" aria-pressed="false">Pause <kbd>p</kbd></button>
+    <button class="btn" type="button" id="b_expand" aria-pressed="false">Expand <kbd>e</kbd></button>
+  </div>
+  <div class="code"><div class="bar"><span id="logfile">miner.log</span><span class="acts">
+    <span class="paused-note">paused</span>
+    <button type="button" id="b_copy">copy <kbd>c</kbd></button><button type="button" id="b_dl">download</button></span></div>
+    <pre id="log"></pre></div>
   <div class="paths" id="paths"></div>
 </section>
 
-<footer class="rule"><span class="cap">Riffle miner · read-only view</span><span class="cap" id="foot_ver"></span></footer>
+<footer class="rule"><span class="cap">Riffle miner · read-only view</span>
+  <span class="hright"><button class="btn" type="button" id="b_link">Copy link <kbd>l</kbd></button>
+  <button class="btn" type="button" id="b_help">Shortcuts <kbd>?</kbd></button><span class="cap" id="foot_ver"></span></span></footer>
 </div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div id="help" role="dialog" aria-modal="true" aria-labelledby="help_t"><div class="box">
+  <div class="cap">Keyboard</div><h3 id="help_t">Shortcuts</h3>
+  <dl><dt><kbd>/</kbd></dt><dd>Search the log</dd><dt><kbd>c</kbd></dt><dd>Copy the visible log</dd>
+  <dt><kbd>w</kbd></dt><dd>Wrap long lines on / off</dd><dt><kbd>f</kbd></dt><dd>Follow new lines</dd>
+  <dt><kbd>p</kbd></dt><dd>Pause / resume live updates</dd><dt><kbd>e</kbd></dt><dd>Expand the log to the full page</dd>
+  <dt><kbd>1</kbd>–<kbd>6</kbd></dt><dd>Repository filter tabs</dd><dt><kbd>r</kbd></dt><dd>Filter repositories</dd>
+  <dt><kbd>l</kbd></dt><dd>Copy this page's link</dd><dt><kbd>Esc</kbd></dt><dd>Close, clear search, leave expanded view</dd></dl>
+</div></div>
 <script>
 const key = new URLSearchParams(location.search).get("key") || "";
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const TABS = [["all","All"],["active","Active"],["warn","Attention"],["failed","Failed"],["done","Done"],["queued","Queued"]];
 const TAG = {active:"Mining", warn:"Attention", failed:"Failed", done:"Done", queued:"Queued"};
-let filter = "all", last = null, lastOk = 0;
+const pref = (k, d) => { try { const v = localStorage.getItem("rm." + k); return v === null ? d : v === "1"; } catch (e) { return d; } };
+const save = (k, v) => { try { localStorage.setItem("rm." + k, v ? "1" : "0"); } catch (e) {} };
+const ui = {filter: "all", rq: "", lq: "", lvl: "all", wrap: pref("wrap", true), follow: pref("follow", true), paused: false, expanded: false};
+let last = null, lastOk = 0, sigRows = "", sigLog = "";
 
 const dash = v => (v === null || v === undefined || v === "") ? "—" : v;
 function setText(id, v){ $(id).textContent = dash(v); }
 function tone(id, t){ const e = $(id); e.classList.remove("warn","bad","good"); if (t) e.classList.add(t); }
 function meter(id, frac, lvl){ const m = $(id); m.firstElementChild.style.width = Math.max(0, Math.min(1, frac || 0)) * 100 + "%";
   m.classList.remove("warn","bad"); if (lvl === "warn" || lvl === "bad") m.classList.add(lvl); }
+function toast(msg){ const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove("on"), 1800); }
+
+/* Copy that also works over plain http on the LAN, where navigator.clipboard
+   is unavailable: fall back to a hidden textarea + execCommand. */
+async function copy(text, what){
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); toast("Copied " + what); return; } } catch (e) {}
+  const ta = el("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select(); let ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+  ta.remove(); toast(ok ? "Copied " + what : "Copy blocked by the browser; select the text instead");
+}
+/* While the reader holds a selection inside the log or the repo list, don't
+   rebuild those nodes (a rebuild is what used to wipe the selection). */
+function selecting(node){ const s = window.getSelection(); return s && !s.isCollapsed && s.rangeCount && node.contains(s.anchorNode); }
 
 function tabs(rows){
   const n = {all: rows.length}; for (const r of rows) n[r.status] = (n[r.status] || 0) + 1;
-  if (filter !== "all" && !n[filter]) filter = "all";
+  if (ui.filter !== "all" && !n[ui.filter]) ui.filter = "all";
   const box = $("filters"); box.replaceChildren();
-  for (const [k, label] of TABS) {
-    if (k !== "all" && !n[k]) continue;
-    const b = el("button", null, label); b.type = "button"; b.setAttribute("aria-pressed", String(filter === k));
+  TABS.forEach(([k, label], i) => {
+    if (k !== "all" && !n[k]) return;
+    const b = el("button", null, label); b.type = "button"; b.title = "Shortcut: " + (i + 1);
+    b.setAttribute("aria-pressed", String(ui.filter === k));
     b.appendChild(el("span", "n", String(n[k] || 0)));
-    b.onclick = () => { filter = k; if (last) render(last); };
+    b.onclick = () => { ui.filter = k; sigRows = ""; render(last); };
     box.appendChild(b);
-  }
+  });
 }
 
 function row(r){
   const li = el("li", "row" + (r.status === "queued" ? " q" : ""));
-  li.appendChild(el("span", "nm", r.name));
+  const nm = el("span", "nm", r.name); nm.title = "Click to copy"; nm.onclick = () => copy(r.name, r.name);
+  li.appendChild(nm);
   li.appendChild(el("span", "st st-" + r.status, TAG[r.status] || r.status));
   const plain = ["mining", "done", "queued"].includes((r.stage || "").toLowerCase());
-  li.appendChild(el("span", "stage", plain ? "" : r.stage));
+  const st = el("span", "stage", plain ? "" : r.stage); st.title = r.stage || ""; li.appendChild(st);
   const prog = el("span", "prog"); const m = el("span", "meter"); const fill = el("i");
   fill.style.width = (r.total ? Math.min(1, r.done / r.total) : 0) * 100 + "%"; m.appendChild(fill);
   prog.append(m, el("span", null, r.prs)); li.appendChild(prog);
@@ -392,13 +488,54 @@ function row(r){
   return li;
 }
 
+function renderRows(rows){
+  const box = $("rows");
+  const shown = rows.filter(x => (ui.filter === "all" || x.status === ui.filter) && (!ui.rq || x.name.toLowerCase().includes(ui.rq)));
+  const sig = JSON.stringify([ui.filter, ui.rq, shown]);
+  if (sig === sigRows || selecting(box)) return;
+  sigRows = sig; box.replaceChildren();
+  if (!shown.length) box.appendChild(el("li", "empty", rows.length ? "Nothing in this view." : "No run yet."));
+  for (const x of shown) box.appendChild(row(x));
+}
+
+function visibleLog(){
+  const q = ui.lq;
+  return (last && last.log || []).filter(l =>
+    (ui.lvl === "all" || (ui.lvl === "warn" ? (l.level === "warn" || l.level === "bad") : l.level === "bad")) &&
+    (!q || l.text.toLowerCase().includes(q)));
+}
+function renderLog(){
+  const pre = $("log");
+  pre.classList.toggle("nowrap", !ui.wrap);
+  const lines = visibleLog();
+  const sig = JSON.stringify([ui.lq, ui.lvl, lines.length, lines.length ? lines[lines.length - 1].text : "", (last && last.log || []).length]);
+  $("hits").textContent = (ui.lq || ui.lvl !== "all") ? lines.length + " of " + (last && last.log || []).length + " lines" : "";
+  if (sig === sigLog || selecting(pre)) return;
+  sigLog = sig;
+  const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+  pre.replaceChildren();
+  const q = ui.lq;
+  for (const l of lines) {
+    const d = el("div", {warn:"w", bad:"b", ok:"g"}[l.level] || "");
+    if (q) {                                     // highlight matches without innerHTML
+      const lo = l.text.toLowerCase(); let i = 0, j;
+      while ((j = lo.indexOf(q, i)) !== -1) { d.append(l.text.slice(i, j), el("mark", null, l.text.slice(j, j + q.length))); i = j + q.length; }
+      d.append(l.text.slice(i));
+    } else d.textContent = l.text;
+    pre.appendChild(d);
+  }
+  if (!lines.length) pre.appendChild(el("div", null, (last && (last.log || []).length) ? "No lines match." : "Nothing logged yet."));
+  if (ui.follow && (atEnd || ui.lq === "")) pre.scrollTop = pre.scrollHeight;
+}
+
 function render(s){
+  if (!s) return;
   last = s;
   const v = s.version ? "v" + s.version : "";
   setText("ver", v); $("foot_ver").textContent = v;
   const state = s.state || "idle";
   $("state").className = "chip " + (state === "running" ? "live" : /killed|exit|breaker/.test(state) ? "dead" : state === "stopped" ? "stopped" : "");
-  setText("state_t", state);
+  setText("state_t", ui.paused ? state + " · paused" : state);
   const p = s.progress || 0;
   $("pbar").style.width = p * 100 + "%";
   const h = $("headline"); h.replaceChildren();
@@ -418,17 +555,23 @@ function render(s){
   setText("free_h", r.free ? r.free + " free of " + r.total : null); meter("used_t", r.used_frac, r.level);
   setText("cpu", r.cpu ? r.cpu.split(" ")[0] : null); setText("cpu_h", r.cpu ? "of " + r.cpu.split(" of ")[1] + " across all cores" : null);
   meter("cpu_t", r.cpu_frac);
+  const u = s.llm_usage;
+  const fk = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n || 0);
+  setText("tok_in", u ? fk(u.tokens_in) : null);
+  $("tok_in_h").textContent = u ? "exact · cache read " + fk(u.cache_read) + " · cache write " + fk(u.cache_write) : "exact, this run, all repositories";
+  setText("tok_out", u ? fk(u.output) : null);
+  $("tok_out_h").textContent = u ? u.calls.toLocaleString() + " calls" + (u.cost_known ? " · $" + u.cost_usd.toFixed(2) + " at API prices" : "") : "—";
+  const pl = s.plan_usage || [];
+  const ses = pl[0];
+  setText("plan", ses ? ses.label + " " + Math.round(ses.pct) + "%" : null);
+  tone("plan", ses ? (ses.pct >= 90 ? "bad" : ses.pct >= 70 ? "warn" : null) : null);
+  last.plan = pl; planText();
+  meter("plan_t", ses ? ses.pct / 100 : 0, ses ? (ses.pct >= 90 ? "bad" : ses.pct >= 70 ? "warn" : null) : null);
   const rows = s.rows || [];
   tabs(rows);
   $("rcount").textContent = rows.length ? rows.length + " repositories" : "";
-  const box = $("rows"); box.replaceChildren();
-  const shown = rows.filter(x => filter === "all" || x.status === filter);
-  if (!shown.length) box.appendChild(el("li", "empty", rows.length ? "Nothing in this view." : "No run yet."));
-  for (const x of shown) box.appendChild(row(x));
-  const pre = $("log"); const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
-  pre.replaceChildren();
-  for (const l of (s.log || [])) pre.appendChild(el("div", {warn:"w", bad:"b", ok:"g"}[l.level] || "", l.text));
-  if (atEnd) pre.scrollTop = pre.scrollHeight;
+  renderRows(rows);
+  renderLog();
   const lf = s.log_path ? s.log_path.split("/").pop() : "miner.log";
   $("logfile").textContent = lf; $("logname").textContent = (s.log || []).length + " lines";
   const paths = $("paths"); paths.replaceChildren();
@@ -436,9 +579,70 @@ function render(s){
   if (s.log_path) paths.appendChild(el("div", null, "log     " + s.log_path));
   document.title = (state === "running" ? (p * 100).toFixed(0) + "% · " : "") + "Riffle Miner";
 }
-function ago(){ if (!lastOk) return; const s = Math.round((Date.now() - lastOk) / 1000);
-  $("updated").textContent = s < 3 ? "live" : "updated " + s + "s ago"; }
+
+/* controls */
+function press(id, on){ $(id).setAttribute("aria-pressed", String(on)); }
+const act = {
+  wrap(){ ui.wrap = !ui.wrap; save("wrap", ui.wrap); press("b_wrap", ui.wrap); sigLog = ""; renderLog(); toast(ui.wrap ? "Wrapping long lines" : "Long lines scroll sideways"); },
+  follow(){ ui.follow = !ui.follow; save("follow", ui.follow); press("b_follow", ui.follow); if (ui.follow) $("log").scrollTop = $("log").scrollHeight; toast(ui.follow ? "Following new lines" : "Not following"); },
+  pause(){ ui.paused = !ui.paused; press("b_pause", ui.paused); document.body.classList.toggle("paused", ui.paused); if (!ui.paused) tick(); render(last); ago(); toast(ui.paused ? "Live updates paused" : "Live updates resumed"); },
+  expand(){ ui.expanded = !ui.expanded; press("b_expand", ui.expanded); document.body.classList.toggle("expanded", ui.expanded); window.scrollTo(0, 0); },
+  copyLog(){ const sel = window.getSelection(); const t = (sel && !sel.isCollapsed && $("log").contains(sel.anchorNode)) ? sel.toString() : visibleLog().map(l => l.text).join("\n");
+    copy(t, t.split("\n").length + " log lines"); },
+  download(){ const t = (last && last.log || []).map(l => l.text).join("\n") + "\n";
+    const a = el("a"); a.href = URL.createObjectURL(new Blob([t], {type: "text/plain"}));
+    a.download = (last && last.log_path ? last.log_path.split("/").pop().replace(/\.log$/, "") : "riffle-miner") + "-tail.log";
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); },
+  link(){ copy(location.href, "link"); },
+  help(on){ $("help").classList.toggle("on", on === undefined ? !$("help").classList.contains("on") : on); },
+};
+press("b_wrap", ui.wrap); press("b_follow", ui.follow);
+$("b_wrap").onclick = act.wrap; $("b_follow").onclick = act.follow; $("b_pause").onclick = act.pause;
+$("b_expand").onclick = act.expand; $("b_copy").onclick = act.copyLog; $("b_dl").onclick = act.download;
+$("b_link").onclick = act.link; $("b_help").onclick = () => act.help(true);
+$("help").onclick = e => { if (e.target.id === "help") act.help(false); };
+for (const b of $("lvl").querySelectorAll("button")) b.onclick = () => {
+  ui.lvl = b.dataset.l; for (const x of $("lvl").querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b)); sigLog = ""; renderLog(); };
+$("lq").oninput = e => { ui.lq = e.target.value.trim().toLowerCase(); sigLog = ""; renderLog(); };
+$("rq").oninput = e => { ui.rq = e.target.value.trim().toLowerCase(); sigRows = ""; renderRows(last && last.rows || []); };
+
+document.addEventListener("keydown", e => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if (e.key === "Escape") {
+    if ($("help").classList.contains("on")) return act.help(false);
+    if (typing) { document.activeElement.value = ""; document.activeElement.dispatchEvent(new Event("input")); document.activeElement.blur(); return; }
+    if (ui.expanded) return act.expand();
+    return;
+  }
+  if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (k === "/") { e.preventDefault(); $("lq").focus(); }
+  else if (k === "r") { e.preventDefault(); $("rq").focus(); }
+  else if (k === "c") act.copyLog();
+  else if (k === "w") act.wrap();
+  else if (k === "f") act.follow();
+  else if (k === "p") act.pause();
+  else if (k === "e") act.expand();
+  else if (k === "l") act.link();
+  else if (k === "?") act.help();
+  else if (/^[1-6]$/.test(k)) { const t = TABS[+k - 1]; const btn = [...$("filters").children].find(b => b.firstChild && b.firstChild.nodeValue === t[1]); if (btn) btn.click(); }
+});
+
+/* plan resets tick down live between polls */
+function until(t){ const s = Math.max(0, Math.round(t - Date.now() / 1000)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return s <= 0 ? "resetting now" : "resets in " + (h ? h + "h" + String(m).padStart(2, "0") + "m" : m + "m " + (s % 60) + "s"); }
+function planText(){
+  const pl = (last && last.plan) || [];
+  $("plan_h").textContent = pl.length ? pl.map((p, i) => {
+    const at = p.resets_at ? new Date(p.resets_at * 1000).toLocaleTimeString([], {hour: "numeric", minute: "2-digit"}) : null;
+    const when = p.resets_at ? until(p.resets_at) + " (" + at + ")" : (p.resets ? "resets " + p.resets.split(" (")[0] : "");
+    return (i ? p.label + " " + Math.round(p.pct) + "% · " : "") + when;
+  }).join(" · ") : "from Claude Code's /usage";
+}
+function ago(){ planText(); if (!lastOk && !ui.paused) return; const s = Math.round((Date.now() - lastOk) / 1000);
+  $("updated").textContent = ui.paused ? "paused" : (s < 3 ? "live" : "updated " + s + "s ago"); }
 async function tick(){
+  if (ui.paused) return ago();
   try {
     const res = await fetch("/api/status?key=" + encodeURIComponent(key), {cache: "no-store"});
     if (!res.ok) throw new Error(res.status);

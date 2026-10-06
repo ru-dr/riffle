@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -297,15 +298,18 @@ def numstat(repo: str, sha: str) -> list[tuple[int, int, str]]:
 
 
 def _resolve_rename(path: str) -> str:
-    # forms: "a/{b => c}/d.py" or "old.py => new.py"
-    if "{" in path and "}" in path:
-        pre, rest = path.split("{", 1)
-        mid, post = rest.split("}", 1)
-        _, new = mid.split(" => ")
-        return f"{pre}{new}{post}".replace("//", "/")
-    if " => " in path:
-        return path.split(" => ")[-1]
-    return path
+    """New path from a numstat rename: "a/{b => c}/d.py" or "old.py => new.py".
+    The braces, when present, are the ones around the arrow, so a path with
+    literal braces elsewhere (e.g. "tests/ui/{foo}.rs => tests/ui/bar.rs")
+    still resolves."""
+    i = path.find(" => ")
+    if i < 0:
+        return path
+    lb = path.rfind("{", 0, i)
+    rb = path.find("}", i)
+    if lb != -1 and rb != -1 and "}" not in path[lb:i]:
+        return f"{path[:lb]}{path[i + 4:rb]}{path[rb + 1:]}".replace("//", "/")
+    return path[i + 4:]
 
 
 def diff_numstat(repo: str, base: str, head: str) -> list[tuple[int, int, str]]:
@@ -393,7 +397,10 @@ def configure_blame(ignore_revs_file: str | None = None,
     if detect_copies:
         flags.append("-C")
     _BLAME_FLAGS = flags
-    _BLAME_IGNORE_REVS = (ignore_revs_file
+    # Absolute: blame runs as `git -C <repo>`, which resolves a relative
+    # --ignore-revs-file against the repo, not our cwd. A relative path made
+    # every blame fail silently for repos that ship .git-blame-ignore-revs.
+    _BLAME_IGNORE_REVS = (os.path.abspath(ignore_revs_file)
                           if ignore_revs_file and os.path.isfile(ignore_revs_file)
                           else None)
     blame_file.cache_clear()
@@ -426,6 +433,24 @@ def set_blame_settings(flags: list[str], ignore_revs: str | None) -> None:
     _BLAME_FLAGS = list(flags)
     _BLAME_IGNORE_REVS = ignore_revs
     blame_file.cache_clear()
+
+
+# Blame failures used to vanish into an empty result, which silently emptied
+# line features and SZZ labels. Count them, and warn once per process.
+_BLAME_STATS = {"calls": 0, "fails": 0, "first_error": None}
+
+
+def _note_blame_failure(path: str, stderr: str) -> None:
+    _BLAME_STATS["fails"] += 1
+    if _BLAME_STATS["first_error"] is None:
+        msg = (stderr or "").strip().splitlines()
+        _BLAME_STATS["first_error"] = f"{path}: {msg[0] if msg else 'no error text'}"
+        print(f"[blame] warning: git blame failed ({_BLAME_STATS['first_error']}); "
+              f"affected lines get no blame data", file=sys.stderr, flush=True)
+
+
+def blame_stats() -> dict:
+    return dict(_BLAME_STATS)
 
 
 def _line_ranges(lines: Iterable[int], pad: int = 0,
@@ -483,7 +508,9 @@ def _blame(repo: str, sha: str, path: str,
     out = subprocess.run(
         cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
+    _BLAME_STATS["calls"] += 1
     if out.returncode != 0:
+        _note_blame_failure(path, out.stderr)
         return None if ranges else {}
     result: dict[int, BlameLine] = {}
     cur_commit = None

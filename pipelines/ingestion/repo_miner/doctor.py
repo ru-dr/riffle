@@ -170,6 +170,23 @@ def run_checks() -> list[Result]:
                       f"{py.major}.{py.minor}.{py.micro}"
                       + ("" if py >= MIN_PY else f" (need {MIN_PY[0]}.{MIN_PY[1]}+)")))
 
+    # Where packages go. Ubuntu/Debian 23.04+ (PEP 668) block pip outside a
+    # venv, so there they go into repo_miner/.venv, which needs python3-venv.
+    if deps.in_venv():
+        where = "project .venv" if os.path.abspath(sys.prefix) == os.path.abspath(deps.VENV_DIR) \
+            else f"virtualenv {sys.prefix}"
+        res.append(Result("Environment", OK, where))
+    elif deps.externally_managed():
+        if importlib.util.find_spec("ensurepip") is None:
+            res.append(Result("Environment", FAIL,
+                              "system Python is externally managed (PEP 668) and the venv "
+                              f"module is missing: {deps.venv_package_hint()}", fix="venv"))
+        else:
+            res.append(Result("Environment", OK,
+                              "system Python is externally managed; packages go in .venv"))
+    else:
+        res.append(Result("Environment", OK, "system Python (pip --user)"))
+
     git = shutil.which("git")
     if git:
         ver = subprocess.run(["git", "--version"], capture_output=True, text=True).stdout.strip()
@@ -263,9 +280,29 @@ def _fix_llm_key() -> None:
 
 
 def _fix_openai() -> None:
-    in_venv = sys.prefix != sys.base_prefix
+    if not deps.in_venv() and deps.externally_managed():
+        if not os.path.isfile(deps.venv_python()):
+            ok, err = deps.create_venv()
+            if not ok:
+                print(f"  could not create .venv: {err[-200:]}\n  {deps.venv_package_hint()}")
+                return
+        subprocess.run([deps.venv_python(), "-m", "pip", "install", "openai>=1.0"])
+        return
     subprocess.run([sys.executable, "-m", "pip", "install",
-                    *([] if in_venv else ["--user"]), "openai>=1.0"])
+                    *([] if deps.in_venv() else ["--user"]), "openai>=1.0"])
+
+
+def _fix_venv() -> None:
+    v = f"python{sys.version_info.major}.{sys.version_info.minor}-venv"
+    cmd = (["sudo", "apt-get", "install", "-y", v] if shutil.which("apt-get") else None)
+    if cmd is None:
+        print(f"  Install your distro's venv package: {deps.venv_package_hint()}")
+        return
+    if _ask(f"Run `{' '.join(cmd)}`?", default=True):
+        if subprocess.run(cmd).returncode != 0:            # older releases name it python3-venv
+            subprocess.run(["sudo", "apt-get", "install", "-y", "python3-venv"])
+    else:
+        print(f"  Skipped. To install later: {' '.join(cmd)}")
 
 
 def _fix_system(tool: str) -> None:
@@ -281,6 +318,7 @@ def _fix_system(tool: str) -> None:
 
 
 FIXERS = {
+    "venv": ("Install the Python venv module now?", _fix_venv),
     "pip": ("Install the missing Python packages now?", _fix_pip),
     "token": ("Set up a GitHub token now?", _fix_token),
     "llm_key": ("Set LLM_API_KEY now?", _fix_llm_key),
@@ -326,11 +364,12 @@ def run(interactive: bool | None = None) -> tuple[bool, list[Result]]:
     else:
         print("\nAll good.")
     # only these make the miner/TUI unusable; a missing token or LLM still runs
-    blocking = {"Python", "git", "Python packages"}
+    blocking = {"Python", "Environment", "git", "Python packages"}
     return not any(r.name in blocking for r in failed), results
 
 
 if __name__ == "__main__":
+    deps.use_project_venv()          # check the environment the TUI will really use
     check_only = "--check" in sys.argv[1:]
     usable, final = run(interactive=False if check_only else None)
     if check_only:      # strict: any failure (token too) is a non-zero exit

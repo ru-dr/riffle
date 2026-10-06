@@ -802,7 +802,8 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                 st.llm_breaker_tripped = True
                 break
             progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="ok",
-                          llm=fetched.get("status"), llm_secs=fetched.get("secs"))
+                          llm=fetched.get("status"), llm_secs=fetched.get("secs"),
+                          llm_usage=llm_flags.usage_snapshot() if st.enable_llm else None)
             if fetched.get("status") == "fail":
                 # LLM failed for this PR: hold the row until the next success
                 # proves the failure was transient (then keep it with null
@@ -963,8 +964,11 @@ def main():
         progress.emit("repo_done", repo=f"{owner}/{name}", rows=len(rows), status="breaker")
         sys.exit(3)
     total, ok = _write(rows, out, append=args.append)
+    usage = llm_flags.usage_snapshot() if st.enable_llm else None
+    if usage:
+        print(f"[llm] {owner}/{name}: {llm_flags.usage_summary(usage)}", file=sys.stderr, flush=True)
     progress.emit("repo_done", repo=f"{owner}/{name}", rows=len(rows), total=total,
-                  status="ok" if ok else "write-failed")
+                  status="ok" if ok else "write-failed", llm_usage=usage)
     # remove the per-repo checkpoint only after a clean, complete write
     if ok and out:
         ckpt = out + ".partial.jsonl"

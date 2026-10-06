@@ -151,6 +151,21 @@ offers the install command for git / Claude Code. Run it on its own with
 `python doctor.py`, or `python doctor.py --check` to only report (exit 1 on a
 failure). `RIFFLE_NO_DOCTOR=1` skips it.
 
+On an externally managed Python (Ubuntu/Debian 23.04+, PEP 668) packages go
+into `repo_miner/.venv`, created on first need; later launches re-run inside
+it automatically. If `python3-venv` is missing, the doctor offers the `apt`
+command.
+
+The TUI log is selectable (drag, then ctrl+c); ctrl+y copies the whole log and
+ctrl+b opens the web view and copies its link. The web view (read-only, LAN,
+random key per launch) has log search, level filter, wrap / follow / pause /
+expand, copy and download, and keyboard shortcuts (`?` lists them).
+
+LLM usage: exact token counts per run (in, cache read / write, out) and the
+API-price equivalent of those tokens, plus the Claude plan's current-session
+usage and reset countdown from Claude Code's own `/usage` (run headless; no
+tokens or quota). `RIFFLE_NO_PLAN_USAGE=1` turns the `/usage` poll off.
+
 Configure the batch on the left (repos file, output, PR cap, workers, LLM /
 SZZ / CI toggles), press **ctrl+r** to start. The right side shows per-repo
 progress, PR/min, ETA, LLM ok/fail + latency, circuit-breaker state, and the
