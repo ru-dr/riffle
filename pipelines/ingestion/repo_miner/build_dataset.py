@@ -88,7 +88,19 @@ def split_id(entries, weights, n: int) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:8]
 
 
+def _warn_untagged(entries, weights) -> None:
+    """Repos without a [~N commits] tag are balanced as the median size, so
+    the split can drift; say so instead of splitting quietly wrong."""
+    missing = [f"{o}/{r}" for (o, r, _), w in zip(entries, weights) if not w]
+    if missing:
+        print(f"[shard] WARNING: {len(missing)} repo(s) have no [~N commits] tag and "
+              f"count as median size, so the split may be unbalanced: "
+              f"{', '.join(missing)}. Add a tag, e.g. from `git rev-list --count HEAD`.",
+              flush=True)
+
+
 def _print_shard_plan(entries, weights, n: int) -> None:
+    _warn_untagged(entries, weights)
     shards = balanced_shards(weights, n)
     totals = [sum(weights[i] or 0 for i in sh) for sh in shards]
     print(f"[shard-plan] split ID {split_id(entries, weights, n)}: {len(entries)} repos over {n} PCs "
@@ -235,6 +247,7 @@ def main():
                 assert 1 <= k <= n
             except (ValueError, AssertionError):
                 sys.exit(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
+            _warn_untagged(entries, weights)
             sid = split_id(entries, weights, n)
             mine = balanced_shards(weights, n)[k - 1]
             total = sum(weights[i] or 0 for i in mine)
