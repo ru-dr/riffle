@@ -293,6 +293,52 @@ class GitHubAPI:
         c = data.get("commits")
         return int(c) if isinstance(c, int) else None
 
+    def review_events(self, number: int, exclude_bots: bool = True) -> dict | None:
+        """
+        Review activity on a PR, as timestamped events so callers can apply a
+        point-in-time cutoff: {"comments": [iso...], "changes_requested": [iso...],
+        "rounds": [iso...]}. A round is one submitted review (any state); review
+        comments are inline comments. Two paginated calls per PR. None if the
+        API is unreadable (the scrutiny feature then treats the PR as unknown).
+        """
+        def _is_bot(user) -> bool:
+            user = user or {}
+            return user.get("type") == "Bot" or str(user.get("login", "")).endswith("[bot]")
+
+        def _pages(kind: str):
+            items = []
+            for page in range(1, 11):                     # cap 1000 items per kind
+                status, data, _ = self._get(
+                    f"/repos/{self.owner}/{self.repo}/pulls/{number}/{kind}",
+                    {"per_page": 100, "page": page})
+                if status != 200 or not isinstance(data, list):
+                    return None if page == 1 else items
+                items.extend(data)
+                if len(data) < 100:
+                    break
+            return items
+
+        reviews = _pages("reviews")
+        comments = _pages("comments")
+        if reviews is None or comments is None:
+            return None
+        out = {"comments": [], "changes_requested": [], "rounds": []}
+        for r in reviews:
+            if exclude_bots and _is_bot(r.get("user")):
+                continue
+            t = r.get("submitted_at")
+            if not t or r.get("state") == "PENDING":
+                continue
+            out["rounds"].append(t)
+            if r.get("state") == "CHANGES_REQUESTED":
+                out["changes_requested"].append(t)
+        for c in comments:
+            if exclude_bots and _is_bot(c.get("user")):
+                continue
+            if c.get("created_at"):
+                out["comments"].append(c["created_at"])
+        return out
+
     def fetch_pr(self, number: int) -> dict | None:
         """Full PR object from the single-PR endpoint, used to ENRICH git-primary
         discovery with fields the commit log can't supply: created_at, base ref,

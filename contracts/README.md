@@ -15,7 +15,7 @@ Every rule kind, value, setting and default is listed in
 | `pr_event.schema.json` | `intake` | `scorer` | #8 GitHub App |
 | `score_result.schema.json` | `scorer` | `app` | #9 Inference |
 | `explain.schema.json` | `scorer` → `explainer` (`POST /v1/explain`) | `scorer` | #9 Inference |
-| `mined_features.schema.json` | `scorer` (extractor) | `scorer` (model), narrator, `pipelines/training` | #1 Features |
+| `mined_features.schema.json` | `scorer` (extractor), `pipelines/ingestion` (repo miner) | `scorer` (model), narrator, `pipelines/training` | #1 Features |
 | `outcome_import.schema.json` | Organisation systems (`POST /v1/outcomes`) | `pipelines` (label mining) | #5 Ingestion |
 | `mined_history.schema.json` | `miner` (Go, ADR 0004) | `pipelines`, `scorer` | #5 Ingestion |
 

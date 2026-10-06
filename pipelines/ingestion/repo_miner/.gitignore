@@ -6,3 +6,4 @@ ci_cache/
 data/
 *.parquet
 *.jsonl
+test_output/

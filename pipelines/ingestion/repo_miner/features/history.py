@@ -150,14 +150,17 @@ def build_repo_index(repo: str, base: str, st: config.Settings,
     # hotspot 0 whatever its complexity) — keeps this cheap on large repos.
     hotspot_scores: dict[str, float] = {}
     window_start = base_time - timedelta(days=365)
+    blobs = gitio.tree_blobs(repo, base)
     for p, plist in file_commits.items():
         churn365 = sum(1 for t, _, _, _ in plist if t >= window_start)
         if churn365 <= 0:
             continue
-        content = gitio.file_content_at(repo, base, p)
-        if content is None:          # file not present at base (deleted/renamed)
+        if config.lang_of(p) is None:   # lizard can't score it: skip the read
             continue
-        ccn = _lizard_ccn_from_content(content, p)
+        blob = blobs.get(p)
+        if blob is None:             # file not present at base (deleted/renamed)
+            continue
+        ccn = _blob_ccn(repo, blob, p)
         if not ccn:                  # None (no tool / unsupported) or 0
             continue
         hotspot_scores[p] = churn365 * ccn
@@ -289,6 +292,19 @@ def _lizard_ccn(repo: str, sha: str, path: str) -> float | None:
     if content is None:
         return None
     return _lizard_ccn_from_content(content, path)
+
+
+# complexity per (blob sha, path): a file version shared by many PRs' base
+# commits is read from git and scored once
+_BLOB_CCN_CACHE: dict[tuple[str, str], float | None] = {}
+
+
+def _blob_ccn(repo: str, blob: str, path: str) -> float | None:
+    key = (blob, path)
+    if key not in _BLOB_CCN_CACHE:
+        content = gitio._run(repo, "cat-file", "blob", blob, check=False)
+        _BLOB_CCN_CACHE[key] = _lizard_ccn_from_content(content, path)
+    return _BLOB_CCN_CACHE[key]
 
 
 # cache complexity by (content-hash, path) so a file version that is identical

@@ -651,7 +651,7 @@ Cross-field rules the schema cannot express:
 
 **Version:** 1.0
 
-Five features mined from git, CI and review history that capture how one repository behaves. Produced by the scorer's extractor at the PR's base commit, appended to the fixed feature vector, and emitted alongside evidence the narrator may cite. Point-in-time rule: only past PRs merged before this PR opened AND whose labels were mature at that moment may contribute. Only reviews completed before open count. null means not enough history (thresholds in rules.mining), never 0.
+Nine repo-local columns mined from git, CI and review history that capture how one repository behaves. Computed at the PR's base commit by the scorer's extractor at scoring time and by the repo miner (pipelines/ingestion/repo_miner) for training rows, appended to the fixed feature vector, and emitted alongside evidence the narrator may cite. Point-in-time rule: only past PRs merged before this PR opened AND whose labels were mature at that moment may contribute. Only reviews completed before open count. null means not enough history (thresholds in rules.mining), never 0.
 
 ### `columns`
 

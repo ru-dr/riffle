@@ -22,7 +22,7 @@ Flags:
     --clone-dir    where repos are cloned (created if missing)
     --max-prs N    cap PRs per repo (passed through to the miner)
     --ci-history   build the historical CI-fail-rate features (slow; passed through)
-    --llm          enable the LLM semantic flags (needs LLM_API_KEY; passed through)
+    --llm          enable the LLM semantic flags (headless Claude Code by default; passed through)
     --skip-existing  reuse an already-cloned repo instead of re-cloning (faster re-runs)
     --keep-clones  do NOT delete each clone after mining it (default: delete, so
                    only one repo's clone is on disk at a time)
@@ -38,11 +38,33 @@ import subprocess
 import sys
 import time
 
+import progress
+
+
+TEST_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "test_output", "test_dataset.jsonl")
+
+
+def _write_test_parquet(jsonl_path: str) -> None:
+    """Test runs also save the same rows as parquet (what a real run writes),
+    so the parquet path can be checked before mining the full corpus."""
+    out = jsonl_path.rsplit(".", 1)[0] + ".parquet"
+    try:
+        import pandas as pd
+        df = pd.read_json(jsonl_path, lines=True, dtype=False)
+        df.to_parquet(out, index=False)
+        back = pd.read_parquet(out)
+        print(f"[test] parquet: {out} ({back.shape[0]} rows x {back.shape[1]} cols)", flush=True)
+    except ImportError:
+        print("[test] parquet skipped: pip install pandas pyarrow", flush=True)
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[test] parquet FAILED: {type(e).__name__}: {e}", flush=True)
+
 
 def _parse_url(line: str):
     """(owner, name, url) from a GitHub URL line, or None for blanks/comments/bad."""
-    url = line.strip()
-    if not url or url.startswith("#"):
+    url = line.split("#", 1)[0].strip()       # drop inline "# Train" style comments
+    if not url:
         return None
     m = re.search(r"github\.com[:/]+([^/]+)/(.+?)(?:\.git)?/?$", url)
     if not m:
@@ -76,6 +98,14 @@ def main():
     ap.add_argument("--declared-labels", action="store_true")
     ap.add_argument("--pr-discovery", choices=["api", "git"], default="api")
     ap.add_argument("--llm", action="store_true")
+    ap.add_argument("--no-scanners", action="store_true")
+    ap.add_argument("--no-api-contract", action="store_true")
+    ap.add_argument("--no-review-history", action="store_true")
+    ap.add_argument("--llm-model", default=None, help="e.g. sonnet, opus, haiku (passed through)")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="PRs mined in parallel per repo (passed through)")
+    ap.add_argument("--llm-concurrency", type=int, default=None,
+                    help="max concurrent LLM calls (passed through)")
     ap.add_argument("--skip-existing", action="store_true",
                     help="reuse an existing clone instead of re-cloning")
     ap.add_argument("--keep-clones", action="store_true",
@@ -85,26 +115,48 @@ def main():
                     help="extra attempts per repo if clone or mine fails (default 2, "
                          "so 3 total). The miner checkpoints, so a retried mine "
                          "resumes rather than redoing finished PRs.")
+    ap.add_argument("--test", action="store_true",
+                    help="test run: first repo only, --test-prs PRs, fresh output in "
+                         "test_output/test_dataset.jsonl (readable JSON lines); clone kept")
+    ap.add_argument("--test-prs", type=int, default=10)
+    ap.add_argument("--test-repo", default="https://github.com/pallets/flask",
+                    help="repo used by --test instead of the repos file (default: "
+                         "pallets/flask, the smallest repo in the corpus)")
     args = ap.parse_args()
 
-    if not os.path.isfile(args.repos_file):
-        sys.exit(f"repos file not found: {args.repos_file}")
-
-    with open(args.repos_file, encoding="utf-8") as fh:
-        entries = [p for p in (_parse_url(line) for line in fh) if p]
+    if args.test:
+        entries = [p for p in [_parse_url(args.test_repo)] if p]
+    else:
+        if not os.path.isfile(args.repos_file):
+            sys.exit(f"repos file not found: {args.repos_file}")
+        with open(args.repos_file, encoding="utf-8") as fh:
+            entries = [p for p in (_parse_url(line) for line in fh) if p]
     if not entries:
         sys.exit("no valid GitHub URLs found in the repos file")
+    if args.test:
+        args.max_prs = args.test_prs
+        args.skip_existing = True            # reuse the test clone between runs
+        args.out = TEST_OUT
+        args.keep_clones = True
+        os.makedirs(os.path.dirname(TEST_OUT), exist_ok=True)
+        for f in (TEST_OUT, TEST_OUT + ".partial.jsonl", TEST_OUT.rsplit(".", 1)[0] + ".parquet"):
+            if os.path.isfile(f):
+                os.remove(f)                 # fresh file every test run
+        print(f"[test] {entries[0][0]}/{entries[0][1]}, {args.max_prs} PRs -> {TEST_OUT}",
+              flush=True)
 
     os.makedirs(args.clone_dir, exist_ok=True)
     here = os.path.dirname(os.path.abspath(__file__))
     miner = os.path.join(here, "mine_repo.py")
 
     print(f"[batch] {len(entries)} repos -> {args.out}\n", flush=True)
+    progress.emit("batch_start", repos=[f"{o}/{n}" for o, n, _ in entries], out=args.out)
     attempts = max(1, args.repo_retries + 1)
     ok, failed = 0, []
     for i, (owner, name, url) in enumerate(entries, 1):
         target = os.path.join(args.clone_dir, f"{owner}_{name}")
         print(f"=== [{i}/{len(entries)}] {owner}/{name} ===", flush=True)
+        progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="clone")
 
         # --- clone (retried) — one clone kept across mine retries -------------
         if os.path.isdir(target):
@@ -130,6 +182,7 @@ def main():
         if not cloned:
             print("[clone] giving up after retries; skipping repo\n", flush=True)
             failed.append(f"{owner}/{name} (clone)")
+            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="clone")
             continue
 
         # --- mine (retried; checkpoint makes a retry resume, not redo) --------
@@ -147,10 +200,25 @@ def main():
             cmd += ["--pr-discovery", args.pr_discovery]
         if args.llm:
             cmd.append("--llm")
+        if args.no_scanners:
+            cmd.append("--no-scanners")
+        if args.no_api_contract:
+            cmd.append("--no-api-contract")
+        if args.no_review_history:
+            cmd.append("--no-review-history")
+        if args.llm_model:
+            cmd += ["--llm-model", args.llm_model]
+        if args.workers is not None:
+            cmd += ["--workers", str(args.workers)]
+        if args.llm_concurrency is not None:
+            cmd += ["--llm-concurrency", str(args.llm_concurrency)]
 
         mined = False
+        progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="mine")
         for m_attempt in range(1, attempts + 1):
             rc = subprocess.run(cmd).returncode
+            if rc == 3:
+                break                       # LLM circuit breaker: don't retry
             if rc == 0:
                 ok += 1
                 mined = True
@@ -159,9 +227,16 @@ def main():
                   flush=True)
             if m_attempt < attempts:
                 time.sleep(min(120, 15 * m_attempt))
+        if rc == 3:
+            print("[mine] LLM circuit breaker tripped; aborting the batch so the "
+                  "dataset isn't left with half-populated LLM columns. Fix the LLM, "
+                  "then rerun with --skip-existing to resume.", flush=True)
+            failed.append(f"{owner}/{name} (llm breaker)")
+            break
         if not mined:
             print("[mine] giving up after retries; moving on", flush=True)
             failed.append(f"{owner}/{name} (mine)")
+            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="mine")
 
         # delete the clone before the next repo so disk never piles up (one clone
         # on disk at a time). Mined rows are already in --out; per-repo caches
@@ -172,7 +247,10 @@ def main():
             _rmtree(target)
         print(flush=True)
 
+    if args.test and os.path.isfile(TEST_OUT):
+        _write_test_parquet(TEST_OUT)
     print(f"[batch] done: {ok}/{len(entries)} repos mined -> {args.out}")
+    progress.emit("batch_done", ok=ok, n=len(entries), failed=failed)
     if failed:
         print("[batch] failures:")
         for f in failed:

@@ -17,7 +17,7 @@ last commit — see notes.
 
 Usage:
     python mine_repo.py --repo /path/to/clone --owner ORG --name REPO \
-        --out /path/to/out.parquet [--max-prs N] [--no-llm] [--no-network]
+        --out /path/to/out.parquet [--max-prs N] [--llm] [--no-network]
 
 Requires: a local clone (with history) and, for PR/CI features + labels, network
 access to the GitHub API (GITHUB_TOKEN recommended for rate limits).
@@ -30,13 +30,16 @@ import json
 import os
 import re
 import sys
-from collections import defaultdict, Counter
+import time
+from collections import defaultdict, deque, Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import config
 import gitio
 import aggregate
-from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract
+import progress
+from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local
 from labels import build_labels, build_szz_index
 from github_api import GitHubAPI
 
@@ -423,7 +426,8 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     except gitio.GitError:
         return None  # clone too shallow / commit missing
 
-    changed = gitio.changed_files(repo, base_sha, head_sha)
+    numstat = gitio.diff_numstat(repo, base_sha, head_sha)
+    changed = [p for _, _, p in numstat]
     if not changed:
         return None
 
@@ -516,7 +520,16 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     row.update(api_contract.compute(repo, base_sha, head_sha, changed, st))
 
     # --- Source 6: LLM flags (optional)
-    row.update(llm_flags.compute(repo, base_sha, head_sha, st))
+    # --- repo-local mined features (contracts/mined_features.schema.json):
+    # path size here; the PR-history columns are filled per repo afterwards
+    row["path_size_pctile"] = repo_local.path_size_pctile(repo, base_sha, numstat, st)
+    reviews = None
+    if api is not None and st.enable_review_history and pr.get("number") is not None:
+        reviews = api.review_events(pr["number"], st.scrutiny_exclude_bot_reviews)
+    row[repo_local.SIDECAR] = repo_local.sidecar(pr, numstat, reviews)
+
+    # fetched here (worker thread); resolved in PR order by mine_repo()
+    row["__llm__"] = llm_flags.fetch(repo, base_sha, head_sha, st)
 
     # --- Source 4c: PR metadata (needs the API PR object)
     md = _pr_metadata(pr)
@@ -694,32 +707,108 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     skipped: Counter = Counter()
     ckpt_fh = open(ckpt, "a", encoding="utf-8") if ckpt else None
+    llm_pending: list[dict] = []
+
+    def _work(pr: dict):
+        t0 = time.monotonic()
+        try:
+            r = mine_pr(repo, pr, api, default_branch, snapshot, st,
+                        author_pr_times, concurrency, ci_map, szz_shas,
+                        obs_cutoff=obs_cutoff, base_resolver=base_resolver)
+            return "ok", r, None, time.monotonic() - t0
+        except gitio.GitError as e:
+            return "git", None, e, time.monotonic() - t0
+        except Exception as e:                          # noqa: BLE001
+            return "exc", None, e, time.monotonic() - t0
+
+    def _commit(pr_rows: list[dict]):
+        for pr_row in pr_rows:
+            rows.append(pr_row)
+            if ckpt_fh:
+                ckpt_fh.write(json.dumps(pr_row, default=str) + "\n")
+                ckpt_fh.flush()
+
+    # PRs are mined in parallel worker threads (mostly git subprocess time) but
+    # consumed strictly in PR order, so row order, the checkpoint, and the LLM
+    # circuit breaker behave exactly as in a sequential run.
+    todo = [(i, pr) for i, pr in enumerate(prs, 1) if pr.get("number") not in done]
+    workers = max(1, st.workers)
+    window = max(2 * workers, 2 * st.llm_concurrency if st.enable_llm else 0)
+    progress.emit("repo_start", repo=repo_key, total=len(prs), resumed=len(done),
+                  workers=workers, llm=st.enable_llm)
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="pr")
+    inflight: deque = deque()
+    feed = iter(todo)
+
+    def _fill():
+        while len(inflight) < window:
+            nxt = next(feed, None)
+            if nxt is None:
+                return
+            inflight.append((nxt[0], nxt[1], pool.submit(_work, nxt[1])))
+
     try:
-        for i, pr in enumerate(prs, 1):
+        _fill()
+        while inflight:
+            i, pr, fut = inflight.popleft()
+            kind, r, err, secs = fut.result()
+            _fill()
             num = pr.get("number")
-            if num in done:
-                continue
-            print(f"[pr {i}/{len(prs)}] #{num} ...", file=sys.stderr, flush=True)
-            try:
-                r = mine_pr(repo, pr, api, default_branch, snapshot, st,
-                            author_pr_times, concurrency, ci_map, szz_shas,
-                            obs_cutoff=obs_cutoff, base_resolver=base_resolver)
-                if r:
-                    rows.append(r)
-                    if ckpt_fh:
-                        ckpt_fh.write(json.dumps(r, default=str) + "\n")
-                        ckpt_fh.flush()
-                else:
-                    skipped["no-rows (no diff / missing commit / shallow clone)"] += 1
-            except gitio.GitError as e:
+            print(f"[pr {i}/{len(prs)}] #{num} ({secs:.1f}s)", file=sys.stderr, flush=True)
+            if kind == "git":
                 skipped["git-error"] += 1
-                print(f"[skip] PR #{num}: git: {e}", file=sys.stderr)
-            except Exception as e:                      # noqa: BLE001
-                skipped[f"exc:{type(e).__name__}"] += 1
-                print(f"[skip] PR #{num}: {e}", file=sys.stderr)
+                print(f"[skip] PR #{num}: git: {err}", file=sys.stderr)
+                progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="skip",
+                              reason="git-error")
+                continue
+            if kind == "exc":
+                skipped[f"exc:{type(err).__name__}"] += 1
+                print(f"[skip] PR #{num}: {err}", file=sys.stderr)
+                progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="skip",
+                              reason=f"exc:{type(err).__name__}")
+                continue
+            if not r:
+                skipped["no-rows (no diff / missing commit / shallow clone)"] += 1
+                progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="skip",
+                              reason="no-rows")
+                continue
+            fetched = r.pop("__llm__", None) or {"status": "off"}
+            try:
+                r.update(llm_flags.resolve(fetched, st))
+            except llm_flags.LLMUnavailable as e:
+                print(f"[llm-breaker] TRIPPED at PR #{num}: {e}. Stopping this repo; "
+                      f"{len(llm_pending)} held rows dropped, {len(rows)} clean rows "
+                      f"kept in the checkpoint.", file=sys.stderr, flush=True)
+                progress.emit("breaker", repo=repo_key, num=num, msg=str(e),
+                              kept=len(rows), dropped=len(llm_pending))
+                st.llm_breaker_tripped = True
+                break
+            progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="ok",
+                          llm=fetched.get("status"), llm_secs=fetched.get("secs"))
+            if fetched.get("status") == "fail":
+                # LLM failed for this PR: hold the row until the next success
+                # proves the failure was transient (then keep it with null
+                # flags). If the breaker trips first, it's dropped.
+                llm_pending.append(r)
+            else:
+                _commit(llm_pending + [r])
+                llm_pending.clear()
+        if not st.llm_breaker_tripped:
+            # trailing LLM failures that never reached the breaker: keep them
+            _commit(llm_pending)
     finally:
+        pool.shutdown(wait=False, cancel_futures=True)
         if ckpt_fh:
             ckpt_fh.close()
+
+    # repo-local PR-history features need every PR's outcome, so they're
+    # computed once all rows are in (strictly point-in-time per row)
+    if not st.llm_breaker_tripped:
+        repo_local.compute_repo(rows, repo_local.release_tags(repo, st), st)
+    for r in rows:
+        r.pop(repo_local.SIDECAR, None)
+        for col in repo_local.COLUMNS:
+            r.setdefault(col, 0 if col == "similar_pr_count" else None)
 
     if skipped:
         total = sum(skipped.values())
@@ -745,7 +834,7 @@ def _infer_owner_name(repo: str):
 
 def main():
     ap = argparse.ArgumentParser(description="Extract Riffle v1 features from a clone.")
-    ap.add_argument("--repo", required=True, help="path to local clone")
+    ap.add_argument("--repo", default=None, help="path to local clone (required unless --llm-test)")
     ap.add_argument("--owner", default=None,
                     help="GitHub org/user (auto-detected from origin remote if omitted)")
     ap.add_argument("--name", default=None,
@@ -754,8 +843,13 @@ def main():
                     help="output .parquet or .jsonl (defaults to <owner>_<n>.parquet)")
     ap.add_argument("--max-prs", type=int, default=None)
     ap.add_argument("--llm", action="store_true",
-                    help="enable LLM semantic flags (Source 6); needs LLM_API_KEY + openai")
+                    help="enable LLM semantic flags (Source 6); default backend is headless "
+                         "Claude Code (`claude -p`); LLM_BACKEND=api uses LLM_API_KEY")
     ap.add_argument("--no-llm", action="store_true")
+    ap.add_argument("--llm-model", default=None,
+                    help="model for the LLM flags, e.g. sonnet, opus, haiku (default: LLM_MODEL or sonnet)")
+    ap.add_argument("--llm-test", action="store_true",
+                    help="make one LLM call on a sample diff and report; no mining")
     ap.add_argument("--no-network", action="store_true",
                     help="disable GitHub API + OSV (git-only; no labels)")
     ap.add_argument("--no-scanners", action="store_true")
@@ -773,10 +867,26 @@ def main():
                          "default) or 'git' (parse commit messages for PR links; "
                          "API only enriches). 'git' avoids closed-PR pagination "
                          "and works offline for discovery.")
+    ap.add_argument("--no-review-history", action="store_true",
+                    help="skip PR review events (2 API calls/PR); revealed_path_scrutiny -> null")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="PRs mined in parallel (default: RIFFLE_WORKERS or min(6, CPUs))")
+    ap.add_argument("--llm-concurrency", type=int, default=None,
+                    help="max concurrent LLM calls (default: LLM_CONCURRENCY or 4)")
     ap.add_argument("--append", action="store_true",
                     help="append rows to --out (one growing dataset); dedups by "
                          "(repo, pr_number), keeping the newest extraction")
     args = ap.parse_args()
+
+    if args.llm_test:
+        st = config.Settings()
+        if args.llm_model:
+            st.llm_model = args.llm_model
+        ok, msg = llm_flags.self_test(st)
+        print(msg)
+        sys.exit(0 if ok else 1)
+    if not args.repo:
+        ap.error("--repo is required")
 
     # auto-detect owner/name from the clone's remote when not given
     owner, name = args.owner, args.name
@@ -807,6 +917,14 @@ def main():
     if args.declared_labels:
         st.enable_declared_labels = True
     st.pr_discovery = args.pr_discovery
+    if args.llm_model:
+        st.llm_model = args.llm_model
+    if args.no_review_history:
+        st.enable_review_history = False
+    if args.workers is not None:
+        st.workers = args.workers
+    if args.llm_concurrency is not None:
+        st.llm_concurrency = args.llm_concurrency
     if args.no_network:
         st.enable_github_api = False
         st.enable_deps_cve = False
@@ -815,7 +933,16 @@ def main():
     print(f"[info] {owner}/{name}  |  GITHUB_TOKEN: {tok}  |  -> {out}",
           file=sys.stderr)
     rows = mine_repo(args.repo, owner, name, st, out_path=out)
+    if st.llm_breaker_tripped:
+        # don't write a partial repo into --out; the checkpoint holds the clean
+        # rows and a rerun (once the LLM is back) resumes from it
+        print(f"[llm-breaker] {out} not written; resume by rerunning the same "
+              f"command. Exiting with code 3.", file=sys.stderr)
+        progress.emit("repo_done", repo=f"{owner}/{name}", rows=len(rows), status="breaker")
+        sys.exit(3)
     total, ok = _write(rows, out, append=args.append)
+    progress.emit("repo_done", repo=f"{owner}/{name}", rows=len(rows), total=total,
+                  status="ok" if ok else "write-failed")
     # remove the per-repo checkpoint only after a clean, complete write
     if ok and out:
         ckpt = out + ".partial.jsonl"
@@ -860,6 +987,16 @@ def _write(rows: list[dict], out: str, append: bool = False) -> tuple[int, bool]
     (dedup by repo+pr_number). Returns (total_rows_written, ok). On an append
     read failure, writes a recovery sidecar and leaves `out` UNCHANGED (ok=False)
     rather than overwriting the accumulated dataset."""
+    if out.endswith(".parquet"):
+        try:
+            import pandas  # noqa: F401
+            import pyarrow  # noqa: F401
+        except ImportError:
+            # fall back BEFORE the append merge, so every repo appends to the
+            # same .jsonl instead of each one overwriting it
+            out = out.rsplit(".", 1)[0] + ".jsonl"
+            print(f"[warn] pandas/pyarrow not installed; writing {out} instead "
+                  f"(pip install pandas pyarrow for parquet)", file=sys.stderr)
     if append and os.path.isfile(out) and rows:
         try:
             rows = _merge_with_existing(rows, out)

@@ -92,6 +92,54 @@ recently may not have their outcome yet, so decide maturity at training time
 `--ci-history`, `--szz`, and `--llm` are off by default; their columns come back
 `null`/`False` until enabled.
 
+## Repo-local mined features
+
+The nine columns of `contracts/mined_features.schema.json`
+(`features/repo_local.py`): `similar_pr_bad_rate`, `similar_pr_count`,
+`revealed_path_scrutiny`, `path_failure_mode_revert` / `_ci` / `_hotfix`,
+`path_detection_lag_days`, `path_size_pctile`, `release_cycle_position`.
+
+- `path_size_pctile` is computed per PR from git history at the base commit.
+  The PR-history columns are filled once a repo's PRs are all mined.
+- Point-in-time: for a PR opened at T, only past PRs merged before T and at
+  least `maturity_days` (30) old at T count, and only outcome events that
+  happened before T. Only reviews submitted before T count.
+- `revealed_path_scrutiny` needs review events (2 API calls per PR, so
+  `GITHUB_TOKEN`); `--no-review-history` skips them and leaves it null.
+- History is the PRs mined in the same run, so with `--max-prs N` the oldest
+  rows have little history and come back null. Thresholds mirror the
+  `rules.mining` defaults (Settings in `config.py`).
+- The contract's `evidence` block is for the narrator at scoring time and is
+  not written to the training dataset.
+
+## TUI
+
+```bash
+pip install textual
+python tui.py
+```
+
+Configure the batch on the left (repos file, output, PR cap, workers, LLM /
+SZZ / CI toggles), press **ctrl+r** to start. The right side shows per-repo
+progress, PR/min, ETA, LLM ok/fail + latency, circuit-breaker state, and the
+log. **ctrl+x** stops (SIGINT); the checkpoint keeps finished PRs, so starting
+again with "Reuse clones" on resumes.
+
+## LLM backend and performance
+
+- `--llm` defaults to **headless Claude Code** (`claude -p`, your Claude Code
+  login, no API key; model `sonnet`, override with `LLM_MODEL`).
+  `LLM_BACKEND=api` uses the OpenAI-compatible endpoint + `LLM_API_KEY`.
+- **Circuit breaker:** after `LLM_BREAKER_THRESHOLD` (default 5) consecutive
+  LLM failures the miner stops, drops the rows from the failing streak, leaves
+  `--out` untouched, and exits 3; `build_dataset.py` aborts the batch. Rerun
+  to resume from the checkpoint.
+- **Parallel PRs:** `--workers N` (default `min(6, CPUs)`) mines PRs in worker
+  threads, consumed in PR order (output identical to a sequential run).
+  `--llm-concurrency N` (default 4) caps simultaneous LLM calls.
+- The repo's `git log --numstat` is parsed once and reused per PR, hotspot
+  complexity is cached per blob, and path classification is memoized.
+
 ## Build a dataset (many repos)
 
 `build_dataset.py` clones every repo listed in `repos.txt` (one GitHub URL per

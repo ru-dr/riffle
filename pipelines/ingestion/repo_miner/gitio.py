@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -129,13 +130,43 @@ def iter_commits_with_files(
     # \x1e starts each commit record; then the format fields; then numstat lines
     # %aE/%aN = mailmap-canonical author (so one person's two emails merge into
     # one identity); %ct = committer time as Unix epoch (corruption-proof).
-    fmt = "\x1e%H\x1f%aE\x1f%aN\x1f%ct\x1f%P\x1f%s"
-    args = ["log", "--numstat", "-M", f"--format={fmt}"]
+    if before is not None:
+        # Fast path: parse the whole repo's `git log --numstat` once, then per
+        # call only list the reachable SHAs (cheap rev-list) and look them up.
+        # Each commit's numstat doesn't depend on how it was reached, so the
+        # result is identical to a direct `git log <rev> --before=...`.
+        cache = _numstat_cache(repo)
+        shas = _run(repo, "rev-list", f"--before={before.isoformat()}", rev).split()
+        if all(sha in cache for sha in shas):
+            return [cache[sha] for sha in shas]
+    args = ["log", "--numstat", "-M", f"--format={_NUMSTAT_FMT}"]
     if before is not None:
         args.append(f"--before={before.isoformat()}")
     args.append(rev)
-    out = _run(repo, *args)
+    return _parse_numstat_log(_run(repo, *args))
 
+
+_NUMSTAT_FMT = "\x1e%H\x1f%aE\x1f%aN\x1f%ct\x1f%P\x1f%s"
+_NUMSTAT_CACHE: dict[str, dict] = {}
+_NUMSTAT_LOCK = threading.Lock()
+
+
+def _numstat_cache(repo: str) -> dict:
+    """{sha: (Commit, numstat rows)} for every commit on every ref, built once
+    per repo per process."""
+    key = os.path.abspath(repo)
+    with _NUMSTAT_LOCK:
+        return _numstat_cache_locked(repo, key)
+
+
+def _numstat_cache_locked(repo: str, key: str) -> dict:
+    if key not in _NUMSTAT_CACHE:
+        out = _run(repo, "log", "--all", "--numstat", "-M", f"--format={_NUMSTAT_FMT}")
+        _NUMSTAT_CACHE[key] = {c.sha: (c, rows) for c, rows in _parse_numstat_log(out)}
+    return _NUMSTAT_CACHE[key]
+
+
+def _parse_numstat_log(out: str) -> list[tuple["Commit", list[tuple[int, int, str]]]]:
     result: list[tuple[Commit, list[tuple[int, int, str]]]] = []
     for rec in out.split("\x1e"):
         if not rec.strip():
@@ -259,6 +290,18 @@ def diff_numstat(repo: str, base: str, head: str) -> list[tuple[int, int, str]]:
 
 def changed_files(repo: str, base: str, head: str) -> list[str]:
     return [p for _, _, p in diff_numstat(repo, base, head)]
+
+
+def tree_blobs(repo: str, sha: str) -> dict[str, str]:
+    """{path: blob sha} for every file in the tree at `sha` (one git call)."""
+    out = _run(repo, "ls-tree", "-r", "-z", sha, check=False)
+    blobs: dict[str, str] = {}
+    for ent in out.split("\0"):
+        meta, _, path = ent.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[1] == "blob":
+            blobs[path] = parts[2]
+    return blobs
 
 
 def file_content_at(repo: str, sha: str, path: str) -> str | None:
