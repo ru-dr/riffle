@@ -182,6 +182,15 @@ means look for `[blame] warning` in `logs/run-*.log`, `<- re-mine` (under
 `--auto-remine` (TUI: "Auto re-mine broken repos") runs the audit at Start and
 re-mines the flagged repos in this PC's share automatically.
 
+Quick runs: `--skip-big N` (TUI: "Skip big repos", "Big = more than N
+commits", default 100000) skips repos whose `[~N commits]` tag in repos.txt is
+larger (14 repos at 100k: llvm, rust, ClickHouse, swift, tensorflow, ...). In
+the TUI, ctrl+n skips the repo selected in the table: a queued repo is marked
+(press again to unmark), a running one asks for a second press and is stopped
+with its finished PRs kept in the checkpoint. Skipped repos are never written
+to `--out` and the shard split doesn't change, so a later run without the skip
+mines them as usual.
+
 Configure the batch on the left (repos file, output, PR cap, workers, LLM /
 SZZ / CI toggles), press **ctrl+r** to start. The right side shows per-repo
 progress, PR/min, ETA, LLM ok/fail + latency, circuit-breaker state, and the

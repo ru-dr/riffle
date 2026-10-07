@@ -268,6 +268,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:12px;pa
 .st-failed{color:var(--t-red);background:var(--t-red-bg)}
 .st-done{color:var(--t-green);background:var(--t-green-bg)}
 .st-queued{color:var(--nickel);background:var(--wash)}
+.st-skipped{color:var(--grey);background:transparent;outline:1px solid var(--stroke)}
 .row.q .prog,.row.q .facts,.row.q .stage{visibility:hidden}
 .row.q .nm{color:var(--nickel)}
 .empty{padding:28px 0;color:var(--grey);font-size:14px}
@@ -422,15 +423,15 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
   <dl><dt><kbd>/</kbd></dt><dd>Search the log</dd><dt><kbd>c</kbd></dt><dd>Copy the visible log</dd>
   <dt><kbd>w</kbd></dt><dd>Wrap long lines on / off</dd><dt><kbd>f</kbd></dt><dd>Follow new lines</dd>
   <dt><kbd>p</kbd></dt><dd>Pause / resume live updates</dd><dt><kbd>e</kbd></dt><dd>Expand the log to the full page</dd>
-  <dt><kbd>1</kbd>–<kbd>6</kbd></dt><dd>Repository filter tabs</dd><dt><kbd>r</kbd></dt><dd>Filter repositories</dd>
+  <dt><kbd>1</kbd>–<kbd>7</kbd></dt><dd>Repository filter tabs</dd><dt><kbd>r</kbd></dt><dd>Filter repositories</dd>
   <dt><kbd>l</kbd></dt><dd>Copy this page's link</dd><dt><kbd>Esc</kbd></dt><dd>Close, clear search, leave expanded view</dd></dl>
 </div></div>
 <script>
 const key = new URLSearchParams(location.search).get("key") || "";
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-const TABS = [["all","All"],["active","Active"],["warn","Attention"],["failed","Failed"],["done","Done"],["queued","Queued"]];
-const TAG = {active:"Mining", warn:"Attention", failed:"Failed", done:"Done", queued:"Queued"};
+const TABS = [["all","All"],["active","Active"],["warn","Attention"],["failed","Failed"],["done","Done"],["queued","Queued"],["skipped","Skipped"]];
+const TAG = {active:"Mining", warn:"Attention", failed:"Failed", done:"Done", queued:"Queued", skipped:"Skipped"};
 const pref = (k, d) => { try { const v = localStorage.getItem("rm." + k); return v === null ? d : v === "1"; } catch (e) { return d; } };
 const save = (k, v) => { try { localStorage.setItem("rm." + k, v ? "1" : "0"); } catch (e) {} };
 const ui = {filter: "all", rq: "", lq: "", lvl: "all", wrap: pref("wrap", true), follow: pref("follow", true), paused: false, expanded: false};
@@ -474,7 +475,7 @@ function row(r){
   const nm = el("span", "nm", r.name); nm.title = "Click to copy"; nm.onclick = () => copy(r.name, r.name);
   li.appendChild(nm);
   li.appendChild(el("span", "st st-" + r.status, TAG[r.status] || r.status));
-  const plain = ["mining", "done", "queued"].includes((r.stage || "").toLowerCase());
+  const plain = ["mining", "done", "queued", "skipped"].includes((r.stage || "").toLowerCase());
   const st = el("span", "stage", plain ? "" : r.stage); st.title = r.stage || ""; li.appendChild(st);
   const prog = el("span", "prog"); const m = el("span", "meter"); const fill = el("i");
   fill.style.width = (r.total ? Math.min(1, r.done / r.total) : 0) * 100 + "%"; m.appendChild(fill);
@@ -625,7 +626,7 @@ document.addEventListener("keydown", e => {
   else if (k === "e") act.expand();
   else if (k === "l") act.link();
   else if (k === "?") act.help();
-  else if (/^[1-6]$/.test(k)) { const t = TABS[+k - 1]; const btn = [...$("filters").children].find(b => b.firstChild && b.firstChild.nodeValue === t[1]); if (btn) btn.click(); }
+  else if (/^[1-7]$/.test(k)) { const t = TABS[+k - 1]; const btn = [...$("filters").children].find(b => b.firstChild && b.firstChild.nodeValue === t[1]); if (btn) btn.click(); }
 });
 
 /* plan resets tick down live between polls */
