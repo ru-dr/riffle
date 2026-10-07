@@ -374,6 +374,7 @@ class RiffleTUI(App):
         Binding("ctrl+k", "audit", "Audit data"),
         Binding("ctrl+l", "clear_log", "Clear log"),
         Binding("ctrl+y", "copy_log", "Copy log"),
+        Binding("ctrl+n", "skip_repo", "Skip repo"),
         Binding("ctrl+b", "open_dashboard", "Web view / QR"),
         Binding("ctrl+q", "quit", "Quit"),
     ]
@@ -395,6 +396,9 @@ class RiffleTUI(App):
         self.log_lines: deque = deque(maxlen=5000) # unwrapped, for ctrl+y copy
         self._final_state = "finished"
         self.plan_usage: list[dict] | None = None   # Claude plan limits from `claude -p /usage`
+        self.control_path: str | None = None       # repos to skip, read by build_dataset
+        self.skip_set: set[str] = set()
+        self._skip_confirm: tuple[str, float] | None = None
         self._res: dict = {}                       # last RAM/CPU reading, for the dashboard
         self.dash = None if os.getenv("RIFFLE_DASHBOARD") == "0" else dashboard.Dashboard()
 
@@ -439,6 +443,9 @@ class RiffleTUI(App):
                 yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
                 yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
                 yield Checkbox("Auto re-mine broken repos", False, id="auto_remine", compact=True)
+                yield Checkbox("Skip big repos (quick test run)", False, id="skip_big", compact=True)
+                yield Label("Big = more than N commits")
+                yield Input("100000", id="big_n", type="integer", compact=True)
                 with Horizontal(id="buttons"):
                     yield Button("Show split", id="split", variant="default")
                     yield Button("Audit", id="audit", variant="default")
@@ -526,6 +533,53 @@ class RiffleTUI(App):
             pass
         return _system_copy(text)
 
+    def action_skip_repo(self) -> None:
+        """Skip the repo selected in the table (or the one running). A queued
+        repo is marked (press again to unmark); a running one asks for a second
+        press within 3 s, since it stops that repo's mining."""
+        if self.proc is None or not self.control_path:
+            self.notify("Skip works during a run. For a quick run, tick 'Skip big repos'.",
+                        severity="warning")
+            return
+        t = self.query_one("#repos", DataTable)
+        name = None
+        if t.row_count and t.cursor_row is not None and 0 <= t.cursor_row < t.row_count:
+            name = str(t.get_row_at(t.cursor_row)[0])
+        r = self.repos.get(name) if name else None
+        if r is None or r.ended:
+            running = [x for x in self.repos.values() if x.stage not in ("queued",) and not x.ended]
+            r = running[0] if running else None
+        if r is None:
+            self.notify("Select a repo in the table first.", severity="warning")
+            return
+        if r.ended:
+            self.notify(f"{r.name} is already finished.", severity="warning")
+            return
+        key = r.name.lower()
+        if r.stage == "queued":
+            if key in self.skip_set:
+                self.skip_set.discard(key)
+                self.notify(f"{r.name} will be mined after all")
+            else:
+                self.skip_set.add(key)
+                self.notify(f"{r.name} will be skipped when its turn comes")
+        else:
+            now = time.time()
+            if not (self._skip_confirm and self._skip_confirm[0] == key and now - self._skip_confirm[1] < 3):
+                self._skip_confirm = (key, now)
+                self.notify(f"Press ctrl+n again to stop and skip {r.name} (finished PRs are kept "
+                            f"in the checkpoint; a later run resumes it).", severity="warning", timeout=3)
+                return
+            self._skip_confirm = None
+            self.skip_set.add(key)
+            self._log(f"[skip] stopping {r.name} at your request", style="yellow")
+        try:
+            with open(self.control_path, "w", encoding="utf-8") as fh:
+                fh.write("".join(f"{x}\n" for x in sorted(self.skip_set)))
+        except OSError as e:
+            self.notify(f"Could not write the skip list: {e}", severity="error")
+        self._update_row(r)
+
     def action_copy_log(self) -> None:
         text = "\n".join(self.log_lines)
         if not text:
@@ -564,6 +618,7 @@ class RiffleTUI(App):
                            "szz_level": self._level(v["szz_style"]),
                            "done": r.done, "total": r.total,
                            "status": ("failed" if r.stage.startswith("failed") or r.stage == "BREAKER"
+                                      else "skipped" if r.stage.startswith("skipped")
                                       else "done" if r.ended else "queued" if r.stage == "queued"
                                       else "warn" if v["stage_style"] and "yellow" in v["stage_style"]
                                       else "active")})
@@ -647,6 +702,8 @@ class RiffleTUI(App):
             cmd += ["--pr-discovery", "git"]
         for repo in [r.strip() for r in self._val("remine").split(",") if r.strip()]:
             cmd += ["--remine-repo", repo]
+        if self._on("skip_big") and self._val("big_n").isdigit() and int(self._val("big_n")) > 0:
+            cmd += ["--skip-big", self._val("big_n")]
         return cmd
 
     def _output_paths(self, test: bool) -> list[str]:
@@ -803,6 +860,9 @@ class RiffleTUI(App):
         self.repos.clear()
         self.stats = RunStats(started=time.time())
         self.query_one("#repos", DataTable).clear()
+        fd, self.control_path = tempfile.mkstemp(prefix="riffle-control-", suffix=".txt")
+        os.close(fd)
+        self.skip_set = set()
         fd, self.events_path = tempfile.mkstemp(prefix="riffle-events-", suffix=".jsonl")
         os.close(fd)
         self.events_pos = 0
@@ -862,7 +922,8 @@ class RiffleTUI(App):
 
     # ------------------------------------------------------------- subprocess
     async def _run_proc(self, cmd: list[str]) -> None:
-        env = dict(os.environ, RIFFLE_EVENTS=self.events_path, PYTHONUNBUFFERED="1")
+        env = dict(os.environ, RIFFLE_EVENTS=self.events_path, PYTHONUNBUFFERED="1",
+                   RIFFLE_CONTROL=self.control_path or "")
         self.proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=HERE, env=env, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -1046,8 +1107,13 @@ class RiffleTUI(App):
                 r.llm_usage = e["llm_usage"]
             if e.get("already"):          # mined in an earlier run: count it as done
                 r.total = r.done = r.resumed = r.rows
-            r.stage = ("done (earlier run)" if e.get("already") else "done") \
-                if e.get("status") == "ok" else e.get("status", "done")
+            if e.get("status") == "skipped":
+                r.total, r.done = 0, 0                 # out of this run's PR total
+                r.stage = (f"skipped (big: ~{e['commits']:,} commits)"
+                           if e.get("skip") == "big" and e.get("commits") else "skipped")
+            else:
+                r.stage = ("done (earlier run)" if e.get("already") else "done") \
+                    if e.get("status") == "ok" else e.get("status", "done")
             resort = True
         elif ev == "repo_failed":
             r = self._repo(e["repo"])
@@ -1086,8 +1152,11 @@ class RiffleTUI(App):
         idle = now - r.last_event if r.last_event else 0
         if not r.ended and r.stage == "mining" and idle >= STALL_SECS:
             return Text(f"mining · no progress {_fmt_secs(idle)}", style="bold yellow")
+        if not r.ended and r.name.lower() in self.skip_set:
+            return Text("queued · will skip" if r.stage == "queued" else f"{r.stage} · stopping",
+                        style="yellow")
         style = "bold red" if r.stage == "BREAKER" or r.stage.startswith("failed") \
-            else "green" if r.stage.startswith("done") else ""
+            else "green" if r.stage.startswith("done") else "dim" if r.stage.startswith("skipped") else ""
         return Text(r.stage, style=style)
 
     def _row_values(self, r: RepoStat, now: float) -> dict:

@@ -1094,4 +1094,10 @@ def _write_csv(rows: list[dict], out: str):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # Stop / skip from the TUI: finished PRs are already in the checkpoint
+        print("[stop] interrupted; finished PRs stay in the checkpoint, so a rerun resumes",
+              file=sys.stderr, flush=True)
+        sys.exit(130)

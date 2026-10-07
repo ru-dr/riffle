@@ -299,6 +299,47 @@ def _drop_repo(out: str, repo: str, cache_dir: str = "ci_cache") -> None:
             print(f"[remine] {repo}: removed {len(lines) - len(kept)} checkpointed rows", flush=True)
 
 
+# --- skipping -----------------------------------------------------------------
+# A repo can be skipped up front (--skip-big N: more than N commits by its
+# repos.txt tag) or on request while the batch runs: the TUI writes repo names
+# to the file named by RIFFLE_CONTROL, one per line. A skip never writes rows to
+# --out, so a later run without it mines the repo as normal (a repo stopped
+# mid-mine keeps its checkpoint and resumes).
+_CONTROL = os.getenv("RIFFLE_CONTROL")
+
+
+def _skip_requested(repo: str) -> bool:
+    if not _CONTROL:
+        return False
+    try:
+        with open(_CONTROL, encoding="utf-8") as fh:
+            return repo.lower() in {l.strip().lower() for l in fh if l.strip()}
+    except OSError:
+        return False
+
+
+def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
+    """Run cmd, stopping it if a skip is requested for repo meanwhile.
+    Returns (exit code, skipped). The miner gets SIGINT first so it stops
+    cleanly with its checkpoint, then is killed if it doesn't exit."""
+    import signal
+    proc = subprocess.Popen(cmd)
+    while True:
+        try:
+            return proc.wait(timeout=1), False
+        except subprocess.TimeoutExpired:
+            pass
+        if _skip_requested(repo):
+            print(f"[skip] {repo}: skip requested; stopping it", flush=True)
+            try:
+                proc.send_signal(signal.SIGINT if os.name != "nt" else signal.SIGTERM)
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            return proc.returncode, True
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Clone a list of GitHub repos and mine them into one dataset.")
@@ -345,6 +386,10 @@ def main():
     ap.add_argument("--remine-repo", action="append", default=[], metavar="OWNER/NAME",
                     help="drop this repo's rows, SZZ cache and checkpoint from --out, then "
                          "mine it again (repeatable). Use after --audit flags a repo")
+    ap.add_argument("--skip-big", type=int, default=0, metavar="N",
+                    help="skip repos with more than N commits (by their repos.txt "
+                         "[~N commits] tag) for a quick run; 0 = off. Skipped repos aren't "
+                         "written, so a later run without it mines them")
     ap.add_argument("--auto-remine", action="store_true",
                     help="before mining, audit --out and re-mine every repo in this run's "
                          "share whose blame data shows it was mined while blame was failing")
@@ -367,6 +412,7 @@ def main():
         if repo.count("/") != 1:
             sys.exit(f"--remine-repo wants OWNER/NAME, got {repo!r}")
 
+    size_of: dict = {}
     if args.test:
         entries = [p for p in [_parse_url(args.test_repo)] if p]
     else:
@@ -376,6 +422,7 @@ def main():
             lines = [line for line in fh if _parse_url(line)]
         entries = [_parse_url(line) for line in lines]
         weights = [_parse_weight(line) for line in lines]
+        size_of = {f"{o}/{n}".lower(): w for (o, n, _), w in zip(entries, weights)}
         if args.shard_plan:
             _print_shard_plan(entries, weights, args.shard_plan)
             return
@@ -444,7 +491,13 @@ def main():
     print(f"[batch] {len(entries)} repos -> {args.out}\n", flush=True)
     progress.emit("batch_start", repos=[f"{o}/{n}" for o, n, _ in entries], out=args.out)
     attempts = max(1, args.repo_retries + 1)
-    ok, failed = 0, []
+    ok, failed, skipped = 0, [], []
+    if args.skip_big and not args.test:
+        big = [f"{o}/{n}" for o, n, _ in entries if (size_of.get(f"{o}/{n}".lower()) or 0) > args.skip_big
+               and f"{o}/{n}".lower() not in done_repos]
+        if big:
+            print(f"[skip] {len(big)} repos over {args.skip_big:,} commits will be skipped this run: "
+                  + ", ".join(big), flush=True)
     for i, (owner, name, url) in enumerate(entries, 1):
         target = os.path.join(args.clone_dir, f"{owner}_{name}")
         print(f"=== [{i}/{len(entries)}] {owner}/{name} ===", flush=True)
@@ -454,6 +507,16 @@ def main():
             n_done = done_repos[f"{owner}/{name}".lower()]
             progress.emit("repo_done", repo=f"{owner}/{name}", rows=n_done, total=n_done,
                           status="ok", already=True)
+            continue
+        commits = size_of.get(f"{owner}/{name}".lower()) or 0
+        why = ("big" if args.skip_big and not args.test and commits > args.skip_big
+               else "requested" if _skip_requested(f"{owner}/{name}") else None)
+        if why:
+            note = f"~{commits:,} commits > {args.skip_big:,}" if why == "big" else "skipped from the TUI"
+            print(f"[skip] {owner}/{name}: {note}; not mined this run\n", flush=True)
+            skipped.append(f"{owner}/{name} ({why})")
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped",
+                          skip=why, commits=commits)
             continue
         progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="clone")
 
@@ -469,7 +532,9 @@ def main():
             if cloned:
                 break
             print(f"[clone] git clone {url} (attempt {c_attempt}/{attempts})", flush=True)
-            rc = subprocess.run(["git", "clone", url, target]).returncode
+            rc, was_skipped = _run_watched(["git", "clone", url, target], f"{owner}/{name}")
+            if was_skipped:
+                break
             if rc == 0:
                 cloned = True
                 break
@@ -478,6 +543,13 @@ def main():
                 _rmtree(target)                      # clear a partial clone
             if c_attempt < attempts:
                 time.sleep(min(120, 15 * c_attempt))
+        if not cloned and _skip_requested(f"{owner}/{name}"):
+            if os.path.isdir(target):
+                _rmtree(target)                      # a half-made clone is useless
+            print(f"[skip] {owner}/{name}: skipped while cloning\n", flush=True)
+            skipped.append(f"{owner}/{name} (requested)")
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped", skip="requested")
+            continue
         if not cloned:
             print("[clone] giving up after retries; skipping repo\n", flush=True)
             failed.append(f"{owner}/{name} (clone)")
@@ -516,8 +588,11 @@ def main():
 
         mined = False
         progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="mine")
+        was_skipped = False
         for m_attempt in range(1, attempts + 1):
-            rc = subprocess.run(cmd).returncode
+            rc, was_skipped = _run_watched(cmd, f"{owner}/{name}")
+            if was_skipped:
+                break
             if rc == 3:
                 break                       # LLM circuit breaker: don't retry
             if rc == 0:
@@ -534,6 +609,16 @@ def main():
                   "then rerun with --skip-existing to resume.", flush=True)
             failed.append(f"{owner}/{name} (llm breaker)")
             break
+        if was_skipped:
+            print(f"[skip] {owner}/{name}: stopped mid-mine; finished PRs stay in the "
+                  f"checkpoint, so a later run resumes it", flush=True)
+            skipped.append(f"{owner}/{name} (requested)")
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped", skip="requested")
+            if not args.keep_clones and os.path.isdir(target):
+                print(f"[clone] removing {target} (skipped)", flush=True)
+                _rmtree(target)
+            print(flush=True)
+            continue
         if not mined:
             print("[mine] giving up after retries; moving on", flush=True)
             failed.append(f"{owner}/{name} (mine)")
@@ -555,8 +640,13 @@ def main():
 
     if args.test and os.path.isfile(TEST_OUT):
         _write_test_parquet(TEST_OUT)
-    print(f"[batch] done: {ok}/{len(entries)} repos mined -> {args.out}")
-    progress.emit("batch_done", ok=ok, n=len(entries), failed=failed)
+    print(f"[batch] done: {ok}/{len(entries)} repos mined -> {args.out}"
+          + (f" ({len(skipped)} skipped)" if skipped else ""))
+    progress.emit("batch_done", ok=ok, n=len(entries), failed=failed, skipped=skipped)
+    if skipped:
+        print("[batch] skipped (mine them later by running again without the skip):")
+        for s_ in skipped:
+            print("  -", s_)
     if failed:
         print("[batch] failures:")
         for f in failed:
