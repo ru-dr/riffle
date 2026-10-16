@@ -12,7 +12,7 @@
 // the accents run in Riffle's own green instead.
 export const T = {
   paper: "#ffffff",
-  beige: "#fbfaf7", // page surface
+  beige: "#ffffff", // page surface: plain white, as voidzero's is
   ink: "#16171d",
   inkDeep: "#14121a", // their near-black, for the darkest pills
   grey: "#867e8e",

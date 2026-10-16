@@ -12,22 +12,31 @@ import { T } from "./tokens";
 // — they are the training corpus, not customers.
 
 const REPOS: { repo: string; domain: string }[] = [
+  // v1 and v2 of the corpus, interleaved so both appear early.
   { repo: "kubernetes/kubernetes", domain: "kubernetes.io" },
   { repo: "python/cpython", domain: "python.org" },
+  { repo: "swiftlang/swift", domain: "swift.org" },
   { repo: "llvm/llvm-project", domain: "llvm.org" },
   { repo: "facebook/react", domain: "react.dev" },
+  { repo: "flutter/flutter", domain: "flutter.dev" },
   { repo: "apache/spark", domain: "spark.apache.org" },
   { repo: "pytorch/pytorch", domain: "pytorch.org" },
+  { repo: "vitejs/vite", domain: "vite.dev" },
   { repo: "rust-lang/cargo", domain: "rust-lang.org" },
   { repo: "nodejs/node", domain: "nodejs.org" },
+  { repo: "angular/angular", domain: "angular.dev" },
   { repo: "django/django", domain: "djangoproject.com" },
   { repo: "rails/rails", domain: "rubyonrails.org" },
+  { repo: "oven-sh/bun", domain: "bun.sh" },
   { repo: "ClickHouse/ClickHouse", domain: "clickhouse.com" },
   { repo: "grafana/grafana", domain: "grafana.com" },
+  { repo: "openssl/openssl", domain: "openssl.org" },
   { repo: "huggingface/transformers", domain: "huggingface.co" },
   { repo: "godotengine/godot", domain: "godotengine.org" },
+  { repo: "JuliaLang/julia", domain: "julialang.org" },
   { repo: "home-assistant/core", domain: "home-assistant.io" },
   { repo: "elastic/elasticsearch", domain: "elastic.co" },
+  { repo: "cilium/cilium", domain: "cilium.io" },
 ];
 
 const ITEM_W = 300; // px per slot, wide enough that the longest name never meets its neighbours

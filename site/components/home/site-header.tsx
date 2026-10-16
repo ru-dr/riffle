@@ -26,7 +26,7 @@ export function SiteHeader({
   return (
     <header
       data-anim={animated ? "nav" : undefined}
-      className="rf-wrapper relative flex items-center justify-between gap-3 px-5 py-5 sm:px-6 lg:py-7"
+      className="rf-wrapper relative flex items-center justify-between gap-3 px-5 py-5 sm:px-6 lg:pt-[31px] lg:pb-[25px]"
     >
       <div className="flex items-center gap-10">
         <a href="/" aria-label="Riffle home" className="flex items-center gap-3">
