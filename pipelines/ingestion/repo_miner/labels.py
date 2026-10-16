@@ -31,11 +31,12 @@ on the days_to_* columns.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
 
 import config
@@ -167,9 +168,97 @@ def ci_fail_labels(api, pr: dict) -> tuple[str | None, str | None]:
     return (c.get("required"), c.get("optional"))
 
 
+def szz_window(prs: list[dict], st: config.Settings) -> tuple[datetime | None, datetime | None]:
+    """The only fix-commit dates szz_delay can count for these PRs: from the
+    oldest merge to the newest merge + szz_maturity_days. A fix before a PR's
+    merge or past the cap never counts, so blaming fix commits outside this
+    window can't change any label."""
+    merged = [_parse_ts(p["merged_at"]) for p in prs if p.get("merged_at")]
+    if not merged:
+        return (None, None)
+    cap = getattr(st, "szz_maturity_days", 90)
+    return (min(merged), max(merged) + timedelta(days=cap) if cap else None)
+
+
+def _window_covers(have, want) -> bool:
+    """Does a cached index built for window `have` contain window `want`?
+    None bounds are open ends."""
+    (h0, h1), (w0, w1) = have, want
+    return ((h0 is None or (w0 is not None and h0 <= w0))
+            and (h1 is None or (w1 is not None and w1 <= h1)))
+
+
+SZZ_VERSION = 2       # bump when the index for the same inputs would change
+
+
+def szz_relevant_paths(repo: str, commits: set[str]) -> set[str]:
+    """Every path whose blame could name one of `commits`: the paths those
+    commits touched, plus every later name of those files (renames followed
+    forward, transitively). Blame without -C never leaves a file's own rename
+    history, so a fix line outside these paths can't be blamed on them."""
+    cache = gitio._numstat_cache(repo)
+    paths = {p for sha in commits if sha in cache for _a, _d, p in cache[sha][1]}
+    forward: dict[str, set[str]] = {}
+    for old, new in gitio.rename_pairs(repo):
+        forward.setdefault(old, set()).add(new)
+    todo = list(paths)
+    while todo:
+        for new in forward.get(todo.pop(), ()):
+            if new not in paths:
+                paths.add(new)
+                todo.append(new)
+    return paths
+
+
+def szz_fingerprint(repo: str, relevant: set[str] | None = None) -> dict:
+    """What an SZZ index depends on besides its window: the algorithm version,
+    the history it read (HEAD), and the blame settings (flags and the
+    ignore-revs file's content). A cache or checkpoint made under a different
+    fingerprint is not reused."""
+    flags, ignore = gitio.blame_settings()
+    digest = None
+    if ignore and os.path.isfile(ignore):
+        with open(ignore, "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()
+    rel = (hashlib.sha256("\n".join(sorted(relevant)).encode()).hexdigest()
+           if relevant is not None else None)
+    return {"version": SZZ_VERSION, "head": gitio.rev_parse_safe(repo, "HEAD"),
+            "blame_flags": list(flags), "ignore_revs": digest, "relevant": rel}
+
+
+def _usable_cache(cache_path: str, window, fp: dict) -> dict | None:
+    """The cached index if it was built under `fp` and covers `window`."""
+    try:
+        with open(cache_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not (isinstance(data, dict) and data.get("fingerprint") == fp):
+            return None
+        have = tuple(_parse_ts(x) if x else None for x in data["window"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
+    if not _window_covers(have, window):
+        return None
+    return {k: [tuple(x) for x in v] for k, v in data["index"].items()}
+
+
+def szz_cache_covers(cache_path: str, window, repo: str | None = None,
+                     relevant: set[str] | None = None) -> bool:
+    """True if build_szz_index will answer from this cache file."""
+    fp = szz_fingerprint(repo, relevant) if repo else None
+    if fp is None:
+        try:
+            with open(cache_path, encoding="utf-8") as fh:
+                fp = json.load(fh).get("fingerprint")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return False
+    return _usable_cache(cache_path, window, fp) is not None
+
+
 def build_szz_index(repo: str, st: config.Settings,
                     cache_path: str | None = None,
-                    on_progress=None) -> dict:
+                    on_progress=None,
+                    window: tuple[datetime | None, datetime | None] = (None, None),
+                    relevant: set[str] | None = None) -> dict:
     """
     SZZ fix-tracing: {bug_introducing_sha: [(fix_sha, fix_time_iso), ...]}.
     For every fix commit, blame the lines it modifies at the fix's parent to
@@ -187,39 +276,69 @@ def build_szz_index(repo: str, st: config.Settings,
     LIMITATION (unchanged): only deleted/modified lines are blamed, so a fix
     that ONLY adds lines (e.g. a missing null-check) traces to nothing. This is
     an inherent SZZ blind spot, documented for the label-coverage analysis.
+
+    relevant (commits; see szz_relevant_paths): when given, only files whose
+    history those commits touched are blamed. The index then holds every entry
+    for those commits exactly as a full build would, and may lack entries for
+    other commits, which no label reads. szz_delay only asks about the mined
+    PRs' commits, so passing them changes no label.
+
+    window (see szz_window): only fix commits dated inside it are blamed. The
+    labels come out identical (szz_delay can't count a fix outside it) for a
+    fraction of the blame work, since a mined PR set spans months, not the
+    repo's whole history. The cache records its window and is reused only when
+    it covers the one asked for; a cache from before windows covers everything.
     """
+    def _iso(d):
+        return d.isoformat() if d else None
+
+    fp = szz_fingerprint(repo, relevant)
     if cache_path and os.path.isfile(cache_path):
-        try:
-            with open(cache_path, encoding="utf-8") as fh:
-                data = json.load(fh)
-            if isinstance(data, dict):            # old caches were plain lists
-                return {k: [tuple(x) for x in v] for k, v in data.items()}
-        except (OSError, json.JSONDecodeError):
-            pass
+        cached = _usable_cache(cache_path, window, fp)
+        if cached is not None:
+            return cached
+    since, until = window
+    relevant_paths = szz_relevant_paths(repo, relevant) if relevant is not None else None
 
     # fix commits in log order, as (sha, parent, fix_time, paths)
     if on_progress:
         on_progress(0, 0)                       # 0/0 = still scanning history
     tasks = []
-    for c, rows in gitio.iter_commits_with_files(repo, "HEAD"):
+    for c, rows in gitio.head_commits_with_files(repo):
         if not c.parents or not config.is_fix_text(c.subject):
             continue
+        if (since and c.committed < since) or (until and c.committed > until):
+            continue                          # outside the window: can't count
         fix_time = c.committed.astimezone(timezone.utc).isoformat()
-        tasks.append((c.sha, c.parents[0], fix_time, [p for _a, _d, p in rows]))
+        paths = [p for _a, _d, p in rows]
+        if relevant_paths is not None:
+            paths = [p for p in paths if p in relevant_paths]
+            if not paths:
+                continue                      # no line here can blame to a relevant commit
+        tasks.append((c.sha, c.parents[0], fix_time, paths))
 
     # Crash-safe checkpoint: each fix commit's bug-introducing shas are appended
     # to <cache>.partial.jsonl as it finishes, and a re-run skips those.
     ckpt = (cache_path + ".partial.jsonl") if cache_path else None
     done: dict[str, list[str]] = {}
     if ckpt and os.path.isfile(ckpt):
+        # first line is the fingerprint the results were made under; a
+        # checkpoint from other blame settings or history starts over
         try:
             with open(ckpt, encoding="utf-8") as fh:
-                for line in fh:
+                first = fh.readline()
+                try:
+                    ok = json.loads(first).get("fingerprint") == fp
+                except (json.JSONDecodeError, AttributeError):
+                    ok = False
+                for line in (fh if ok else ()):
                     try:
                         rec = json.loads(line)
                         done[rec["sha"]] = rec["bugs"]
                     except (json.JSONDecodeError, KeyError, TypeError):
                         continue              # torn last line from a crash
+            if not ok:
+                os.remove(ckpt)
         except OSError:
             pass
 
@@ -237,15 +356,37 @@ def build_szz_index(repo: str, st: config.Settings,
         ck = None
         if ckpt:
             os.makedirs(os.path.dirname(ckpt) or ".", exist_ok=True)
+            fresh = not os.path.isfile(ckpt)
             ck = open(ckpt, "a", encoding="utf-8")
+            if fresh:
+                ck.write(json.dumps({"fingerprint": fp}) + "\n")
+                ck.flush()
         try:
             workers = max(1, min(st.workers, len(todo)))
             with ProcessPoolExecutor(
                     max_workers=workers, initializer=gitio.set_blame_settings,
                     initargs=gitio.blame_settings()) as pool:
-                futs = [pool.submit(_szz_fix_bugs, repo, sha, parent, paths)
-                        for sha, parent, _t, paths in todo]
-                for n, fut in enumerate(as_completed(futs), 1):
+                # a bounded number of tasks in flight, topped up as they finish,
+                # instead of one future per fix commit up front
+                feed = iter(todo)
+                pending: set = set()
+
+                def _top_up():
+                    for sha_, parent_, _t, paths_ in feed:
+                        pending.add(pool.submit(_szz_fix_bugs, repo, sha_, parent_, paths_))
+                        if len(pending) >= workers * 4:
+                            return
+
+                def _finished():
+                    while pending:
+                        ready, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        for f in ready:
+                            pending.discard(f)
+                        _top_up()
+                        yield from ready
+
+                _top_up()
+                for n, fut in enumerate(_finished(), 1):
                     sha, bugs, b_calls, b_fails = fut.result()
                     blame_calls += b_calls
                     blame_fails += b_fails
@@ -290,7 +431,8 @@ def build_szz_index(repo: str, st: config.Settings,
             os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
             tmp = cache_path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(index, fh)
+                json.dump({"fingerprint": fp, "window": [_iso(since), _iso(until)],
+                           "index": index}, fh)
             os.replace(tmp, cache_path)
             if ckpt and os.path.isfile(ckpt):
                 os.remove(ckpt)
@@ -308,8 +450,9 @@ def _szz_fix_bugs(repo: str, sha: str, parent: str,
     before = gitio.blame_stats()
     bugs: list[str] = []
     seen: set[str] = set()
+    old_by_path = gitio.deleted_or_modified_lines_many(repo, parent, sha, paths)
     for path in paths:
-        old_lines = gitio.deleted_or_modified_lines(repo, parent, sha, path)
+        old_lines = old_by_path[path]
         if not old_lines:
             continue
         blame = gitio.blame_lines(repo, parent, path, old_lines)

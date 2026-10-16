@@ -216,3 +216,58 @@ def test_llm_reuse_skips_empty_answers_and_short_circuits_fetch(tmp_path):
         assert llm_flags.resolve(got, st) == good
     finally:
         llm_flags._REUSE.clear()
+
+
+def test_windowed_index_gives_identical_labels(synth_repo, tmp_path):
+    """The window (szz_window) only drops fix commits szz_delay can't count, so
+    every PR's days_to_szz_fix must match the full-history index exactly, while
+    blaming fewer fix commits."""
+    from datetime import datetime
+    st = config.Settings()
+    st.szz_maturity_days = 5
+    commits = [c for c, _ in gitio.iter_commits_with_files(synth_repo, "HEAD") if c.parents]
+    feats = [c for c in commits if c.subject.startswith("add feature")]
+    picked = feats[3:7]                          # a window well inside the history
+    prs = [{"merged_at": c.committed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "_range": (c.parents[0], c.sha)} for c in picked]
+    full = labels.build_szz_index(synth_repo, st, None)
+    window = labels.szz_window(prs, st)
+    windowed = labels.build_szz_index(synth_repo, st, str(tmp_path / "w.json"), window=window)
+    for pr in prs:
+        base, head = pr["_range"]
+        assert (labels.szz_delay(synth_repo, pr, base, head, full, st)
+                == labels.szz_delay(synth_repo, pr, base, head, windowed, st))
+    assert any(labels.szz_delay(synth_repo, pr, *pr["_range"], full, st) is not None for pr in prs)
+    n_full = len({f for v in full.values() for f, _ in v})
+    n_win = len({f for v in windowed.values() for f, _ in v})
+    assert n_win < n_full
+    # the cache knows its window: reused for a narrower one, rebuilt for a wider one
+    assert labels.szz_cache_covers(str(tmp_path / "w.json"), window)
+    assert not labels.szz_cache_covers(str(tmp_path / "w.json"), (None, None))
+
+
+def test_relevant_pruning_follows_renames(tmp_path):
+    """A bug line introduced in old.py, the file renamed to new.py, then fixed:
+    pruning to the introducing commit must still blame new.py and find it,
+    and agree with the full index on every relevant commit."""
+    repo = str(tmp_path / "r")
+    os.makedirs(repo)
+    _git(repo, "init", "-q", "-b", "main")
+    body = [f"value_{i} = {i} * 2 + offset" for i in range(40)]
+    _commit(repo, "initial", 0, {"old.py": "\n".join(body) + "\n", "other.py": "x = 1\n"})
+    body[10] = "value_10 = 10 * 3 + offset  # wrong factor"
+    _commit(repo, "add feature", 1, {"old.py": "\n".join(body) + "\n"})
+    intro = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
+                           text=True).stdout.strip()
+    _git(repo, "mv", "old.py", "new.py")
+    _commit(repo, "move module", 2, {})
+    _commit(repo, "touch other", 3, {"other.py": "x = 2\n"})
+    body[10] = "value_10 = 10 * 2 + offset"
+    _commit(repo, "fix wrong factor", 4, {"new.py": "\n".join(body) + "\n"})
+    _commit(repo, "fix other", 5, {"other.py": "x = 3\n"})
+    st = config.Settings()
+    full = labels.build_szz_index(repo, st, None)
+    pruned = labels.build_szz_index(repo, st, None, relevant={intro})
+    assert intro in full and pruned.get(intro) == full[intro]
+    assert "new.py" in labels.szz_relevant_paths(repo, {intro})
+    assert "other.py" not in labels.szz_relevant_paths(repo, {intro})

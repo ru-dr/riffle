@@ -572,6 +572,52 @@ def deleted_or_modified_lines(repo: str, base: str, head: str, path: str) -> lis
     return old_lines
 
 
+def deleted_or_modified_lines_many(repo: str, base: str, head: str,
+                                   paths: list[str]) -> dict[str, list[int]]:
+    """deleted_or_modified_lines for many paths from ONE `git diff`, instead of
+    one subprocess per path. Same answer per path as the single-path call:
+    there the pathspec hides a rename's source, so a renamed file shows as
+    added (no old lines), and a renamed entry gets [] here too. A path this
+    parser can't place (quoted names, binary or mode-only entries) falls back
+    to the single-path call, so nothing is guessed."""
+    out = _run(repo, "diff", "-U0", "-M", "--no-color", "--no-ext-diff",
+               "--src-prefix=a/", "--dst-prefix=b/", f"{base}...{head}", check=False)
+    found: dict[str, list[int]] = {}
+    cur: dict | None = None
+
+    def _close():
+        if cur and cur["path"] is not None and not cur["quoted"]:
+            found[cur["path"]] = [] if cur["renamed"] else cur["lines"]
+
+    for line in out.splitlines():
+        if line.startswith("diff --git "):
+            _close()
+            cur = {"path": None, "old": None, "renamed": False, "quoted": False, "lines": []}
+        elif cur is None:
+            continue
+        elif line.startswith("rename from ") or line.startswith("rename to "):
+            cur["renamed"] = True
+        elif line.startswith("--- "):
+            name = line[4:]
+            cur["quoted"] |= name.startswith('"')
+            cur["old"] = name[2:] if name.startswith("a/") else None
+        elif line.startswith("+++ "):
+            name = line[4:]
+            cur["quoted"] |= name.startswith('"')
+            cur["path"] = name[2:] if name.startswith("b/") else cur["old"]
+        elif line.startswith("@@"):
+            try:
+                seg = line.split(" ")[1]  # -a,b
+                start = int(seg[1:].split(",")[0])
+                count = int(seg.split(",")[1]) if "," in seg else 1
+                cur["lines"].extend(range(start, start + count))
+            except (IndexError, ValueError):
+                continue
+    _close()
+    return {p: (found[p] if p in found else deleted_or_modified_lines(repo, base, head, p))
+            for p in paths}
+
+
 def _epoch() -> datetime:
     return datetime.fromtimestamp(0, tz=timezone.utc)
 
@@ -594,6 +640,34 @@ def rev_parse_safe(repo: str, ref: str) -> str | None:
     )
     sha = out.stdout.strip()
     return sha or None
+
+
+def head_commits_with_files(repo: str) -> list[tuple["Commit", list[tuple[int, int, str]]]]:
+    """iter_commits_with_files(repo, "HEAD"), answered from the repo-wide
+    numstat cache when it is loaded (one cheap rev-list for HEAD's commits and
+    their order), so SZZ doesn't run and hold a second full-history
+    `git log --numstat`. Same commits, rows and order; falls back to the
+    direct log if any commit is missing from the cache."""
+    cache = _numstat_cache(repo)
+    shas = _run(repo, "rev-list", "HEAD").split()
+    if all(sha in cache for sha in shas):
+        return [cache[sha] for sha in shas]
+    return iter_commits_with_files(repo, "HEAD")
+
+
+def rename_pairs(repo: str) -> list[tuple[str, str]]:
+    """(old_path, new_path) for every rename on any ref, in one log. Uses a
+    looser similarity (30%) than blame's default and includes merge commits,
+    so it finds a superset of the renames blame follows: callers use it to
+    decide what blame could reach, where finding too many is harmless."""
+    out = _run(repo, "log", "--all", "-m", "-M30%", "--diff-filter=R",
+               "--name-status", "--format=", check=False)
+    pairs = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[0].startswith("R"):
+            pairs.append((parts[1], parts[2]))
+    return pairs
 
 
 def commits_behind(repo: str, base: str, target: str) -> int | None:
