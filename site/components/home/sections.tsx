@@ -1,4 +1,5 @@
 import { Mark } from "@/components/brand";
+import { CategoryBar } from "./category-bar";
 import { CorpusCarousel } from "./corpus-carousel";
 import { FadeImg } from "./fade-img";
 import { logoUrl } from "./logo";
@@ -30,7 +31,7 @@ import {
 
 const H2 =
   "font-geist text-[1.875rem] leading-[2.25rem] font-medium tracking-[-0.025em] text-balance md:text-[3rem] md:leading-[1.05]";
-const H3 =
+export const H3 =
   "font-geist text-[1.5rem] leading-[2rem] font-medium tracking-[-0.025em] text-balance md:text-[2.5rem] md:leading-[1.1]";
 const LABEL = "font-mono text-[12px] uppercase tracking-[0.05em]";
 
@@ -55,7 +56,7 @@ export function Provenance() {
       style={{ borderColor: T.stroke }}
     >
       <p data-anim="rise" className="text-center font-geist text-[16px] text-balance" style={{ color: T.nickel }}>
-        Planned training corpus: 50 public repositories, then yours
+        Planned training corpus: 100 public repositories, then yours
       </p>
       <div data-anim="rise" className="w-full max-w-[60rem]">
         <CorpusCarousel />
@@ -305,7 +306,7 @@ function Artwork({
 
 /* Statistics: heading, a 4/6 split of headline figure and a chart, then
    three cells. Every value shows its status from the dataset plan. */
-function StatusTag({ status }: { status: string }) {
+export function StatusTag({ status }: { status: string }) {
   return (
     <span
       className="rounded px-1.5 py-0.5 font-mono text-[10.5px] tracking-[0.06em] uppercase"
@@ -316,14 +317,12 @@ function StatusTag({ status }: { status: string }) {
   );
 }
 
-const DOMAIN_COLORS = ["#16171d", "#3b3440", "#867e8e", "#b9b3bf", "#00b442"];
-
 export function StatsBand() {
-  const total = STATS.domains.reduce((n, [, v]) => n + v, 0);
-  // No top rule: coming out of the dark block the page goes straight into
-  // this heading, and the first rule sits beneath it — as the reference does.
+  // Top rule: it follows a ruled spacer now, not the dark block, and
+  // without the rule the spacer and this heading's padding ran together
+  // into one blank band.
   return (
-    <section className="rf-wrapper">
+    <section className="rf-wrapper rf-ticks border-t" style={{ borderColor: T.stroke }}>
       <div className="px-6 pt-10 pb-10 md:px-10 md:pt-14">
         <h3 data-anim="rise" className={`${H3} max-w-[28rem]`}>
           {STATS.headline}
@@ -342,8 +341,8 @@ export function StatsBand() {
           </div>
           <div>
             <p className="font-geist text-[2.75rem] leading-none font-medium tracking-[-0.04em] md:text-[3.5rem]">
-              {/* Approximate: PR tabs were read over July-September and the
-                  counts keep moving. Outside the counting span so the
+              {/* Approximate: v1 counts were read off PR tabs over July-September,
+                  v2 from the search API on 30 September, and both keep moving. Outside the counting span so the
                   count-up, which rewrites that span's text, cannot drop it. */}
               <span aria-label="approximately" className="mr-1" style={{ color: T.grey }}>
                 ~
@@ -368,32 +367,12 @@ export function StatsBand() {
         >
           <div className="flex items-center gap-3">
             <p className="w-fit rounded px-2 py-1 font-mono text-[12px]" style={{ outline: `1px solid ${T.stroke}`, color: T.nickel }}>
-              By domain
+              By category
             </p>
             <StatusTag status="measured" />
           </div>
           <div>
-            <div className="flex h-24 w-full gap-[3px]" role="img" aria-label="Pull requests by domain">
-              {STATS.domains.map(([name, v], i) => (
-                <div
-                  key={name}
-                  className="h-full rounded-[3px] transition-opacity duration-150 hover:opacity-85"
-                  style={{ width: `${(v / total) * 100}%`, backgroundColor: DOMAIN_COLORS[i] }}
-                  title={`${name}: ${v.toLocaleString("en-US")} PRs`}
-                />
-              ))}
-            </div>
-            <ul className="mt-5 flex flex-wrap gap-x-7 gap-y-2.5">
-              {STATS.domains.map(([name, v], i) => (
-                <li key={name} className="flex items-center gap-2 font-mono text-[12px] whitespace-nowrap">
-                  <span className="size-2 shrink-0 rounded-[2px]" style={{ backgroundColor: DOMAIN_COLORS[i] }} />
-                  <span style={{ color: T.nickel }}>{name}</span>
-                  <span className="tabular-nums" style={{ color: T.grey }}>
-                    {Math.round((v / total) * 100)}%
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <CategoryBar />
           </div>
         </div>
       </div>

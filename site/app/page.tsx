@@ -2,6 +2,7 @@ import { SiteMotion } from "@/components/site-motion";
 import { T } from "@/components/home/tokens";
 import { SiteHeader } from "@/components/home/site-header";
 import { Stack } from "@/components/home/stack";
+import { SurgeBand } from "@/components/home/surge-band";
 import {
   ClosingBlock,
   ContractsSection,
@@ -49,7 +50,7 @@ export default function Page() {
         <div className="flex w-full flex-col items-center px-5 sm:w-[46rem] sm:px-0">
           <div
             data-anim="chip"
-            className="rf-chip rf-hero-chip flex items-center gap-1.5 rounded px-3 py-1 font-mono text-[13px] font-medium tracking-[-0.03em]"
+            className="rf-chip rf-hero-chip flex items-center gap-1.5 rounded px-3 py-1 font-mono text-[14px] font-medium tracking-[-0.03em]"
           >
             <span className="inline-flex rounded-sm p-0.5" style={{ backgroundColor: T.accentSoft }}>
               <span
@@ -69,7 +70,7 @@ export default function Page() {
             data-anim="title"
             className="rf-shine rf-hero-title px-[0.08em] pb-1 text-center font-geist text-[2.25rem] leading-[2.6rem] font-medium tracking-[-0.05em] text-balance"
           >
-            Every repo
+            Every repository
             <br />
             breaks differently
           </h1>
@@ -79,8 +80,7 @@ export default function Page() {
             className="rf-hero-lede self-stretch text-center font-geist text-[16px] leading-[1.6] text-balance"
             style={{ color: T.nickel }}
           >
-            Riffle ranks your pull request queue by risk, trained on your
-            repository&rsquo;s own revert history.
+            Riffle ranks pull requests by risk and predicts their outcome.
           </p>
         </div>
 
@@ -91,6 +91,8 @@ export default function Page() {
 
       <Provenance />
       <ServicesBlock />
+      <SurgeBand />
+      <Spacer />
       <StatsBand />
       <Spacer />
       <MissionPanel />

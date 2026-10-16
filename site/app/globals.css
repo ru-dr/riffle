@@ -145,60 +145,48 @@ body {
 
 /* The page's light field. */
 body:has([data-riffle-light]) {
-  background-color: #fbfaf7;
+  background-color: #ffffff;
   color-scheme: light;
   overflow: visible;
 }
 
 /* Hero stack sizing. Desktop: the full 1000x600 drawing. Phone: a crop to
-   the stack (x 280-720, y 20-520) — the SVG is oversized and offset so
+   the stack (x 280-720, y 20-520 of 1000x540) — the SVG is oversized and offset so
    exactly that region fills the container. */
 .rf-stack {
-  aspect-ratio: 1000 / 600;
+  aspect-ratio: 1000 / 540;
 }
-/* Hero proportions on the golden ratio (phi = 1.618), with the 17px lede
-   as the unit: headline 17 x phi^3 = 72px; vertical rhythm in phi steps
-   (chip -> headline 1.618rem, headline -> lede 1rem, lede -> stack 2.618rem,
-   top padding 4.236rem); the stack's 5:3 sits within 3% of phi.
-
-   --hs scales the whole composition down on short screens, and each step's
-   --hero-above is the measured distance from the page top to the stack plus
-   24px, so the stack fills exactly the height the heading leaves. */
+/* Hero type and rhythm. Desktop (48rem and up) is voidzero.dev's hero,
+   measured from its DOM: it is the same at every width from 1024 to 1920
+   and every height from 768 to 1080, so this is too — no height scaling.
+   Chip top 168px (14/20), headline top 224px (60/67.2), lede top 378px
+   (18/28) on one line, top slab at 465px. The stack's 806px puts its slab
+   on voidzero's ~298 x 372px; a translucent overlay of the two heroes is
+   how these were checked. Voidzero switches to these values at 768px, and
+   so does this; phones keep the smaller stepped-down shape. */
 .rf-hero {
-  --hs: 1;
-  --hero-above: 29.75rem;
   gap: 0;
 }
-.rf-hero-chip { margin-bottom: calc(1.618rem * var(--hs)); }
-.rf-hero-title { margin-bottom: calc(1rem * var(--hs)); }
-.rf-hero-stack { margin-top: calc(2.618rem * var(--hs)); }
+.rf-hero-chip { margin-bottom: 1.618rem; }
+.rf-hero-title { margin-bottom: 1rem; }
+.rf-hero-stack { margin-top: 2.618rem; }
 @media (min-width: 48rem) {
-  .rf-hero { padding-top: calc(4.236rem * var(--hs)); }
-  .rf-hero-chip { font-size: calc(13px * var(--hs)); }
-  .rf-hero-title { font-size: calc(3.5rem * var(--hs)); line-height: calc(3.75rem * var(--hs)); }
-  .rf-hero-lede { font-size: calc(17px * var(--hs)); }
+  .rf-hero { padding-top: 80px; }
+  .rf-hero-chip { font-size: 14px; line-height: 20px; margin-bottom: 28px; }
+  .rf-hero-title { font-size: 60px; line-height: 67.2px; margin-bottom: 15.6px; }
+  .rf-hero-lede { font-size: 18px; line-height: 28px; }
+  .rf-hero-stack { margin-top: 33px; }
 }
-@media (min-width: 64rem) {
-  .rf-hero-title { font-size: calc(4.5rem * var(--hs)); line-height: calc(4.75rem * var(--hs)); }
-}
-/* Desktop steps up the same scale: lede 19px, headline 19 x phi^3 = 80px.
-   The larger type sits ~3.25rem taller, which the stack's budget absorbs
-   through --hero-extra instead of every height step being duplicated. */
-@media (min-width: 80rem) {
-  .rf-hero { --hero-extra: calc(3.25rem * var(--hs)); }
-  .rf-hero-title { font-size: calc(5rem * var(--hs)); line-height: calc(5.25rem * var(--hs)); }
-  .rf-hero-lede { font-size: calc(19px * var(--hs)); }
-}
-@media (min-width: 48rem) and (max-height: 60rem) { .rf-hero { --hs: 0.94; --hero-above: 28.5rem; } }
-@media (min-width: 48rem) and (max-height: 56.25rem) { .rf-hero { --hs: 0.86; --hero-above: 26.5rem; } }
-@media (min-width: 48rem) and (max-height: 52rem) { .rf-hero { --hs: 0.8; --hero-above: 25.25rem; } }
-@media (min-width: 48rem) and (max-height: 49rem) { .rf-hero { --hs: 0.74; --hero-above: 24rem; } }
 
-/* Stack width from the height left under the heading, at the drawing's 5:3,
-   capped at 64rem, floored at 34rem. */
+/* Tablet: the stack grows with the screen; desktop: voidzero's fixed box. */
 @media (min-width: 40rem) {
   .rf-stack {
-    max-width: max(34rem, min(64rem, calc((100svh - var(--hero-above) - var(--hero-extra, 0rem)) * 5 / 3)));
+    max-width: clamp(34rem, 72vw, 50.375rem);
+  }
+}
+@media (min-width: 64rem) {
+  .rf-stack {
+    max-width: 50.375rem;
   }
 }
 
@@ -210,17 +198,33 @@ body:has([data-riffle-light]) {
   container-type: inline-size;
 }
 .rf-pill {
-  font-size: clamp(8px, 1.1cqi, 10.5px);
-  padding: 0.5em 1.15em 0.5em 0.95em;
-  gap: 0.7em;
+  font-size: clamp(9.5px, 1.35cqi, 11.5px);
+  padding: 0.62em 0.95em;
+  gap: 0.6em;
+}
+/* The live pill's ring: the live slab's texture, masked down to a 1.5px
+   border so it reads as the same material as the slab's lit outline. */
+.rf-pill-ring {
+  position: absolute;
+  inset: -1.5px;
+  padding: 1.5px;
+  border-radius: inherit;
+  background-position: center;
+  background-size: cover;
+  pointer-events: none;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  transition: opacity 700ms ease;
+}
+/* Tracking adds space after the last letter too; cancel it so the padding
+   is even on both sides of the label. */
+.rf-pill-label {
+  margin-right: -0.1em;
 }
 .rf-pill-mark {
   width: 1.15em;
   height: 1.15em;
-}
-.rf-pill-caption {
-  font-size: clamp(10px, 1.36cqi, 13px);
-  margin-top: 0.6em;
 }
 
 .rf-stack-svg {
@@ -231,12 +235,14 @@ body:has([data-riffle-light]) {
 @media (max-width: 39.999rem) {
   .rf-stack {
     aspect-ratio: 440 / 500;
-    max-width: 22rem;
+    /* Voidzero's phone tile is ~210px wide at 390; the slab is 400 of this
+       crop's 440 units, so 15rem lands on it. */
+    max-width: 15rem;
   }
   .rf-stack-svg {
     inset: auto;
     width: calc(100% * 1000 / 440);
-    height: calc(100% * 600 / 500);
+    height: calc(100% * 540 / 500);
     left: calc(-100% * 280 / 440);
     top: calc(-100% * 20 / 500);
   }
@@ -244,6 +250,14 @@ body:has([data-riffle-light]) {
 
 /* Status dot: opacity-only keyframes, so the compositor runs it with no
    main-thread work. (A GSAP infinite tween restyled it from JS every frame.) */
+/* Surge chart: a series fades and settles in when it is picked. */
+@keyframes rf-chart-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
 @keyframes rf-pulse {
   50% {
     opacity: 0.3;

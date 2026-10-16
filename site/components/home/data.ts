@@ -1,7 +1,10 @@
 // Every number and claim on this page comes from the repository README, so
-// the page and the docs cannot drift. Nothing here is invented: the site has
-// no customers, no public star count and no funding, and those sections of
-// the reference layout are therefore not reproduced.
+// the page and the docs cannot drift — except SURGE, which is public industry
+// data, each figure linked to its source. Nothing here is invented: the site
+// has no customers, no public star count and no funding, and those sections
+// of the reference layout are therefore not reproduced.
+
+import { IG_QUARTERLY, NPM_SEPTEMBER_2026, NPM_WEEKLY } from "./surge-data";
 
 export const REPO = "https://github.com/ru-dr/riffle";
 
@@ -137,27 +140,107 @@ export const SERVICE_PANELS = [
 // Statistics from the dataset plan (PR counts measured from each repository's
 // Pull Requests tab, July-September 2026). Every figure carries the plan's
 // own status, so a target is never shown as if it were a result.
-export type Status = "measured" | "derived" | "estimate" | "decision" | "target";
+export type Status = "measured" | "derived" | "estimate" | "decision" | "target" | "reported";
 
-export const STATS = {
-  headline: "Planned on fifty public repositories",
-  big: 1899996,
-  bigLabel: "pull requests measured across 48 repositories, open and closed",
-  bigStatus: "measured" as Status,
-  // Measured subtotals per domain; the bar is drawn to these proportions.
-  domains: [
-    ["Systems & dev tools", 437114],
-    ["Web frameworks", 259494],
-    ["Data systems", 425940],
-    ["Cloud & infra", 272176],
-    ["ML & end-user", 505272],
-  ] as const,
+// The pace of shipping code, 2016 to 2026. The series, their sources and how
+// each was summed are in surge-data.ts.
+const OCTOVERSE_2025 =
+  "https://github.blog/news-insights/octoverse/octoverse-a-new-developer-joins-github-every-second-as-ai-leads-typescript-to-1/";
+const INNOVATION_GRAPH = "https://github.com/github/innovationgraph";
+const VERCEL = "https://vercel.com/blog/agentic-infrastructure";
+// Kyle Daigle, GitHub COO, on X, 3 April 2026.
+const DAIGLE = "https://x.com/kdaigle/status/2040164759836778878";
+export const SURGE = {
+  // Two-tone: the measured fact, then its cause in grey. The cause is
+  // Vercel's own wording ("with agents driving the growth").
+  headline: "Code is shipping twice as fast as in 2024.",
+  headlineCause: "Agents are driving it.",
+  // Only series that measure code being shipped: git pushes (code pushed)
+  // and npm downloads (every build, CI run and deploy installs packages).
+  // Counts of repositories or developers, and forum traffic, measure other
+  // things and are left out. Each series spans the chart over its own
+  // published range, labelled with that range.
+  series: [
+    {
+      key: "pushes",
+      label: "Git pushes",
+      from: "January 2020",
+      to: "March 2026",
+      figureLabel: "Git pushes on GitHub, Q1 2026",
+      figure: IG_QUARTERLY.pushes.at(-1)!,
+      start: IG_QUARTERLY.start,
+      end: IG_QUARTERLY.end,
+      values: IG_QUARTERLY.pushes,
+      source: INNOVATION_GRAPH,
+      cite: "GitHub Innovation Graph",
+    },
+    {
+      key: "npm",
+      label: "npm downloads",
+      from: "January 2016",
+      to: "October 2026",
+      figureLabel: "npm package downloads, September 2026",
+      figure: NPM_SEPTEMBER_2026,
+      ...NPM_WEEKLY,
+      source: "https://github.com/npm/registry/blob/main/docs/download-counts.md",
+      cite: "npm registry",
+    },
+  ],
+  // Each cell: value, label, source URL, citation. Agent attribution is
+  // only stated where the source states it (Vercel: "with agents driving
+  // the growth"); GitHub's own posts report the surge without naming a cause.
   cells: [
-    ["40 / 10", "repositories for training / unseen-repo validation", "decision"],
+    ["50%+", "of deployments on Vercel triggered by coding agents by September 2026, from about 3% in late 2025", VERCEL, "Vercel, 2026"],
+    ["2\u00d7", "weekly deployments on Vercel in three months, with agents driving the growth", VERCEL, "Vercel, 2026"],
+    ["275M", "commits a week on GitHub in April 2026, after 1 billion in all of 2025", DAIGLE, "GitHub COO"],
+    ["2.1B", "GitHub Actions minutes in a week, up from 1B a week in 2025", DAIGLE, "GitHub COO"],
+    // 319,841,623 / 153,037,523 (Q1 2026 / Q1 2024), Innovation Graph.
+    ["2.1\u00d7", "git pushes in Q1 2026 against Q1 2024", INNOVATION_GRAPH, "Innovation Graph"],
+    ["1M+", "pull requests opened by Copilot coding agent, May to September 2025", OCTOVERSE_2025, "Octoverse 2025"],
+  ] as const,
+} as const;
+
+// The corpus as the dataset plan has it (docs: dataset-plan.md, ADR 0007):
+// two versions of 50 repositories each. PR counts are measured; rust-lang/
+// rust and envoyproxy/envoy are not yet, so the total covers 98 of the 100.
+export const STATS = {
+  headline: "Planned on one hundred public repositories",
+  big: 2919190,
+  bigLabel: "pull requests measured across 98 of the 100 repositories, open and closed",
+  bigStatus: "measured" as Status,
+  // Measured subtotals per category, in two versions; the bar is drawn to
+  // these proportions.
+  versions: [
+    {
+      name: "v1",
+      label: "50 repositories",
+      categories: [
+        ["Systems & dev tools", 437114],
+        ["Web frameworks", 259494],
+        ["Data systems", 425940],
+        ["Cloud & infra", 272176],
+        ["ML & end-user", 505272],
+      ],
+    },
+    {
+      name: "v2",
+      label: "50 more",
+      categories: [
+        ["Languages & compilers", 226858],
+        ["Frontend & mobile", 204664],
+        ["Security & networking", 111406],
+        ["Data & ML infra", 174680],
+        ["Dev tools & editors", 83853],
+        ["Embedded, games & more", 217733],
+      ],
+    },
+  ],
+  cells: [
+    ["70 / 15 / 15", "repositories for training / unseen-repo validation / final test", "decision"],
     ["100–300", "feature columns per pull request", "estimate"],
     // Target from Kamei et al., cross-project JIT defect prediction (EMSE 2016).
     ["0.65+", "ROC-AUC target on repositories never trained on", "target", "https://link.springer.com/article/10.1007/s10664-015-9400-x"],
-  ] as const,
+  ],
 } as const;
 
 export const MISSION =
