@@ -30,7 +30,7 @@ The literature the model, labels and planning targets rest on.
 | [Keshavarz and Nagappan, *ApacheJIT*, MSR 2022](https://arxiv.org/abs/2203.00101) | 106,674 commits, 28,239 labelled bug-inducing; the ~26% SZZ rate |
 | [Zhang, Rastogi and Yu, *On the Shoulders of Giants*, MSR 2020](https://yuyue.github.io/res/paper/newPR_MSR2020.pdf) | Engineered features for pull request outcome prediction |
 | [Gousios and Zaidman, *A dataset for pull request research*, MSR 2014](https://azaidman.github.io/publications/gousiosMSR2014a.pdf) | Pull request dataset methodology |
-| [AIDev](https://arxiv.org/abs/2601.15195) | Agent-authored pull requests with merge outcomes, CI results and reviewer interactions |
+| [AIDev](https://arxiv.org/abs/2601.15195) | Agent-authored pull requests with merge outcomes, CI results and reviewer interactions; its feature catalog defined the merge-outcome labels, which Riffle mines itself |
 
 ## Platform documentation
 

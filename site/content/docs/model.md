@@ -8,11 +8,17 @@ repository earns its own adjustment as outcomes arrive.
 
 | Layer | Trained on | Serves | Fits in |
 | --- | --- | --- | --- |
-| Global model | Published datasets, self-mined history, opt-in shared outcomes | Every repository, from day one | A scheduled training run |
+| Global model | History mined from the training corpus, published datasets, opt-in shared outcomes | Every repository, from day one | A scheduled training run |
 | Repository layer | That repository's own mature outcomes | That repository only | Seconds, on CPU, with dozens of labels |
 
 The global model is gradient-boosted. The repository layer is deliberately
 light, so it can be refitted often and cheaply.
+
+## Two targets
+
+Each layer predicts two things: whether a pull request will merge, and, if
+it does, whether it will break. Both come from the same mined history, and
+both are scored when the pull request opens. See [Labels and maturity](/docs/concepts/labels).
 
 ## How the repository layer earns its weight
 
