@@ -40,7 +40,7 @@ import gitio
 import aggregate
 import progress
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local
-from labels import build_labels, build_szz_index
+from labels import build_labels, build_szz_index, szz_cache_covers, szz_window
 from github_api import GitHubAPI
 
 
@@ -609,6 +609,18 @@ def _landed_resolver(repo: str, owner: str, name: str, branch: str):
     return resolve
 
 
+def _szz_relevant_commits(repo: str, prs: list[dict], base_resolver, workers: int) -> set[str]:
+    """Every commit of every merged PR's final range: the only commits whose
+    SZZ entries a label reads (szz_delay intersects the index with exactly
+    these), so SZZ can skip blames that can't reach them."""
+    def _one(pr):
+        base, head = _pr_diff_range(repo, pr, base_resolver)
+        return gitio.commits_in_range(repo, base, head) if base and head else set()
+    merged = [p for p in prs if p.get("merged_at")]
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        return set().union(*pool.map(_one, merged)) if merged else set()
+
+
 def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
               out_path: str | None = None) -> list[dict]:
     default_branch = gitio.default_branch(repo)
@@ -685,26 +697,30 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         n_reuse = llm_flags.load_reuse(reuse_path)
         print(f"[llm] re-mine: reusing {n_reuse} earlier LLM answers for unchanged PRs "
               f"(no new calls for those)", file=sys.stderr, flush=True)
+    # Load the repo-wide commit history now, under a visible stage, instead of
+    # silently inside the first PR (~1.5 min on a Kubernetes-sized repo). SZZ
+    # reads HEAD's commits from it too, rather than running its own full log.
+    progress.emit("stage", repo=f"{owner}/{name}", stage="loading history")
+    gitio._numstat_cache(repo)
+
     szz_shas = None
     if st.enable_szz:
         szz_cache = os.path.join(st.ci_cache_dir, f"{owner}_{name}.szz.json")
         print("[szz] tracing fix-forward defects (slow; cached after first run)...",
               file=sys.stderr, flush=True)
-        szz_cached = os.path.isfile(szz_cache)      # build_szz_index returns it as-is
+        window = szz_window(prs, st)
+        relevant = _szz_relevant_commits(repo, prs, base_resolver, st.workers)
+        szz_cached = szz_cache_covers(szz_cache, window, repo, relevant)
         szz_shas = build_szz_index(
             repo, st, szz_cache,
             on_progress=lambda d, n: progress.emit(
-                "szz", repo=f"{owner}/{name}", done=d, total=n))
+                "szz", repo=f"{owner}/{name}", done=d, total=n),
+            window=window, relevant=relevant)
         print(f"[szz] {len(szz_shas)} bug-introducing commits identified"
               f"{' (from cache)' if szz_cached else ''}", file=sys.stderr)
         progress.emit("szz", repo=f"{owner}/{name}", finished=True, cached=szz_cached,
                       bugs=len(szz_shas))
 
-    # Load the repo-wide commit history now, under a visible stage, instead of
-    # silently inside the first PR (~1.5 min on a Kubernetes-sized repo). The
-    # same cache is used either way, so output is unchanged.
-    progress.emit("stage", repo=f"{owner}/{name}", stage="loading history")
-    gitio._numstat_cache(repo)
 
     # crash-safe checkpoint + resume: rows are flushed to <out>.partial.jsonl as
     # they're computed, so a crash mid-repo doesn't lose hours of work; a re-run
