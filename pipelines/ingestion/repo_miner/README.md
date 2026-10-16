@@ -325,6 +325,26 @@ before v2.0.0 need a re-mine to get merge labels.
   `label_merged` away). LLM spend grows with the row count.
 
 
+## Merge-model signals (`features/merge_signals.py`)
+
+The AIDev catalog's merge-model features the miner's own data can supply:
+
+- Per PR: `has_linked_issue`, `body_headings`, `body_checklist_items`,
+  `body_has_test_plan`, `agent_boilerplate` (from the body); `agent_name`
+  (claude_code, codex, copilot, cursor, devin, jules, sweep: from login,
+  head branch, git identity, watermark) and `head_branch_agent_prefix`;
+  `author_account_age_days` (one cached `/users` call per author);
+  `has_contributing`, `has_agents_md` (files at the base commit).
+- Per repo, prior-only (PRs closed strictly before this one opened, last 365
+  days; null under 5 PRs): `repo_outside_merge_rate` (+ count),
+  `agent_recent_merge_rate` (+ count), `repo_median_first_response_hours`,
+  `repo_agent_pr_load_30d`, `max_sim_open_prs` and `max_sim_recent_merged`
+  (word-set Jaccard of title at open + body). The merge rates need
+  unmerged rows, so they stay null with `--no-merge-outcome`.
+
+The body is read at mining time (its edits are not in the timeline), so the
+body features can see edits made after open.
+
 ## At-open snapshot (ADR 0010)
 
 Diff features (sizes, path flags, blame, scanners, CVEs, LLM flags, ...) are

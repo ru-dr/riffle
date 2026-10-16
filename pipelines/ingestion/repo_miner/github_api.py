@@ -10,6 +10,7 @@ simple pagination. Kept dependency-free (urllib) on purpose.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 import os
 import sys
@@ -93,6 +94,8 @@ class GitHubAPI:
         # closed-unmerged PRs found by merged_prs() (enable_merge_outcome only)
         self.unmerged: list[dict] = []
         self.use_landed = False
+        self._user_cache: dict[str, str | None] = {}
+        self._user_lock = threading.Lock()
 
     def load_required_contexts(self, branch: str) -> set | None:
         """
@@ -491,6 +494,20 @@ class GitHubAPI:
             if len(data) < 100 or (data[-1].get("created_at") or "") < created_from:
                 break
         return out
+
+    def user_created_at(self, login: str | None) -> str | None:
+        """An account's creation time (static, so point-in-time safe). One
+        call per distinct login, cached; None if unreadable or a bot app."""
+        if not login:
+            return None
+        with self._user_lock:
+            if login in self._user_cache:
+                return self._user_cache[login]
+        status, data, _ = self._get(f"/users/{urllib.parse.quote(login)}")
+        created = data.get("created_at") if status == 200 and isinstance(data, dict) else None
+        with self._user_lock:
+            self._user_cache[login] = created
+        return created
 
     def pr_timeline(self, number: int) -> list[dict] | None:
         """The PR's issue timeline (reviews, comments, commits, force-pushes,

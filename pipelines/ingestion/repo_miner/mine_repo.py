@@ -39,7 +39,7 @@ import config
 import gitio
 import aggregate
 import progress
-from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local
+from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
 from labels import (POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
                     szz_window)
 from merge_labels import at_open, build_merge_labels, classify_close
@@ -585,8 +585,23 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     if meta_open:
         md["title_len"] = len(meta_open["title"])
         md["has_milestone"] = meta_open["has_milestone"]
+
+    # --- merge-model signals from the AIDev catalog (features/merge_signals.py)
+    login = (pr.get("user") or {}).get("login")
+    head_ref = (pr.get("head") or {}).get("ref")
+    md.update(merge_signals.body_features(pr.get("body")))
+    md["agent_name"] = merge_signals.agent_name(login, head_ref, head_email, pr.get("body"))
+    md["head_branch_agent_prefix"] = (None if head_ref is None else
+                                      bool(merge_signals._BRANCH_PREFIX_RE.match(head_ref)))
+    created_acct = api.user_created_at(login) if api is not None else None
+    md["author_account_age_days"] = (
+        round((_parse_ts(opened) - _parse_ts(created_acct)).total_seconds() / 86400, 1)
+        if created_acct and opened else None)
+    md.update(merge_signals.repo_files_at(repo, base_sha))
     md["targets_default_branch"] = (pr.get("base", {}) or {}).get("ref") == default_branch
     row.update(md)
+    row[merge_signals.SIDECAR] = merge_signals.sidecar(
+        pr, row, events, meta_open["title"] if meta_open else None)
 
     # declared_hotfix: leak-free replacement for the dropped label_is_hotfix.
     # Was an urgent/hotfix LABEL present AT OPEN (point-in-time, from the
@@ -1051,8 +1066,12 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     # computed once all rows are in (strictly point-in-time per row)
     if not st.llm_breaker_tripped:
         repo_local.compute_repo(rows, repo_local.release_tags(repo, st), st)
+        merge_signals.compute_repo(rows, st, with_unmerged=st.enable_merge_outcome)
     for r in rows:
         r.pop(repo_local.SIDECAR, None)
+        r.pop(merge_signals.SIDECAR, None)
+        for col in merge_signals.COLUMNS:
+            r.setdefault(col, None)
         for col in repo_local.COLUMNS:
             r.setdefault(col, 0 if col == "similar_pr_count" else None)
 
