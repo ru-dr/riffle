@@ -139,12 +139,12 @@ class Settings:
     enable_semgrep: bool = True
     enable_deps_cve: bool = True           # OSV + GHSA (network)
     enable_api_contract: bool = True       # oasdiff / buf / graphql-inspector
-    enable_llm: bool = False               # off by default; --llm turns it on
+    enable_llm: bool = True                # on by default; --no-llm, or off when no backend is usable
     enable_github_api: bool = True         # PR list, CI checks, labels
-    enable_ci_history: bool = False        # historical CI-fail-rate store (slow pre-pass)
-    enable_szz: bool = False               # SZZ fix-tracing label (slow pre-pass)
+    enable_ci_history: bool = True         # historical CI-fail-rate store (<=400 API calls, cached)
+    enable_szz: bool = True                # SZZ fix-tracing label (windowed, cached)
     enable_review_history: bool = True     # review events for revealed_path_scrutiny (2 API calls/PR)
-    enable_declared_labels: bool = False   # declared_hotfix feature (from the PR timeline)
+    enable_declared_labels: bool = True    # declared_hotfix feature (from the PR timeline)
     declared_label_grace_s: int = 120      # include labels applied within Ns of open
     # merge-outcome target (ADR 0009): also mine closed-unmerged PRs and label
     # every row from its timeline (1-2 timeline calls/PR, +1 check call per
@@ -186,7 +186,7 @@ class Settings:
     # skip PRs merged in the last N days, so the cap picks PRs old enough for
     # their outcome labels to be mature (0 = off). 90 covers maturity_days (30)
     # and szz_maturity_days (90).
-    min_age_days: int = 0
+    min_age_days: int = 90
     merge_signal: str = "auto"             # auto | github | landed (closed-PR -> landed-commit fallback)
     pr_discovery: str = "api"              # api (PR-list endpoint) | git (commit-message linkage, API enriches)
 

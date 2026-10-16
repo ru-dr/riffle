@@ -488,6 +488,17 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
     return None
 
 
+def unavailable_reason(st: config.Settings) -> str | None:
+    """Why the configured LLM backend can't run here, or None if it can."""
+    if st.llm_backend == "claude_cli":
+        return None if shutil.which("claude") else "`claude` (Claude Code) not on PATH"
+    if not st.llm_api_key:
+        return "LLM_BACKEND=api but LLM_API_KEY is not set"
+    if _get_client(st) is None:
+        return "the openai package is not installed"
+    return None
+
+
 def ask_json(system: str, schema: dict, text: str, st: config.Settings) -> dict | None:
     """One schema-constrained call on the configured backend, for callers
     other than the diff flags (the close-reason classifier). Shares the
