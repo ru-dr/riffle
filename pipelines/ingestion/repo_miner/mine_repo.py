@@ -1088,14 +1088,14 @@ def main():
     ap.add_argument("--out", default=None,
                     help="output .parquet or .jsonl (defaults to <owner>_<n>.parquet)")
     ap.add_argument("--max-prs", type=int, default=None)
-    ap.add_argument("--min-age-days", type=int, default=0,
+    ap.add_argument("--min-age-days", type=int, default=90,
                     help="skip PRs merged in the last N days so labels are mature "
-                         "(90 recommended: covers the 30-day maturity and 90-day SZZ windows)")
-    ap.add_argument("--llm", action="store_true",
-                    help="enable LLM semantic flags (Source 6) and the close-reason "
-                         "classifier; default backend is headless Claude Code (`claude -p`); "
-                         "LLM_BACKEND=api uses LLM_API_KEY")
-    ap.add_argument("--no-llm", action="store_true")
+                         "(default 90: covers the 30-day maturity and 90-day SZZ windows; 0 = off)")
+    ap.add_argument("--llm", action=argparse.BooleanOptionalAction, default=True,
+                    help="LLM semantic flags (Source 6) and the close-reason classifier "
+                         "(default on; off automatically when no backend is usable). Default "
+                         "backend is headless Claude Code (`claude -p`); LLM_BACKEND=api uses "
+                         "LLM_API_KEY")
     ap.add_argument("--llm-model", default=None,
                     help="model for the LLM flags, e.g. sonnet, opus, haiku (default: LLM_MODEL or sonnet)")
     ap.add_argument("--llm-test", action="store_true",
@@ -1105,13 +1105,14 @@ def main():
     ap.add_argument("--no-scanners", action="store_true")
     ap.add_argument("--no-api-contract", action="store_true",
                     help="skip oasdiff/buf/graphql-inspector spec diffing")
-    ap.add_argument("--ci-history", action="store_true",
-                    help="build historical CI-fail-rate features (slow API pre-pass, cached)")
-    ap.add_argument("--szz", action="store_true",
-                    help="add the SZZ fix-tracing label (catches fix-forward defects; slow, cached)")
-    ap.add_argument("--declared-labels", action="store_true",
-                    help="add the declared_hotfix feature (labels at open, from the PR "
-                         "timeline the merge-outcome labels fetch anyway)")
+    ap.add_argument("--ci-history", action=argparse.BooleanOptionalAction, default=True,
+                    help="historical CI-fail-rate features (API pre-pass, <=400 calls, cached; "
+                         "default on)")
+    ap.add_argument("--szz", action=argparse.BooleanOptionalAction, default=True,
+                    help="SZZ fix-tracing label (windowed to the mined PRs, cached; default on)")
+    ap.add_argument("--declared-labels", action=argparse.BooleanOptionalAction, default=True,
+                    help="declared_hotfix feature (labels at open, from the timeline the "
+                         "merge-outcome labels fetch anyway; default on)")
     ap.add_argument("--merge-outcome", action=argparse.BooleanOptionalAction, default=True,
                     help="merge-outcome target (ADR 0009, default on): also mine "
                          "closed-unmerged PRs and add label_merged / rework / close-reason "
@@ -1161,20 +1162,22 @@ def main():
     st = config.Settings()
     st.max_prs = args.max_prs
     st.min_age_days = args.min_age_days
-    if args.llm:
-        st.enable_llm = True
-    if args.no_llm:
-        st.enable_llm = False
+    st.enable_llm = args.llm
     if args.no_scanners:
         st.enable_scanners = False
     if args.no_api_contract:
         st.enable_api_contract = False
-    if args.ci_history:
-        st.enable_ci_history = True
-    if args.szz:
-        st.enable_szz = True
-    if args.declared_labels:
-        st.enable_declared_labels = True
+    st.enable_ci_history = args.ci_history
+    st.enable_szz = args.szz
+    st.enable_declared_labels = args.declared_labels
+    if st.enable_llm:
+        why = llm_flags.unavailable_reason(st)
+        if why:
+            # on by default, so a box without an LLM must still mine: drop the
+            # stage instead of tripping the breaker five PRs in
+            print(f"[llm] off: {why}. LLM flags and the close-reason classifier "
+                  f"stay null; close_reason uses the rules.", file=sys.stderr)
+            st.enable_llm = False
     st.enable_merge_outcome = args.merge_outcome
     st.max_unmerged = args.max_unmerged
     st.pr_discovery = args.pr_discovery
