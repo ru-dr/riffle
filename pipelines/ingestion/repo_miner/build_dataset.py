@@ -355,6 +355,12 @@ def main():
     ap.add_argument("--ci-history", action="store_true")
     ap.add_argument("--szz", action="store_true")
     ap.add_argument("--declared-labels", action="store_true")
+    ap.add_argument("--merge-outcome", action=argparse.BooleanOptionalAction, default=True,
+                    help="also mine closed-unmerged PRs and add the merge-outcome "
+                         "labels (ADR 0009, default on); --no-merge-outcome for "
+                         "breakage rows only")
+    ap.add_argument("--max-unmerged", type=int, default=None,
+                    help="cap unmerged rows per repo (default: the window's real mix)")
     ap.add_argument("--pr-discovery", choices=["api", "git"], default="api")
     ap.add_argument("--llm", action="store_true")
     ap.add_argument("--no-scanners", action="store_true")
@@ -569,10 +575,14 @@ def main():
             cmd.append("--szz")
         if args.declared_labels:
             cmd.append("--declared-labels")
-        if args.pr_discovery != "api":
-            cmd += ["--pr-discovery", args.pr_discovery]
         if args.llm:
             cmd.append("--llm")
+        if not args.merge_outcome:
+            cmd.append("--no-merge-outcome")
+        if args.max_unmerged is not None:
+            cmd += ["--max-unmerged", str(args.max_unmerged)]
+        if args.pr_discovery != "api":
+            cmd += ["--pr-discovery", args.pr_discovery]
         if args.no_scanners:
             cmd.append("--no-scanners")
         if args.no_api_contract:

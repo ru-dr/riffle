@@ -7,7 +7,8 @@ features supplied elsewhere.
 
 ## What it produces
 
-One table (`.parquet` or `.jsonl`), one row per merged PR, with:
+One table (`.parquet` or `.jsonl`), one row per closed PR (merged, and since
+v2.0.0 closed-unmerged too; see *Merge-outcome labels*), with:
 
 | Source | Module | Examples |
 |---|---|---|
@@ -20,6 +21,7 @@ One table (`.parquet` or `.jsonl`), one row per merged PR, with:
 | 5 — deterministic | `features/deterministic.py` | secrets, env keys, off-by-one edits, migration reversibility |
 | 6 — LLM flags | `features/llm_flags.py` | authz change, error-handling removed, semantic risk (opt-in) |
 | Labels | `labels.py` | `label_revert`, `label_ci_fail`, `label_ci_fail_optional`, `label_hotfix`, `label_szz_bug`, `label_bad` (+ `mined_at`) |
+| Merge-outcome labels | `merge_labels.py` | `label_merged`, `label_rework`, `close_reason` and its flags (default on; `--no-merge-outcome` drops them) |
 
 Per-file features are collapsed to fixed `max_/mean_/sum_/min_` columns by
 `aggregate.py`, so every PR yields the same schema regardless of how many files
@@ -27,8 +29,10 @@ it touches.
 
 ## Design guarantees
 
-- **Point-in-time.** All history/blame features walk commits strictly *before*
-  the base commit's timestamp. Nothing from after the PR opened is used.
+- **Point-in-time.** Diff features come from the PR as it stood when it
+  opened (ADR 0010; `open_snapshot` says how that state was found), and
+  history/blame features walk commits strictly *before* its fork point.
+  Nothing from after the PR opened is used.
 - **Deterministic-first.** Parsers/regex/linters are preferred over the LLM
   wherever an exact answer exists (secrets, off-by-one, migrations).
 - **Graceful degradation.** If a tool (lizard, semgrep) or the network is
@@ -80,17 +84,20 @@ flags:
                      lets one file accumulate across many runs
   --llm              enable Source 6 LLM semantic flags (needs LLM_API_KEY; costs $/PR)
   --ci-history       add historical CI-fail-rate features (slow API pre-pass, cached)
-  --szz              add the label_szz_bug fix-tracing label (slow blame pre-pass, cached)
+  --szz              add the label_szz_bug fix-tracing label (blame pre-pass, cached)
+  --no-merge-outcome merged PRs and breakage labels only (merge-outcome mining,
+                     ADR 0009, is on by default; 1-2 timeline calls per PR)
+  --max-unmerged N   cap unmerged rows per repo (default: the repo's real mix)
   --no-network       git-only: no PR list, no labels, no OSV (features only)
   --no-scanners      skip lizard + semgrep
   --no-api-contract  skip oasdiff / buf / graphql-inspector spec diffing
 ```
 
-Output is one row per merged PR. Each row records `mined_at`; PRs merged too
+Output is one row per closed PR (merged only with `--no-merge-outcome`). Each row records `mined_at`; PRs merged too
 recently may not have their outcome yet, so decide maturity at training time
 (see the snippet under *Build a dataset*).
-`--ci-history`, `--szz`, and `--llm` are off by default; their columns come back
-`null`/`False` until enabled.
+`--ci-history`, `--szz`, `--declared-labels` and `--llm` are off by default;
+their columns come back `null`/`False` until enabled.
 
 ## Splitting, waiting, and resuming
 
@@ -275,6 +282,58 @@ Six label columns, filled from outcomes after merge (not inference inputs):
   `mined_at - merged_at` is at least your chosen threshold (e.g. 30 days, longer
   for SZZ).
 
+## Merge-outcome labels
+
+On by default since v2.0.0, so one run feeds both models: the breakage model
+(`label_bad`, merged rows) and the merge model (`label_merged`, all rows), the
+second target from `docs/adr/0009-merge-outcome-target.md`.
+`--no-merge-outcome` (TUI: untick "Merge outcome (+ unmerged PRs)") gives the
+v1 output: merged PRs and breakage labels only. Every shard PC must use the
+same setting, or the merge model only sees some of the repos. Repos mined
+before v2.0.0 need a re-mine to get merge labels.
+
+- Rows: closed-unmerged PRs from the same creation window as the merged PRs
+  mined, so the merged / unmerged mix is the repo's own. Their commits are
+  fetched from `refs/pull/N/head` without local refs, so no `git log --all`
+  scan sees them. Features are computed at the fork point as usual;
+  post-merge labels (`label_bad`, `days_to_*`, ...) are null on these rows,
+  and they never count as history for the repo-local columns. Repos mined in
+  landed-commit mode, and `--pr-discovery git`, get no unmerged rows.
+- `label_merged` on every row. `label_rework` on merged rows: a human
+  non-author change request, or commits / force-pushes more than 5 minutes
+  after open (`post_open_commits`, `post_open_force_pushes`,
+  `changes_requested_reviews` hold the counts).
+- On unmerged rows: `label_duplicate`, `label_unwanted`, `label_abandoned`,
+  `label_ci_technical`, and `close_reason`. From the PR's timeline up to close,
+  plus the required checks on its head commit. With `--llm`, a classifier
+  reads the title, comments, reviews, labels, renames and closer and picks
+  `close_reason` (one call per unmerged PR with human activity); without it,
+  phrase and label rules decide (first of duplicate, unwanted, ci_technical,
+  abandoned, else other). `close_reason_source` is `llm` or `rules`.
+- PRs still open after 60 days (`abandon_days`) with no human response are
+  rows too: unmerged, abandoned, `closed_at` null. Drafts and open PRs that
+  got a response are left out.
+- A repo is only mined in landed-commit mode when most closed PRs on the first
+  page link to commits on the default branch. A low GitHub-merge share alone
+  is also what a repo flooded with rejected AI PRs looks like.
+- Also `created_at` and `closed_at`, for time splits.
+- Every per-row stage, the LLM flags included, runs on unmerged rows too, so
+  no feature is null only because a PR didn't merge (that pattern would give
+  `label_merged` away). LLM spend grows with the row count.
+
+
+## At-open snapshot (ADR 0010)
+
+Diff features (sizes, path flags, blame, scanners, CVEs, LLM flags, ...) are
+computed from the PR's head when it opened, not its final state, so commits
+pushed under review don't leak into the features. The head is the newest
+commit on the branch's first-parent line dated at or before open + 5 minutes;
+a force-push after open is undone with GraphQL's `beforeCommit` (one batched
+call per 25 PRs) and a fetch of that commit. Labels still use what landed.
+`open_snapshot` is `exact`, `recovered` (from a force-push), `approx`
+(force-push history unreadable) or `final` (not recoverable: diff features
+use the final diff; drop or mask them when training).
+
 ## SZZ window
 
 `--szz` blames only fix commits dated between the oldest mined merge and the
@@ -320,6 +379,7 @@ config.py        path rules, tunables, stage toggles
 gitio.py         point-in-time git helpers (log/blame/show/diff at base SHA)
 github_api.py    PR list, CI check conclusions, labels (rate-limit aware)
 labels.py        revert / CI-fail / hotfix labels + maturity cutoff
+merge_labels.py  merge-outcome labels from the PR timeline (ADR 0009)
 aggregate.py     per-file dicts -> fixed max/mean/sum/min columns
 features/
   diff_stats.py    Source 4a/4b + per-PR Kamei metrics
