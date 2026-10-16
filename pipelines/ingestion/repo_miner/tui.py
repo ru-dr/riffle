@@ -437,6 +437,8 @@ class RiffleTUI(App):
                 yield Checkbox("LLM flags (claude -p)", True, id="llm", compact=True)
                 yield Checkbox("SZZ label", True, id="szz", compact=True)
                 yield Checkbox("CI history", False, id="ci_history", compact=True)
+                yield Checkbox("Merge outcome (+ unmerged PRs)", True, id="merge_outcome",
+                               compact=True)
                 yield Checkbox("Scanners (lizard/semgrep)", True, id="scanners", compact=True)
                 yield Checkbox("API contract diff", False, id="api_contract", compact=True)
                 yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
@@ -694,6 +696,8 @@ class RiffleTUI(App):
                           ("auto_remine", "--auto-remine")]:
             if self._on(wid):
                 cmd.append(flag)
+        if not self._on("merge_outcome"):
+            cmd.append("--no-merge-outcome")
         if not self._on("scanners"):
             cmd.append("--no-scanners")
         if not self._on("api_contract"):

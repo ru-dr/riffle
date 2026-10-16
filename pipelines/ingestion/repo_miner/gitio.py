@@ -670,6 +670,77 @@ def rename_pairs(repo: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def existing_commits(repo: str, shas: list[str]) -> set[str]:
+    """The subset of `shas` that are commits in the clone, in one
+    `git cat-file --batch-check` instead of a rev-parse per SHA."""
+    shas = [s for s in dict.fromkeys(shas) if s]
+    if not shas:
+        return set()
+    proc = subprocess.run(["git", "-C", repo, "cat-file", "--batch-check"],
+                          input="\n".join(shas) + "\n", capture_output=True, text=True)
+    return {line.split()[0] for line in proc.stdout.splitlines()
+            if len(line.split()) >= 2 and line.split()[1] == "commit"}
+
+
+def _fetch_specs(repo: str, specs: list[str]) -> None:
+    """Fetch refspecs/SHAs from origin without local refs. One missing ref
+    fails a whole fetch, so a failed batch is split in halves (log n rounds
+    per bad ref) instead of retried one at a time."""
+    if not specs:
+        return
+    try:
+        _run(repo, "fetch", "--quiet", "--no-tags", "origin", *specs)
+    except GitError:
+        if len(specs) == 1:
+            return                            # this one is gone; callers check
+        mid = len(specs) // 2
+        _fetch_specs(repo, specs[:mid])
+        _fetch_specs(repo, specs[mid:])
+
+
+def fetch_pr_heads(repo: str, numbers: list[int], chunk: int = 200) -> None:
+    """Fetch PR commits (refs/pull/N/head) from origin WITHOUT creating local
+    refs: the objects land in the clone, but nothing points at them, so
+    `git log --all` scans (history cache, revert and hotfix search) never see
+    unmerged work. Callers check heads with existing_commits. Chunked to keep
+    the command line short."""
+    for i in range(0, len(numbers), chunk):
+        _fetch_specs(repo, [f"refs/pull/{n}/head" for n in numbers[i:i + chunk]])
+
+
+def fetch_shas(repo: str, shas: list[str], chunk: int = 200) -> None:
+    """Fetch commits by SHA from origin, without local refs (GitHub serves
+    commits a force-push left behind). Skips SHAs already in the clone."""
+    have = existing_commits(repo, shas)
+    todo = [s for s in dict.fromkeys(shas) if s and s not in have]
+    for i in range(0, len(todo), chunk):
+        _fetch_specs(repo, todo[i:i + chunk])
+
+
+def count_before(repo: str, base: str, tip: str, when: datetime) -> int | None:
+    """Commits in base..tip committed at or before `when`: how far the base
+    branch had moved past `base` by then. None if git fails."""
+    out = _run(repo, "rev-list", "--count", f"--before={int(when.timestamp())}",
+               f"{base}..{tip}", check=False).strip()
+    return int(out) if out.isdigit() else None
+
+
+def first_parent_chain(repo: str, head: str, stop: str | None = None,
+                       limit: int = 1000) -> list[tuple[str, int]]:
+    """(sha, committer epoch) along head's first-parent line, newest first,
+    excluding commits reachable from `stop`. For a PR branch this is the
+    branch's own history, without commits merged in from the base."""
+    args = ["log", "--first-parent", f"--max-count={limit}", "--format=%H %ct", head]
+    if stop:
+        args.append(f"^{stop}")
+    out = []
+    for line in _run(repo, *args, check=False).splitlines():
+        sha, _, ct = line.partition(" ")
+        if sha and ct.isdigit():
+            out.append((sha, int(ct)))
+    return out
+
+
 def commits_behind(repo: str, base: str, target: str) -> int | None:
     """Number of commits reachable from `target` but not from `base` — i.e. how
     far `base` is behind `target`. Returns None if the range can't be computed."""

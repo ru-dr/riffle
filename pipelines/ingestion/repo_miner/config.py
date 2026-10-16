@@ -144,8 +144,20 @@ class Settings:
     enable_ci_history: bool = False        # historical CI-fail-rate store (slow pre-pass)
     enable_szz: bool = False               # SZZ fix-tracing label (slow pre-pass)
     enable_review_history: bool = True     # review events for revealed_path_scrutiny (2 API calls/PR)
-    enable_declared_labels: bool = False   # declared_hotfix feature (1 timeline call/PR)
+    enable_declared_labels: bool = False   # declared_hotfix feature (from the PR timeline)
     declared_label_grace_s: int = 120      # include labels applied within Ns of open
+    # merge-outcome target (ADR 0009): also mine closed-unmerged PRs and label
+    # every row from its timeline (1-2 timeline calls/PR, +1 check call per
+    # unmerged PR, and a fetch of each unmerged PR's head ref). On by default so
+    # one run feeds both models; --no-merge-outcome mines breakage rows only.
+    enable_merge_outcome: bool = True
+    close_reason_classifier: str = "llm"   # llm (with --llm; rules fallback) | rules
+    max_unmerged: int | None = None        # cap unmerged rows per repo (None = the window's real mix)
+    abandon_days: int = 60                 # still open this long with no human response = abandoned
+    rework_grace_s: int = 300              # commits/force-pushes this soon after open aren't rework
+    stale_bot_logins: tuple[str, ...] = ("stale[bot]", "stale-bot", "stalebot")
+    unwanted_labels: tuple[str, ...] = ("wontfix", "won't fix", "invalid", "not planned",
+                                        "out of scope", "declined", "rejected", "spam")
     ci_cache_dir: str = "ci_cache"         # where the per-repo CI conclusion cache lives
 
     # networking

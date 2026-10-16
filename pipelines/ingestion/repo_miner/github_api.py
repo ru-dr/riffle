@@ -90,6 +90,9 @@ class GitHubAPI:
         # (rate limit exhausted, network) rather than reaching the real end, so
         # callers know the PR list may be truncated rather than complete.
         self.incomplete = False
+        # closed-unmerged PRs found by merged_prs() (enable_merge_outcome only)
+        self.unmerged: list[dict] = []
+        self.use_landed = False
 
     def load_required_contexts(self, branch: str) -> set | None:
         """
@@ -141,12 +144,17 @@ class GitHubAPI:
             h["Authorization"] = f"Bearer {self.token}"
         return h
 
-    def _get(self, path: str, params: dict | None = None) -> tuple[int, object, dict]:
+    def _get(self, path: str, params: dict | None = None,
+             body: dict | None = None) -> tuple[int, object, dict]:
+        """GET `path` (or POST `body` as JSON, for GraphQL), with rate-limit
+        waits and retries."""
         url = f"{API}{path}"
         if params:
             q = "&".join(f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items())
             url = f"{url}?{q}"
-        req = urllib.request.Request(url, headers=self._headers())
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(url, headers=self._headers(), data=data,
+                                     method="POST" if data is not None else "GET")
         net_fails = 0
         while True:
             try:
@@ -192,7 +200,9 @@ class GitHubAPI:
                         return e.code, None, {}
                     time.sleep(min(60, 2 ** net_fails))
                     continue
-                raise
+                # any other 4xx (401 unauthenticated, 422 ...) is permanent for
+                # this request: report it as unobserved, never kill the run
+                return e.code, None, {}
             except (urllib.error.URLError, TimeoutError) as e:
                 net_fails += 1
                 if net_fails > 8:
@@ -228,6 +238,10 @@ class GitHubAPI:
         mode = getattr(self.st, "merge_signal", "auto")
         use_landed = resolver is not None and mode == "landed"
         collected: list[dict] = []
+        # closed-unmerged PRs for the merge-outcome target (ADR 0009). Skipped in
+        # landed-commit repos: there a "closed" PR may have landed outside GitHub,
+        # so not-merged can't be told apart from merged-elsewhere.
+        unmerged: list[dict] = []
         page = 1
         # page limit scales with the cap (x3 covers closed-but-unmerged PRs);
         # skipping recent PRs means paging past them, so allow far more pages
@@ -252,11 +266,21 @@ class GitHubAPI:
                 break
             if page == 1 and mode == "auto" and resolver is not None:
                 share = sum(1 for p in data if p.get("merged_at")) / max(len(data), 1)
-                use_landed = share < 0.5
+                # A low GitHub-merge share alone also fits a repo flooded with
+                # rejected (often AI) PRs. Landed-commit mode needs most of the
+                # closed-unmerged PRs to actually link to a landed commit.
+                closed = [p for p in data if not p.get("merged_at")]
+                linked = sum(1 for p in closed if resolver(p)) if share < 0.5 else 0
+                use_landed = share < 0.5 and linked >= 0.5 * max(len(closed), 1)
                 if use_landed:
-                    print(f"[merge] only {share:.0%} of recent PRs merged via GitHub; "
+                    print(f"[merge] only {share:.0%} of recent PRs merged via GitHub and "
+                          f"{linked}/{len(closed)} closed PRs link to landed commits; "
                           "linking closed PRs to their landed commits",
                           file=sys.stderr, flush=True)
+                elif share < 0.5:
+                    print(f"[merge] {share:.0%} of recent PRs merged via GitHub, but only "
+                          f"{linked}/{len(closed)} closed PRs link to landed commits: "
+                          "treating them as not merged", file=sys.stderr, flush=True)
             for pr in data:
                 if pr.get("merged_at"):
                     pr["merge_via"] = "github"
@@ -265,6 +289,13 @@ class GitHubAPI:
                     cand = resolver(pr)
                 else:
                     cand = None
+                    # not merged via GitHub: a not-merged row, unless it is a
+                    # draft (never offered for review) or it landed another way
+                    # (a commit on the default branch links to it)
+                    if (self.st.enable_merge_outcome and not pr.get("draft")
+                            and not (cutoff and (pr.get("closed_at") or "") > cutoff)
+                            and not (resolver is not None and resolver(pr))):
+                        unmerged.append(pr)
                 if cand and cutoff and (cand.get("merged_at") or "") > cutoff:
                     cand = None          # merged too recently for mature labels
                 if cand:
@@ -283,6 +314,25 @@ class GitHubAPI:
         collected.sort(key=lambda p: p.get("merged_at") or "", reverse=True)
         if self.st.max_prs:
             collected = collected[: self.st.max_prs]
+        if use_landed and self.st.enable_merge_outcome:
+            print("[merge-outcome] landed-commit repo: closed-unmerged PRs skipped "
+                  "(not-merged is ambiguous here)", file=sys.stderr)
+        # keep unmerged PRs from the same creation window as the kept merged
+        # ones, so the merged / not-merged mix is the repo's real one
+        if unmerged and collected:
+            oldest = min(p.get("created_at") or "" for p in collected)
+            unmerged = [p for p in unmerged if (p.get("created_at") or "") >= oldest]
+        cap = self.st.max_unmerged
+        if cap is not None and len(unmerged) > cap:
+            print(f"[merge-outcome] {len(unmerged)} closed-unmerged PRs in the window; "
+                  f"keeping the newest {cap} (--max-unmerged)", file=sys.stderr)
+            unmerged = sorted(unmerged, key=lambda p: p.get("created_at") or "",
+                              reverse=True)[:cap]
+        for p in unmerged:
+            p["merge_via"] = None
+            p["_unmerged"] = True
+        self.unmerged = unmerged
+        self.use_landed = use_landed
         return collected
 
     def pr_labels(self, pr: dict) -> list[str]:
@@ -422,6 +472,79 @@ class GitHubAPI:
                 break
             page += 1
         return active if saw else None
+
+    def open_prs(self, created_from: str, created_to: str) -> list[dict]:
+        """Open PRs created in [created_from, created_to] (ISO, UTC), newest
+        first. Stops paging once PRs are older than the window."""
+        out: list[dict] = []
+        for page in range(1, 101):
+            status, data, _ = self._get(
+                f"/repos/{self.owner}/{self.repo}/pulls",
+                {"state": "open", "per_page": 100, "page": page,
+                 "sort": "created", "direction": "desc"})
+            if status != 200 or not data:
+                break
+            for pr in data:
+                c = pr.get("created_at") or ""
+                if created_from <= c <= created_to and not pr.get("draft"):
+                    out.append(pr)
+            if len(data) < 100 or (data[-1].get("created_at") or "") < created_from:
+                break
+        return out
+
+    def pr_timeline(self, number: int) -> list[dict] | None:
+        """The PR's issue timeline (reviews, comments, commits, force-pushes,
+        labels, duplicate marks, close events), oldest first. Used only for the
+        merge-outcome labels, which are outcomes, so nothing is cut at open.
+        None if unreadable, if any page fails, or past 2000 events: the lost
+        part would be the newest events (the close), so a partial timeline
+        would mislabel the PR rather than leave it unobserved."""
+        events: list[dict] = []
+        for page in range(1, 21):
+            status, data, _ = self._get(
+                f"/repos/{self.owner}/{self.repo}/issues/{number}/timeline",
+                {"per_page": 100, "page": page})
+            if status != 200 or not isinstance(data, list):
+                return None
+            events.extend(data)
+            if len(data) < 100:
+                return events
+        return None
+
+    def force_pushes(self, numbers: list[int], batch: int = 25) -> dict[int, list | None]:
+        """{pr_number: [(pushed_at_iso, before_sha), ...] oldest first} from
+        GraphQL HeadRefForcePushedEvent, which (unlike the REST timeline) keeps
+        the head a force-push replaced. Batched with aliases, so 25 PRs cost one
+        GraphQL call (a separate budget from REST). None for a PR whose batch
+        failed: unknown, not "no force-push"."""
+        out: dict[int, list | None] = {}
+        if not self.token:
+            return {n: None for n in numbers}     # GraphQL needs auth
+        for i in range(0, len(numbers), batch):
+            part = numbers[i:i + batch]
+            fields = " ".join(
+                f"p{n}: pullRequest(number: {int(n)}) {{ timelineItems("
+                f"itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT], first: 100) {{ nodes {{ "
+                f"... on HeadRefForcePushedEvent {{ createdAt beforeCommit {{ oid }} }} }} }} }}"
+                for n in part)
+            q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
+                 f'name: {json.dumps(self.repo)}) {{ {fields} }} }}')
+            for attempt in range(4):
+                status, data, _ = self._get("/graphql", body={"query": q})
+                errs = (data or {}).get("errors") or [] if status == 200 else []
+                if not any(e.get("type") == "RATE_LIMITED" for e in errs):
+                    break
+                time.sleep(60 * (attempt + 1))    # GraphQL quota: wait, then retry
+            repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
+            for n in part:
+                node = (repo_data or {}).get(f"p{n}")
+                if node is None:
+                    out[n] = None                 # batch failed or PR not visible
+                else:
+                    out[n] = [(e.get("createdAt"), (e.get("beforeCommit") or {}).get("oid"))
+                              for e in (node.get("timelineItems") or {}).get("nodes") or []
+                              if e]
+        return out
 
     def check_conclusion(self, sha: str) -> dict:
         """

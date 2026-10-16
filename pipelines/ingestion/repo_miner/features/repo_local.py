@@ -51,14 +51,23 @@ def _ts(s) -> datetime | None:
 
 
 # ---------------------------------------------------------------- per PR
-def sidecar(pr: dict, numstat: list[tuple[int, int, str]], reviews: dict | None) -> dict:
-    """What later PRs need to know about this one (kept in the checkpoint)."""
+def _file_lines(numstat: list[tuple[int, int, str]]) -> dict[str, int]:
     files: dict[str, int] = {}
     for a, d, p in numstat:
         files[p] = files.get(p, 0) + a + d
+    return files
+
+
+def sidecar(pr: dict, numstat: list[tuple[int, int, str]], reviews: dict | None,
+            final_numstat: list[tuple[int, int, str]] | None = None) -> dict:
+    """What later PRs need to know about this one (kept in the checkpoint).
+    `numstat` is the at-open diff, which this PR's own columns are computed
+    from; `final_numstat` is what it landed as, which is what later PRs see
+    of it as history (ADR 0010). Without it both are the same diff."""
     return {
         "opened_at": pr.get("created_at") or pr.get("merged_at"),
-        "files": files,
+        "files": _file_lines(final_numstat if final_numstat is not None else numstat),
+        "open_files": _file_lines(numstat),
         "reviews": reviews,
     }
 
@@ -168,17 +177,25 @@ def _scrutiny_score(reviews: dict, t: datetime) -> float:
 
 def compute_repo(rows: list[dict], releases: list[datetime], st: config.Settings) -> None:
     """Fill the PR-history columns on every row in place (path_size_pctile was
-    set per PR). Rows without a sidecar keep whatever they have."""
+    set per PR). Rows without a sidecar keep whatever they have. Only merged
+    PRs form the history; rows for PRs that never merged (merge-outcome mining)
+    get their columns from it too, but never count as past PRs."""
     pool = []
+    targets = []
     for r in rows:
         sc = r.get(SIDECAR)
-        merged = _ts(r.get("merged_at"))
-        if not sc or merged is None:
+        if not sc:
             continue
-        pool.append({"row": r, "num": r.get("pr_number"), "merged": merged,
-                     "opened": _ts(sc.get("opened_at")) or merged,
-                     "files": set(sc.get("files") or {}),
-                     "reviews": _parse_reviews(sc.get("reviews"))})
+        merged = _ts(r.get("merged_at"))
+        opened = _ts(sc.get("opened_at")) or merged
+        if opened is None:
+            continue
+        q = {"row": r, "num": r.get("pr_number"), "merged": merged, "opened": opened,
+             "files": set(sc.get("files") or {}),
+             "reviews": _parse_reviews(sc.get("reviews"))}
+        targets.append((q, set(sc.get("open_files") or sc.get("files") or {})))
+        if merged is not None:
+            pool.append(q)
     pool.sort(key=lambda q: q["merged"])
     merged_times = [q["merged"] for q in pool]
     by_file: dict[str, list[int]] = {}
@@ -186,8 +203,8 @@ def compute_repo(rows: list[dict], releases: list[datetime], st: config.Settings
         for f in q["files"]:
             by_file.setdefault(f, []).append(i)
 
-    for p in pool:
-        row, t, files = p["row"], p["opened"], p["files"]
+    for p, files in targets:
+        row, t = p["row"], p["opened"]
         row.update(_empty_history_cols())
         row["release_cycle_position"] = _release_cycle_position(t, releases, st)
         # past PRs merged strictly before this PR opened
@@ -235,14 +252,17 @@ def compute_repo(rows: list[dict], releases: list[datetime], st: config.Settings
 
         # --- revealed path scrutiny (reviews before T; no maturity needed)
         sc_start = t - timedelta(days=st.scrutiny_lookback_days)
-        window = [q for q in pool[:n_before]
-                  if q["merged"] >= sc_start and q["reviews"] is not None]
+        lo = bisect.bisect_left(merged_times, sc_start)
+        window = [i for i in range(lo, n_before) if pool[i]["reviews"] is not None]
         if len(window) >= st.scrutiny_min_prior_prs:
-            scores = {id(q): _scrutiny_score(q["reviews"], t) for q in window}
+            scores = {i: _scrutiny_score(pool[i]["reviews"], t) for i in window}
             repo_mean = statistics.fmean(scores.values())
             file_means = []
             for f in files:
-                vals = [scores[id(q)] for q in window if f in q["files"]]
+                # by_file is sorted by merge order, so the window is one slice
+                idx = by_file.get(f, [])
+                a, b = bisect.bisect_left(idx, lo), bisect.bisect_left(idx, n_before)
+                vals = [scores[i] for i in idx[a:b] if i in scores]
                 if len(vals) >= st.scrutiny_min_prior_prs:
                     file_means.append(statistics.fmean(vals))
             if file_means and repo_mean > 0:

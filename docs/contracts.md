@@ -13,6 +13,7 @@ old keys are mapped for exactly one major, then rejected.
 
 | Version | Date | Changes | Migration |
 | --- | --- | --- | --- |
+| 5.4 | 2026-10-16 | `labels.merge_outcome` (ADR 0009): `enabled`, default `true`; `rework_grace_seconds`, `abandon_days`, `close_reason_classifier`, `stale_bot_logins`, `unwanted_labels`. A second target beside `label_bad` | None. Set `enabled: false` to mine `label_bad` only |
 | 5.3 | 2026-09-29 | `labels.target_sources`, default `revert`, `ci_fail`, `hotfix` (ADR 0002). Label weights apply to the per-repo layer only | None. Files without the key get the ADR 0002 target |
 | 5.2 | 2026-09-29 | `labels.unobserved` gains `downweight`, now the default. New `labels.unobserved_weight`, default 0.5 | Set `unobserved: mask` to keep 5.1 behaviour |
 | 5.1 | 2026-09-29 | `labels.unobserved` (mask), `mining.flaky_detection`, `model.backfill`, `policy.languages` for `no_import_from` | None |

@@ -9,7 +9,7 @@ Generated from the schemas by `gen_reference.py`. Do not edit by hand.
 
 ## Rules (`org_rules.schema.json`)
 
-**Version:** 5.3
+**Version:** 5.4
 
 How an organisation manages its code, as flat typed rules (kind + match + value). Orgs may write any number of rules, but the compiler always reduces them to the fixed column set in x-riffle-model-columns. Undeclared means null, never 0. Adding a column is a schema version bump, a retrain, and a decision record. Rules are read point-in-time from git history of the rules file, and the compiled hash is pinned into model_version. Read from the default branch only; an invalid file keeps the last valid compiled rules and posts a notice. Org file: riffle/rules.yml in the org's .github repo. Repo file: .github/riffle/rules.yml, appended after org rules and limited to that repo.
 
@@ -334,6 +334,12 @@ Stacked PR tooling, so a stack is understood as related changes.
 | `labels.unobserved` | `mask`, `negative`, `downweight` | `"downweight"` |  | What to do when a label source had no data for a mature PR (e.g. CI results expired). Any observed source that fired still makes the row positive. Otherwise: mask drops the row; negative counts it as fully clean; downweight counts it as clean with sample weight unobserved_weight |
 | `labels.unobserved_weight` | number 0.05–1 | `0.5` |  | downweight only. Multiplies the row's sample weight for each unobserved source (0.5 with one missing, 0.25 with two) |
 | `labels.target_sources` | list of `revert`, `ci_fail`, `hotfix`, `szz`, `follow_up_fix`, `route_override`, `incident_link`, `external_import` | `["revert", "ci_fail", "hotfix"]` |  | Sources that can make a row positive. Others still get mined and reported as ablations, but do not enter the target |
+| `labels.merge_outcome.enabled` | boolean | `true` |  | Mine closed-unmerged PRs and the merge-outcome labels: label_merged, label_rework, label_duplicate, label_unwanted, label_abandoned, label_ci_technical, close_reason |
+| `labels.merge_outcome.rework_grace_seconds` | integer 0–3600 | `300` |  | Commits and force-pushes this soon after open are part of opening the PR, not rework. Also the cut for the at-open snapshot the features are computed from (docs/adr/0010-features-at-open.md) |
+| `labels.merge_outcome.abandon_days` | integer 14–365 | `60` |  | A PR still open this many days after opening with no human non-author response counts as unmerged and abandoned |
+| `labels.merge_outcome.close_reason_classifier` | `llm`, `rules` | `"llm"` |  | llm: an LLM reads each unmerged PR's comments, reviews and labels up to close and picks close_reason, falling back to rules when the LLM is off or fails. Training data only, never the scoring path |
+| `labels.merge_outcome.stale_bot_logins` | list of string | `["stale[bot]", "stale-bot", "stalebot"]` | union | A PR closed by one of these accounts is abandoned |
+| `labels.merge_outcome.unwanted_labels` | list of string | `["wontfix", "won't fix", "invalid", "not planned", "out of scope", "declined", "rejected", "spam"]` | union | Labels present at close that mark the PR unwanted. Matched case-insensitively as substrings, so `rejected AI` counts |
 
 ### `mining` block
 
