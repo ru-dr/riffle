@@ -153,7 +153,9 @@ class Settings:
     enable_merge_outcome: bool = True
     close_reason_classifier: str = "llm"   # llm (with --llm; rules fallback) | rules
     max_unmerged: int | None = None        # cap unmerged rows per repo (None = the window's real mix)
-    abandon_days: int = 60                 # still open this long with no human response = abandoned
+    abandon_days: int = 60
+    merge_signal_lookback_days: int = 365  # prior PRs counted by the repo-level merge signals
+    merge_signal_min_prs: int = 5          # fewer prior PRs than this -> null rate                 # still open this long with no human response = abandoned
     rework_grace_s: int = 300              # commits/force-pushes this soon after open aren't rework
     stale_bot_logins: tuple[str, ...] = ("stale[bot]", "stale-bot", "stalebot")
     unwanted_labels: tuple[str, ...] = ("wontfix", "won't fix", "invalid", "not planned",
