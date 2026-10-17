@@ -78,15 +78,17 @@ only need `--repo`. `--out` defaults to `<owner>_<name>.parquet`. PRs are
 selected most-recently-**merged** first.
 
 ```text
-flags:
+flags (the best setup is the default; each stage has a --no- form):
   --max-prs N        cap at the N most-recently-merged PRs (omit = all)
+  --min-age-days N   skip PRs merged in the last N days (default 90; 0 = off)
   --append           append rows to --out and dedup by (repo, pr_number);
                      lets one file accumulate across many runs
-  --llm              enable Source 6 LLM semantic flags (needs LLM_API_KEY; costs $/PR)
-  --ci-history       add historical CI-fail-rate features (slow API pre-pass, cached)
-  --szz              add the label_szz_bug fix-tracing label (blame pre-pass, cached)
-  --no-merge-outcome merged PRs and breakage labels only (merge-outcome mining,
-                     ADR 0009, is on by default; 1-2 timeline calls per PR)
+  --llm              LLM semantic flags + close-reason classifier (default on;
+                     switched off with a warning when no backend is usable)
+  --ci-history       historical CI-fail-rate features (<=400 API calls, cached; on)
+  --szz              label_szz_bug fix-tracing label (windowed, cached; on)
+  --declared-labels  declared_hotfix, labels at open (from the timeline; on)
+  --merge-outcome    closed-unmerged + stale-open PRs and merge labels (on)
   --max-unmerged N   cap unmerged rows per repo (default: the repo's real mix)
   --no-network       git-only: no PR list, no labels, no OSV (features only)
   --no-scanners      skip lizard + semgrep
@@ -96,8 +98,9 @@ flags:
 Output is one row per closed PR (merged only with `--no-merge-outcome`). Each row records `mined_at`; PRs merged too
 recently may not have their outcome yet, so decide maturity at training time
 (see the snippet under *Build a dataset*).
-`--ci-history`, `--szz`, `--declared-labels` and `--llm` are off by default;
-their columns come back `null`/`False` until enabled.
+Every stage is on by default; `--no-llm`, `--no-szz`, `--no-ci-history`,
+`--no-declared-labels` and `--no-merge-outcome` turn one off, and its columns
+then come back `null`.
 
 ## Splitting, waiting, and resuming
 
@@ -321,6 +324,26 @@ before v2.0.0 need a re-mine to get merge labels.
   no feature is null only because a PR didn't merge (that pattern would give
   `label_merged` away). LLM spend grows with the row count.
 
+
+## Merge-model signals (`features/merge_signals.py`)
+
+The AIDev catalog's merge-model features the miner's own data can supply:
+
+- Per PR: `has_linked_issue`, `body_headings`, `body_checklist_items`,
+  `body_has_test_plan`, `agent_boilerplate` (from the body); `agent_name`
+  (claude_code, codex, copilot, cursor, devin, jules, sweep: from login,
+  head branch, git identity, watermark) and `head_branch_agent_prefix`;
+  `author_account_age_days` (one cached `/users` call per author);
+  `has_contributing`, `has_agents_md` (files at the base commit).
+- Per repo, prior-only (PRs closed strictly before this one opened, last 365
+  days; null under 5 PRs): `repo_outside_merge_rate` (+ count),
+  `agent_recent_merge_rate` (+ count), `repo_median_first_response_hours`,
+  `repo_agent_pr_load_30d`, `max_sim_open_prs` and `max_sim_recent_merged`
+  (word-set Jaccard of title at open + body). The merge rates need
+  unmerged rows, so they stay null with `--no-merge-outcome`.
+
+The body is read at mining time (its edits are not in the timeline), so the
+body features can see edits made after open.
 
 ## At-open snapshot (ADR 0010)
 
