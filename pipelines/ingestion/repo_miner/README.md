@@ -275,6 +275,30 @@ Six label columns, filled from outcomes after merge (not inference inputs):
   `mined_at - merged_at` is at least your chosen threshold (e.g. 30 days, longer
   for SZZ).
 
+## SZZ window
+
+`--szz` blames only fix commits dated between the oldest mined merge and the
+newest merge + `szz_maturity_days`: a fix outside that range can't count for
+any mined PR, so the labels are identical (tested in
+`tests/test_szz_equivalence.py`) for far less blame work (pallets/click, 60
+PRs: 20 fix commits instead of 672). The cache records its window and is
+reused only when it covers the one needed.
+
+Within those, it blames only files whose history (renames followed, found
+with a looser threshold so none are missed) the mined PRs' commits touched:
+no other blame can land on a commit any label reads. Each mined PR's SZZ
+entries stay exactly what a full build gives (checked on five repos, and
+`test_relevant_pruning_follows_renames`); click went to 9 fix commits, and on
+a 500-commit window SZZ ran 1.3-3.9x faster.
+
+Also: one `git diff` per fix commit instead of one per file; HEAD's commits
+come from the history cache the miner loads anyway, not a second full
+`git log`; tasks go to the process pool a few at a time; and the cache and
+checkpoint carry a fingerprint (SZZ version, HEAD, blame flags, ignore-revs
+content), so results made under other settings are never reused. Indexes were
+checked identical, order included, on itsdangerous, click, flask, werkzeug and
+requests. Blame is ~90% of SZZ time, so these trim only a few percent.
+
 ## What still needs your environment
 
 `features/llm_flags._call_llm` is provider-specific — the default targets Claude
