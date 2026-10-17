@@ -436,9 +436,11 @@ class RiffleTUI(App):
                 yield Select(MODELS, value="sonnet", allow_blank=False, id="llm_model", compact=True)
                 yield Checkbox("LLM flags (claude -p)", True, id="llm", compact=True)
                 yield Checkbox("SZZ label", True, id="szz", compact=True)
-                yield Checkbox("CI history", False, id="ci_history", compact=True)
+                yield Checkbox("CI history", True, id="ci_history", compact=True)
+                yield Checkbox("Merge outcome (+ unmerged PRs)", True, id="merge_outcome",
+                               compact=True)
                 yield Checkbox("Scanners (lizard/semgrep)", True, id="scanners", compact=True)
-                yield Checkbox("API contract diff", False, id="api_contract", compact=True)
+                yield Checkbox("API contract diff", True, id="api_contract", compact=True)
                 yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
                 yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
                 yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
@@ -679,7 +681,7 @@ class RiffleTUI(App):
                "--clone-dir", self._val("clone_dir") or "cloned_repos"]
         if self._val("max_prs"):
             cmd += ["--max-prs", self._val("max_prs")]
-        if self._val("min_age") and self._val("min_age") != "0":
+        if self._val("min_age"):
             cmd += ["--min-age-days", self._val("min_age")]
         shard = self._shard()
         if shard:
@@ -689,11 +691,14 @@ class RiffleTUI(App):
         if self._val("llm_conc"):
             cmd += ["--llm-concurrency", self._val("llm_conc")]
         cmd += ["--llm-model", self._model()]
-        for wid, flag in [("llm", "--llm"), ("szz", "--szz"), ("ci_history", "--ci-history"),
-                          ("skip_existing", "--skip-existing"), ("keep_clones", "--keep-clones"),
+        for wid, flag in [("llm", "llm"), ("szz", "szz"), ("ci_history", "ci-history")]:
+            cmd.append(f"--{flag}" if self._on(wid) else f"--no-{flag}")
+        for wid, flag in [("skip_existing", "--skip-existing"), ("keep_clones", "--keep-clones"),
                           ("auto_remine", "--auto-remine")]:
             if self._on(wid):
                 cmd.append(flag)
+        if not self._on("merge_outcome"):
+            cmd.append("--no-merge-outcome")
         if not self._on("scanners"):
             cmd.append("--no-scanners")
         if not self._on("api_contract"):

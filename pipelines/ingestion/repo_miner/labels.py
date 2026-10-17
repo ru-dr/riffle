@@ -43,6 +43,16 @@ import config
 import gitio
 
 
+# build_labels' outcome columns other than mined_at / observed_through: null on
+# rows for PRs that never merged (there is no post-merge outcome to observe)
+POST_MERGE_COLUMNS = (
+    "days_to_revert", "days_to_hotfix", "days_to_szz_fix",
+    "label_revert", "label_ci_fail", "label_ci_fail_optional", "label_hotfix",
+    "label_szz_bug", "label_bad",
+    "ci_observed", "revert_window_closed", "hotfix_window_closed", "label_bad_observed",
+)
+
+
 def _parse_ts(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 

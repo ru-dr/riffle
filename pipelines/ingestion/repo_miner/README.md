@@ -7,7 +7,8 @@ features supplied elsewhere.
 
 ## What it produces
 
-One table (`.parquet` or `.jsonl`), one row per merged PR, with:
+One table (`.parquet` or `.jsonl`), one row per closed PR (merged, and since
+v2.0.0 closed-unmerged too; see *Merge-outcome labels*), with:
 
 | Source | Module | Examples |
 |---|---|---|
@@ -20,6 +21,7 @@ One table (`.parquet` or `.jsonl`), one row per merged PR, with:
 | 5 — deterministic | `features/deterministic.py` | secrets, env keys, off-by-one edits, migration reversibility |
 | 6 — LLM flags | `features/llm_flags.py` | authz change, error-handling removed, semantic risk (opt-in) |
 | Labels | `labels.py` | `label_revert`, `label_ci_fail`, `label_ci_fail_optional`, `label_hotfix`, `label_szz_bug`, `label_bad` (+ `mined_at`) |
+| Merge-outcome labels | `merge_labels.py` | `label_merged`, `label_rework`, `close_reason` and its flags (default on; `--no-merge-outcome` drops them) |
 
 Per-file features are collapsed to fixed `max_/mean_/sum_/min_` columns by
 `aggregate.py`, so every PR yields the same schema regardless of how many files
@@ -27,8 +29,10 @@ it touches.
 
 ## Design guarantees
 
-- **Point-in-time.** All history/blame features walk commits strictly *before*
-  the base commit's timestamp. Nothing from after the PR opened is used.
+- **Point-in-time.** Diff features come from the PR as it stood when it
+  opened (ADR 0010; `open_snapshot` says how that state was found), and
+  history/blame features walk commits strictly *before* its fork point.
+  Nothing from after the PR opened is used.
 - **Deterministic-first.** Parsers/regex/linters are preferred over the LLM
   wherever an exact answer exists (secrets, off-by-one, migrations).
 - **Graceful degradation.** If a tool (lizard, semgrep) or the network is
@@ -74,23 +78,29 @@ only need `--repo`. `--out` defaults to `<owner>_<name>.parquet`. PRs are
 selected most-recently-**merged** first.
 
 ```text
-flags:
+flags (the best setup is the default; each stage has a --no- form):
   --max-prs N        cap at the N most-recently-merged PRs (omit = all)
+  --min-age-days N   skip PRs merged in the last N days (default 90; 0 = off)
   --append           append rows to --out and dedup by (repo, pr_number);
                      lets one file accumulate across many runs
-  --llm              enable Source 6 LLM semantic flags (needs LLM_API_KEY; costs $/PR)
-  --ci-history       add historical CI-fail-rate features (slow API pre-pass, cached)
-  --szz              add the label_szz_bug fix-tracing label (slow blame pre-pass, cached)
+  --llm              LLM semantic flags + close-reason classifier (default on;
+                     switched off with a warning when no backend is usable)
+  --ci-history       historical CI-fail-rate features (<=400 API calls, cached; on)
+  --szz              label_szz_bug fix-tracing label (windowed, cached; on)
+  --declared-labels  declared_hotfix, labels at open (from the timeline; on)
+  --merge-outcome    closed-unmerged + stale-open PRs and merge labels (on)
+  --max-unmerged N   cap unmerged rows per repo (default: the repo's real mix)
   --no-network       git-only: no PR list, no labels, no OSV (features only)
   --no-scanners      skip lizard + semgrep
   --no-api-contract  skip oasdiff / buf / graphql-inspector spec diffing
 ```
 
-Output is one row per merged PR. Each row records `mined_at`; PRs merged too
+Output is one row per closed PR (merged only with `--no-merge-outcome`). Each row records `mined_at`; PRs merged too
 recently may not have their outcome yet, so decide maturity at training time
 (see the snippet under *Build a dataset*).
-`--ci-history`, `--szz`, and `--llm` are off by default; their columns come back
-`null`/`False` until enabled.
+Every stage is on by default; `--no-llm`, `--no-szz`, `--no-ci-history`,
+`--no-declared-labels` and `--no-merge-outcome` turn one off, and its columns
+then come back `null`.
 
 ## Splitting, waiting, and resuming
 
@@ -320,6 +330,7 @@ config.py        path rules, tunables, stage toggles
 gitio.py         point-in-time git helpers (log/blame/show/diff at base SHA)
 github_api.py    PR list, CI check conclusions, labels (rate-limit aware)
 labels.py        revert / CI-fail / hotfix labels + maturity cutoff
+merge_labels.py  merge-outcome labels from the PR timeline (ADR 0009)
 aggregate.py     per-file dicts -> fixed max/mean/sum/min columns
 features/
   diff_stats.py    Source 4a/4b + per-PR Kamei metrics

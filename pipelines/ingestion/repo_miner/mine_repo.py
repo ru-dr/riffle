@@ -79,7 +79,10 @@ def _is_agent_identity(email: str, name: str) -> bool:
 def _feat_head(repo: str, pr: dict) -> str | None:
     """The SHA whose git author is the PR author and whose diff is the PR's
     change. For a 2-parent merge that's the merged branch tip (p2); for a
-    squash / normal merge it's the merge commit itself."""
+    squash / normal merge it's the merge commit itself. For a PR that never
+    merged it's the PR's head (its merge_commit_sha is GitHub's test merge)."""
+    if pr.get("_unmerged"):
+        return (pr.get("head") or {}).get("sha")
     head = pr.get("merge_commit_sha") or (pr.get("head") or {}).get("sha")
     if not head:
         return None
@@ -99,7 +102,10 @@ def _pr_diff_range(repo: str, pr: dict,
         by base_resolver so the diff covers all N replayed commits, not just the
         last one. base_resolver returns None for squash/normal (use merge^1).
       - root commit (no parents) -> (API base.sha, merge)
+      - closed-unmerged PR -> (merge-base(base, head), head), set by mine_repo
     """
+    if pr.get("_unmerged"):
+        return pr.get("_git_base"), (pr.get("head") or {}).get("sha")
     head = pr.get("merge_commit_sha") or (pr.get("head") or {}).get("sha")
     if not head:
         return None, None
@@ -325,52 +331,59 @@ def _author_prs_merged_repo(author_email: str, cutoff_raw: str | None,
 
 
 def _build_concurrency(repo: str, prs: list[dict],
-                       base_resolver=None) -> dict[int, dict]:
+                       base_resolver=None, workers: int = 1) -> dict[int, dict]:
     """
     For each PR, count OTHER PRs that were open at the moment it opened and
     touch the same files (and, more finely, the same lines). Point-in-time by
     construction: a PR Q counts for P only if Q opened at/before P and was still
-    open when P opened. Files/lines come from the local clone via the corrected
-    PR diff range — no extra API.
+    open when P opened. Files/lines come from the local clone, from each PR's
+    at-open diff where known (ADR 0010), else its final diff — no extra API.
 
     Note: computed over the fetched PR set, so a small --max-prs cap undercounts
     (it only sees PRs in that window); a full mine sees all merged PRs. PRs that
     closed without merging aren't in the list and are not counted.
     """
-    meta: list[dict | None] = []
-    for pr in prs:
+    def _one(pr: dict) -> dict | None:
         created = pr.get("created_at")
         closed = pr.get("merged_at") or pr.get("closed_at")
-        base, head = _pr_diff_range(repo, pr, base_resolver)
+        if not closed and pr.get("_stale_open"):
+            closed = "9999-12-31T00:00:00Z"            # still open
+        snap = pr.get("_open") or {}
+        base, head = ((snap["base"], snap["head"]) if snap.get("head")
+                      else _pr_diff_range(repo, pr, base_resolver))
         num = pr.get("number")
         if not (created and closed and base and head and num is not None):
-            meta.append(None)
-            continue
+            return None
         try:
             lines = gitio.changed_lines_by_file(repo, base, head)
         except Exception:
             lines = {}
-        meta.append({
-            "num": num, "created": _parse_ts(created), "close": _parse_ts(closed),
-            "files": set(lines.keys()), "lines": lines,
-        })
+        return {"num": num, "created": _parse_ts(created), "close": _parse_ts(closed),
+                "files": set(lines.keys()), "lines": lines}
 
+    # one `git diff -U0` per PR, in parallel (the work is git subprocesses)
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        meta = [m for m in pool.map(_one, prs) if m is not None]
+
+    # only PRs sharing a file can count for each other: index files -> PRs
+    by_file: dict[str, list[int]] = defaultdict(list)
+    for j, q in enumerate(meta):
+        for f in q["files"]:
+            by_file[f].append(j)
     out: dict[int, dict] = {}
     for i, p in enumerate(meta):
-        if p is None:
-            continue
         same_files = same_hunks = 0
-        for j, q in enumerate(meta):
-            if q is None or i == j:
+        for j in {j for f in p["files"] for j in by_file[f]}:
+            if j == i:
                 continue
+            q = meta[j]
             # was Q open at the instant P opened?
             if q["created"] <= p["created"] < q["close"]:
                 shared = p["files"] & q["files"]
-                if shared:
-                    same_files += 1
-                    if any(p["lines"].get(f) and q["lines"].get(f)
-                           and (p["lines"][f] & q["lines"][f]) for f in shared):
-                        same_hunks += 1
+                same_files += 1
+                if any(p["lines"].get(f) and q["lines"].get(f)
+                       and (p["lines"][f] & q["lines"][f]) for f in shared):
+                    same_hunks += 1
         out[p["num"]] = {
             "concurrent_open_prs_same_files": same_files,
             "concurrent_open_prs_same_hunks": same_hunks,
@@ -402,9 +415,10 @@ def _pr_metadata(pr: dict) -> dict:
         "body_len": len(pr.get("body") or ""),
         "has_milestone": pr.get("milestone") is not None,
         "targets_default_branch": None,   # filled by caller (needs default branch)
-        "head_from_fork": (pr.get("head", {}) or {}).get("repo", {}) is not None and
-                          (pr.get("head", {}).get("repo", {}) or {}).get("full_name")
-                          != (pr.get("base", {}).get("repo", {}) or {}).get("full_name"),
+        # None when the head repo is gone (a deleted fork): unknown, not "same repo"
+        "head_from_fork": (None if not ((pr.get("head") or {}).get("repo") or {}).get("full_name")
+                           else pr["head"]["repo"]["full_name"]
+                           != ((pr.get("base") or {}).get("repo") or {}).get("full_name")),
         "author_association": pr.get("author_association"),
     }
 
@@ -417,27 +431,54 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
             szz_shas: dict | None = None,
             obs_cutoff: datetime | None = None,
             base_resolver=None) -> dict | None:
-    # corrected PR diff/feature range (see _pr_diff_range) — immune to a stale
-    # API base.sha pulling in unrelated main commits
-    base_sha, head_sha = _pr_diff_range(repo, pr, base_resolver)
+    # Two ranges (ADR 0010). The final range (see _pr_diff_range: what landed,
+    # immune to a stale API base.sha) keys the post-merge labels. Features use
+    # the PR as it stood when it opened (pr["_open"], set by
+    # _resolve_open_snapshots), which is what the scorer sees; when that can't be
+    # recovered they fall back to the final range and open_snapshot says so.
+    final_base, final_head = _pr_diff_range(repo, pr, base_resolver)
     merge_sha = pr.get("merge_commit_sha") or (pr.get("head") or {}).get("sha")
-    if not base_sha or not head_sha:
+    if not final_base or not final_head:
         return None
     try:
-        gitio.rev_parse(repo, base_sha)
-        gitio.rev_parse(repo, head_sha)
+        gitio.rev_parse(repo, final_base)
+        gitio.rev_parse(repo, final_head)
     except gitio.GitError:
         return None  # clone too shallow / commit missing
+    snap = pr.get("_open") or {}
+    if snap.get("head"):
+        base_sha, head_sha, snapshot_kind = snap["base"], snap["head"], snap["kind"]
+    else:
+        base_sha, head_sha, snapshot_kind = final_base, final_head, "final"
 
     numstat = gitio.diff_numstat(repo, base_sha, head_sha)
     changed = [p for _, _, p in numstat]
+    if not changed and snapshot_kind != "final":
+        base_sha, head_sha, snapshot_kind = final_base, final_head, "final"
+        numstat = gitio.diff_numstat(repo, base_sha, head_sha)
+        changed = [p for _, _, p in numstat]
     if not changed:
         return None
+    if snapshot_kind == "final":
+        final_numstat = numstat
+    else:
+        final_numstat = gitio.diff_numstat(repo, final_base, final_head)
+    final_changed = [p for _, _, p in final_numstat] or changed
 
     # PR-author identity (mailmap-canonical) from the commit whose author is the
     # PR author — NOT the merge commit, whose author is the maintainer who merged
     feat_head = _feat_head(repo, pr) or head_sha
     head_email, head_name = _pr_author_identity(repo, feat_head)
+
+    # the PR's timeline, fetched once: merge-outcome labels, and the title,
+    # milestone and labels as they were at open (the PR object holds today's)
+    events = pr.get("_events")
+    if events is None and api is not None and pr.get("number") is not None and (
+            st.enable_merge_outcome or st.enable_declared_labels):
+        events = api.pr_timeline(pr["number"])
+    opened = pr.get("created_at")
+    meta_open = (at_open(pr, events, _parse_ts(opened) + timedelta(seconds=st.rework_grace_s))
+                 if events is not None and opened else None)
     row: dict = {
         "repo": f"{api.owner}/{api.repo}" if api else os.path.basename(repo),
         "pr_number": pr.get("number"),
@@ -445,7 +486,12 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         "merged_at": pr.get("merged_at"),
         "merge_via": pr.get("merge_via", "github"),   # github | landed_commit
         "author_email": head_email,
+        # exact | recovered | approx | final: how the at-open diff was found
+        "open_snapshot": snapshot_kind,
     }
+    if st.enable_merge_outcome:
+        row["created_at"] = pr.get("created_at")
+        row["closed_at"] = pr.get("closed_at")
 
     # --- Source 4a/4b: diff stats + high-risk paths
     row.update(diff_stats.compute(repo, base_sha, head_sha, st))
@@ -478,7 +524,8 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     # FIX (2a): is this PR itself a bug fix (by title / head-commit keyword)
     head_subject = gitio._run(repo, "show", "-s", "--format=%s", feat_head,
                               check=False).strip()
-    row["FIX"] = history.is_fix_pr(pr.get("title", ""), head_subject, st)
+    row["FIX"] = history.is_fix_pr(meta_open["title"] if meta_open else pr.get("title", ""),
+                                   head_subject, st)
     # real PR-based author experience (not the commit-count proxy); point-in-time,
     # keyed on the PR-author identity (same identity as EXP)
     row["author_prs_merged_repo"] = _author_prs_merged_repo(
@@ -493,14 +540,11 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     # repo-relative percentiles (how big/spread this PR is for THIS repo)
     row.update(history.percentile_features(
         row["LA"] + row["LD"], row["NF"], row["Entropy"], idx))
-    # integration staleness: how far the ORIGINAL API base lagged main at merge
-    # time (also a contamination indicator — large values flag stale bases). Uses
-    # the API base.sha deliberately, not the corrected point-in-time base.
-    api_base = (pr.get("base") or {}).get("sha")
+    # integration staleness at open: how many base-branch commits the PR's
+    # fork point was behind the base branch when the PR opened
     row["base_behind_by"] = None
-    parent = gitio.rev_parse_safe(repo, f"{merge_sha}^1") if merge_sha else None
-    if api_base and parent:
-        row["base_behind_by"] = gitio.commits_behind(repo, api_base, parent)
+    if snapshot_kind != "final":
+        row["base_behind_by"] = snap.get("behind")
 
     # concurrent open PRs touching the same files / hunks (integration risk)
     conc = (concurrency or {}).get(pr.get("number"))
@@ -529,15 +573,33 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     reviews = None
     if api is not None and st.enable_review_history and pr.get("number") is not None:
         reviews = api.review_events(pr["number"], st.scrutiny_exclude_bot_reviews)
-    row[repo_local.SIDECAR] = repo_local.sidecar(pr, numstat, reviews)
+    row[repo_local.SIDECAR] = repo_local.sidecar(pr, numstat, reviews, final_numstat)
 
     # fetched here (worker thread); resolved in PR order by mine_repo()
     row["__llm__"] = llm_flags.fetch(repo, base_sha, head_sha, st)
 
     # --- Source 4c: PR metadata (needs the API PR object)
     md = _pr_metadata(pr)
+    if meta_open:
+        md["title_len"] = len(meta_open["title"])
+        md["has_milestone"] = meta_open["has_milestone"]
+
+    # --- merge-model signals from the AIDev catalog (features/merge_signals.py)
+    login = (pr.get("user") or {}).get("login")
+    head_ref = (pr.get("head") or {}).get("ref")
+    md.update(merge_signals.body_features(pr.get("body")))
+    md["agent_name"] = merge_signals.agent_name(login, head_ref, head_email, pr.get("body"))
+    md["head_branch_agent_prefix"] = (None if head_ref is None else
+                                      bool(merge_signals._BRANCH_PREFIX_RE.match(head_ref)))
+    created_acct = api.user_created_at(login) if api is not None else None
+    md["author_account_age_days"] = (
+        round((_parse_ts(opened) - _parse_ts(created_acct)).total_seconds() / 86400, 1)
+        if created_acct and opened else None)
+    md.update(merge_signals.repo_files_at(repo, base_sha))
     md["targets_default_branch"] = (pr.get("base", {}) or {}).get("ref") == default_branch
     row.update(md)
+    row[merge_signals.SIDECAR] = merge_signals.sidecar(
+        pr, row, events, meta_open["title"] if meta_open else None)
 
     # declared_hotfix: leak-free replacement for the dropped label_is_hotfix.
     # Was an urgent/hotfix LABEL present AT OPEN (point-in-time, from the
@@ -545,18 +607,32 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     # the timeline is unreadable. This is an author/triager prior set BEFORE
     # review — it does not read post-merge labels, so it can't leak the outcome.
     declared = None
-    if api is not None and getattr(st, "enable_declared_labels", False):
-        created = pr.get("created_at")
-        if created and pr.get("number") is not None:
-            labs = api.labels_at(pr["number"], created, st.declared_label_grace_s)
-            if labs is not None:
-                declared = any(("hotfix" in l or "rollback" in l) for l in labs)
+    if getattr(st, "enable_declared_labels", False) and events is not None and opened:
+        labs = at_open(pr, events, _parse_ts(opened)
+                       + timedelta(seconds=st.declared_label_grace_s))["labels"]
+        declared = any(("hotfix" in l or "rollback" in l) for l in labs)
     row["declared_hotfix"] = declared
 
     # --- Labels (revert/CI/hotfix key on the real merge commit; SZZ on the
     # corrected PR range). obs_cutoff bounds how far forward outcomes were seen.
-    row.update(build_labels(repo, pr, changed, api, snapshot, st, szz_shas,
-                            obs_cutoff=obs_cutoff, pr_base=base_sha, pr_head=head_sha))
+    # A PR that never merged has no post-merge outcome: those columns are null.
+    if pr.get("_unmerged"):
+        row.update({k: None for k in POST_MERGE_COLUMNS})
+        row["mined_at"] = snapshot.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        row["observed_through"] = None
+    else:
+        row.update(build_labels(repo, pr, final_changed, api, snapshot, st, szz_shas,
+                                obs_cutoff=obs_cutoff, pr_base=final_base, pr_head=final_head))
+
+    # --- Merge-outcome labels (ADR 0009), from the PR's timeline
+    if st.enable_merge_outcome:
+        ci_head = llm_reason = None
+        if api is not None and pr.get("number") is not None:
+            if pr.get("_unmerged") and not pr.get("_stale_open"):
+                ci_head = api.check_conclusion(final_head).get("required")
+                if events is not None:
+                    llm_reason = classify_close(pr, events, st)
+        row.update(build_merge_labels(pr, events, ci_head, st, llm_reason))
     return row
 
 
@@ -644,6 +720,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     api = GitHubAPI(owner, name, st) if st.enable_github_api else None
     rows: list[dict] = []
+    unmerged: list[dict] = []
     discovery = getattr(st, "pr_discovery", "api")
 
     progress.emit("stage", repo=f"{owner}/{name}", stage="fetching PRs")
@@ -656,6 +733,9 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
             " (API off: no labels; metadata approximated from git)"
         print(f"[discover] git-primary: {len(prs)} merged PRs from commit "
               f"messages{note}", file=sys.stderr)
+        if st.enable_merge_outcome:
+            print("[merge-outcome] git-primary discovery finds merged PRs only; "
+                  "use --pr-discovery api to mine closed-unmerged PRs", file=sys.stderr)
     else:
         if api is None:
             print("[warn] GitHub API disabled and pr_discovery=api: no PR list, "
@@ -665,6 +745,12 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         prs = list(api.merged_prs(
             resolver=_landed_resolver(repo, owner, name, default_branch)))
         print(f"[fetch] {len(prs)} merged PRs to process", file=sys.stderr)
+        if st.enable_merge_outcome:
+            stale = _stale_open_prs(api, prs, st)
+            unmerged = _prepare_unmerged(repo, api.unmerged + stale, default_branch)
+            print(f"[merge-outcome] {len(unmerged)} of {len(api.unmerged) + len(stale)} "
+                  f"unmerged PRs have fetchable commits ({len(stale)} still open past "
+                  f"{st.abandon_days} days with no response)", file=sys.stderr)
         if getattr(api, "incomplete", False):
             print("[warn] PR list is TRUNCATED (an API page failed); label coverage "
                   "for this repo is partial — record this in the coverage analysis.",
@@ -681,9 +767,16 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
             print("[ci] branch protection not readable; using built-in optional-check "
                   "denylist (heuristic)", file=sys.stderr)
 
-    author_pr_times = _build_author_pr_times(repo, prs)
+    # the rebase sniff reads merge commits, so it sees merged PRs only; the
+    # unmerged PRs join after it (author counts skip them: never merged)
     base_resolver = _make_base_resolver(repo, api, prs, st)
-    concurrency = _build_concurrency(repo, prs, base_resolver)
+    if unmerged:
+        prs = prs + unmerged
+    author_pr_times = _build_author_pr_times(repo, prs)
+    if api is not None:
+        progress.emit("stage", repo=f"{owner}/{name}", stage="open snapshots")
+        _resolve_open_snapshots(repo, prs, api, default_branch, st)
+    concurrency = _build_concurrency(repo, prs, base_resolver, st.workers)
     ci_map = {}
     if st.enable_ci_history and api is not None:
         cache_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.json")
@@ -846,8 +939,12 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     # computed once all rows are in (strictly point-in-time per row)
     if not st.llm_breaker_tripped:
         repo_local.compute_repo(rows, repo_local.release_tags(repo, st), st)
+        merge_signals.compute_repo(rows, st, with_unmerged=st.enable_merge_outcome)
     for r in rows:
         r.pop(repo_local.SIDECAR, None)
+        r.pop(merge_signals.SIDECAR, None)
+        for col in merge_signals.COLUMNS:
+            r.setdefault(col, None)
         for col in repo_local.COLUMNS:
             r.setdefault(col, 0 if col == "similar_pr_count" else None)
 
@@ -883,13 +980,14 @@ def main():
     ap.add_argument("--out", default=None,
                     help="output .parquet or .jsonl (defaults to <owner>_<n>.parquet)")
     ap.add_argument("--max-prs", type=int, default=None)
-    ap.add_argument("--min-age-days", type=int, default=0,
+    ap.add_argument("--min-age-days", type=int, default=90,
                     help="skip PRs merged in the last N days so labels are mature "
-                         "(90 recommended: covers the 30-day maturity and 90-day SZZ windows)")
-    ap.add_argument("--llm", action="store_true",
-                    help="enable LLM semantic flags (Source 6); default backend is headless "
-                         "Claude Code (`claude -p`); LLM_BACKEND=api uses LLM_API_KEY")
-    ap.add_argument("--no-llm", action="store_true")
+                         "(default 90: covers the 30-day maturity and 90-day SZZ windows; 0 = off)")
+    ap.add_argument("--llm", action=argparse.BooleanOptionalAction, default=True,
+                    help="LLM semantic flags (Source 6) and the close-reason classifier "
+                         "(default on; off automatically when no backend is usable). Default "
+                         "backend is headless Claude Code (`claude -p`); LLM_BACKEND=api uses "
+                         "LLM_API_KEY")
     ap.add_argument("--llm-model", default=None,
                     help="model for the LLM flags, e.g. sonnet, opus, haiku (default: LLM_MODEL or sonnet)")
     ap.add_argument("--llm-test", action="store_true",
@@ -899,13 +997,22 @@ def main():
     ap.add_argument("--no-scanners", action="store_true")
     ap.add_argument("--no-api-contract", action="store_true",
                     help="skip oasdiff/buf/graphql-inspector spec diffing")
-    ap.add_argument("--ci-history", action="store_true",
-                    help="build historical CI-fail-rate features (slow API pre-pass, cached)")
-    ap.add_argument("--szz", action="store_true",
-                    help="add the SZZ fix-tracing label (catches fix-forward defects; slow, cached)")
-    ap.add_argument("--declared-labels", action="store_true",
-                    help="add the declared_hotfix feature (at-open hotfix label via "
-                         "the timeline API; 1 extra call per PR)")
+    ap.add_argument("--ci-history", action=argparse.BooleanOptionalAction, default=True,
+                    help="historical CI-fail-rate features (API pre-pass, <=400 calls, cached; "
+                         "default on)")
+    ap.add_argument("--szz", action=argparse.BooleanOptionalAction, default=True,
+                    help="SZZ fix-tracing label (windowed to the mined PRs, cached; default on)")
+    ap.add_argument("--declared-labels", action=argparse.BooleanOptionalAction, default=True,
+                    help="declared_hotfix feature (labels at open, from the timeline the "
+                         "merge-outcome labels fetch anyway; default on)")
+    ap.add_argument("--merge-outcome", action=argparse.BooleanOptionalAction, default=True,
+                    help="merge-outcome target (ADR 0009, default on): also mine "
+                         "closed-unmerged PRs and add label_merged / rework / close-reason "
+                         "columns from each PR's timeline (1-2 extra calls per PR). "
+                         "--no-merge-outcome mines merged PRs for label_bad only")
+    ap.add_argument("--max-unmerged", type=int, default=None,
+                    help="cap unmerged rows per repo, newest first (default: every "
+                         "unmerged PR in the merged PRs' window, the repo's real mix)")
     ap.add_argument("--pr-discovery", choices=["api", "git"], default="api",
                     help="how to enumerate merged PRs: 'api' (PR-list endpoint, "
                          "default) or 'git' (parse commit messages for PR links; "
@@ -947,20 +1054,24 @@ def main():
     st = config.Settings()
     st.max_prs = args.max_prs
     st.min_age_days = args.min_age_days
-    if args.llm:
-        st.enable_llm = True
-    if args.no_llm:
-        st.enable_llm = False
+    st.enable_llm = args.llm
     if args.no_scanners:
         st.enable_scanners = False
     if args.no_api_contract:
         st.enable_api_contract = False
-    if args.ci_history:
-        st.enable_ci_history = True
-    if args.szz:
-        st.enable_szz = True
-    if args.declared_labels:
-        st.enable_declared_labels = True
+    st.enable_ci_history = args.ci_history
+    st.enable_szz = args.szz
+    st.enable_declared_labels = args.declared_labels
+    if st.enable_llm:
+        why = llm_flags.unavailable_reason(st)
+        if why:
+            # on by default, so a box without an LLM must still mine: drop the
+            # stage instead of tripping the breaker five PRs in
+            print(f"[llm] off: {why}. LLM flags and the close-reason classifier "
+                  f"stay null; close_reason uses the rules.", file=sys.stderr)
+            st.enable_llm = False
+    st.enable_merge_outcome = args.merge_outcome
+    st.max_unmerged = args.max_unmerged
     st.pr_discovery = args.pr_discovery
     if args.llm_model:
         st.llm_model = args.llm_model

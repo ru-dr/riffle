@@ -18,8 +18,10 @@ dataset with half-populated Source-6 columns.
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -358,7 +360,8 @@ def _err_retry_after(e) -> int | None:
     return None
 
 
-def _call_llm(diff: str, st: config.Settings):
+def _call_llm(diff: str, st: config.Settings, system: str | None = None,
+              prefix: str = "Git diff:\n\n"):
     """
     Call the configured chat model (default: Claude via Anthropic's
     OpenAI-compatible endpoint) to extract the Source-6 semantic flags from the
@@ -381,8 +384,8 @@ def _call_llm(diff: str, st: config.Settings):
             resp = client.chat.completions.create(
                 model=st.llm_model,
                 messages=[
-                    {"role": "system", "content": _SYSTEM + _schema_prompt()},
-                    {"role": "user", "content": "Git diff:\n\n" + diff},
+                    {"role": "system", "content": system or (_SYSTEM + _schema_prompt())},
+                    {"role": "user", "content": prefix + diff},
                 ],
             )
             u = getattr(resp, "usage", None)
@@ -432,7 +435,9 @@ def _json_schema() -> dict:
 _CLI_WORKDIR: str | None = None
 
 
-def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2):
+def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
+                     system: str | None = None, schema: dict | None = None,
+                     prefix: str = "Git diff:\n\n"):
     """
     Run headless Claude Code (`claude -p`) on the diff with a JSON schema.
     Uses the local Claude Code login (no API key). Runs from an empty temp dir
@@ -444,6 +449,7 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2):
     with _LIMITER_LOCK:
         if _CLI_WORKDIR is None:
             _CLI_WORKDIR = tempfile.mkdtemp(prefix="riffle-llm-")
+            atexit.register(shutil.rmtree, _CLI_WORKDIR, True)
     cmd = [
         "claude", "-p",
         "--output-format", "json",
@@ -453,12 +459,12 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2):
         "--strict-mcp-config",
         "--disable-slash-commands",
         "--no-session-persistence",
-        "--system-prompt", _SYSTEM + _schema_prompt(),
-        "--json-schema", json.dumps(_json_schema()),
+        "--system-prompt", system or (_SYSTEM + _schema_prompt()),
+        "--json-schema", json.dumps(schema or _json_schema()),
     ]
     for attempt in range(retries + 1):
         try:
-            p = subprocess.run(cmd, input="Git diff:\n\n" + diff, capture_output=True,
+            p = subprocess.run(cmd, input=prefix + diff, capture_output=True,
                                text=True, timeout=st.llm_timeout, cwd=_CLI_WORKDIR,
                                env=os.environ.copy())
             out = json.loads(p.stdout) if p.stdout.strip() else {}
@@ -480,6 +486,30 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2):
         if attempt < retries:
             time.sleep(10 * (attempt + 1))
     return None
+
+
+def unavailable_reason(st: config.Settings) -> str | None:
+    """Why the configured LLM backend can't run here, or None if it can."""
+    if st.llm_backend == "claude_cli":
+        return None if shutil.which("claude") else "`claude` (Claude Code) not on PATH"
+    if not st.llm_api_key:
+        return "LLM_BACKEND=api but LLM_API_KEY is not set"
+    if _get_client(st) is None:
+        return "the openai package is not installed"
+    return None
+
+
+def ask_json(system: str, schema: dict, text: str, st: config.Settings) -> dict | None:
+    """One schema-constrained call on the configured backend, for callers
+    other than the diff flags (the close-reason classifier). Shares the
+    concurrency limiter and usage counters. None when the LLM is off or fails."""
+    if not st.enable_llm or (st.llm_backend == "api" and not st.llm_api_key):
+        return None
+    with _limiter(st):
+        if st.llm_backend == "claude_cli":
+            return _call_claude_cli(text, st, system=system, schema=schema, prefix="")
+        return _call_llm(text, st, system=system + "\nSchema: " + json.dumps(schema),
+                         prefix="")
 
 
 def _extract_json(text: str):

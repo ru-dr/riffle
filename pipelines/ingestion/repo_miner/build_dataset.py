@@ -350,13 +350,19 @@ def main():
     ap.add_argument("--clone-dir", default="cloned_repos",
                     help="directory to clone repos into")
     ap.add_argument("--max-prs", type=int, default=None)
-    ap.add_argument("--min-age-days", type=int, default=0,
-                    help="skip PRs merged in the last N days (passed through; 90 recommended)")
-    ap.add_argument("--ci-history", action="store_true")
-    ap.add_argument("--szz", action="store_true")
-    ap.add_argument("--declared-labels", action="store_true")
+    ap.add_argument("--min-age-days", type=int, default=90,
+                    help="skip PRs merged in the last N days (passed through; default 90, 0 = off)")
+    ap.add_argument("--ci-history", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--szz", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--declared-labels", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--merge-outcome", action=argparse.BooleanOptionalAction, default=True,
+                    help="also mine closed-unmerged PRs and add the merge-outcome "
+                         "labels (ADR 0009, default on); --no-merge-outcome for "
+                         "breakage rows only")
+    ap.add_argument("--max-unmerged", type=int, default=None,
+                    help="cap unmerged rows per repo (default: the window's real mix)")
     ap.add_argument("--pr-discovery", choices=["api", "git"], default="api")
-    ap.add_argument("--llm", action="store_true")
+    ap.add_argument("--llm", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--no-scanners", action="store_true")
     ap.add_argument("--no-api-contract", action="store_true")
     ap.add_argument("--no-review-history", action="store_true")
@@ -561,18 +567,16 @@ def main():
                "--out", args.out, "--append"]
         if args.max_prs is not None:
             cmd += ["--max-prs", str(args.max_prs)]
-        if args.min_age_days:
-            cmd += ["--min-age-days", str(args.min_age_days)]
-        if args.ci_history:
-            cmd.append("--ci-history")
-        if args.szz:
-            cmd.append("--szz")
-        if args.declared_labels:
-            cmd.append("--declared-labels")
+        cmd += ["--min-age-days", str(args.min_age_days)]
+        for on, flag in ((args.ci_history, "ci-history"), (args.szz, "szz"),
+                         (args.declared_labels, "declared-labels"), (args.llm, "llm")):
+            cmd.append(f"--{flag}" if on else f"--no-{flag}")
+        if not args.merge_outcome:
+            cmd.append("--no-merge-outcome")
+        if args.max_unmerged is not None:
+            cmd += ["--max-unmerged", str(args.max_unmerged)]
         if args.pr_discovery != "api":
             cmd += ["--pr-discovery", args.pr_discovery]
-        if args.llm:
-            cmd.append("--llm")
         if args.no_scanners:
             cmd.append("--no-scanners")
         if args.no_api_contract:
