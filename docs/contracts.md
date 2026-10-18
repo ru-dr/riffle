@@ -33,6 +33,12 @@ Earlier drafts (1–4) were never merged and need no migration.
 | --- | --- | --- |
 | 1.0 | 2026-09-29 | Nine repo-local columns and narrator evidence |
 
+## `mined_dataset.schema.json`
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0 | 2026-10-18 | The repo miner's training row as of miner v2.2.0: 199 columns, features at open (ADR 0010), breakage labels (ADR 0002) and merge-outcome labels (ADR 0009) |
+
 ## `outcome_import.schema.json`
 
 | Version | Date | Changes |
