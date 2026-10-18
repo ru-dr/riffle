@@ -18,20 +18,17 @@ or the other domains.
 
 ## Decision
 
-```
-PR event
-   |
-   v
-Router -- repository -> domain, decided at install and cached
-   |        no match, or more than one: fail open, PR queued unranked and flagged
-   v
-Domain models (base), one set per domain, e.g. "python-ml"
-   |        label_merged (all closed PRs) and label_bad (merged PRs)
-   v
-Per-repo layer (ADR 0001, unchanged: layer_weight ramps with mature labels)
-   |
-   v
-Calibrator (per domain) -> scores
+```mermaid
+%% caption: How a PR is scored with domain base models
+flowchart TD
+  pr[PR event] --> router{"Router<br/>repository to domain,<br/>decided at install, cached"}
+  router -- "no match, or more than one" --> open["Fail open:<br/>queued unranked and flagged"]
+  router -- "one domain" --> base["Domain models (base), e.g. python-ml<br/>label_merged: all closed PRs<br/>label_bad: merged PRs"]
+  base --> layer["Per-repo layer (ADR 0001, unchanged)<br/>layer_weight ramps with mature labels"]
+  layer --> cal[Calibrator, per domain]
+  cal --> scores[Scores]
+  registry[("Domain registry<br/>contracts/domains/&lt;id&gt;.yaml")] -.-> router
+  registry -.-> base
 ```
 
 - **Base layer is per domain.** Each domain has its own gradient-boosted
