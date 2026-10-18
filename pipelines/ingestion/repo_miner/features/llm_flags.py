@@ -196,7 +196,8 @@ def claude_plan_usage(timeout: float = 45) -> list[dict] | None:
         _PLAN_RE = re.compile(r"^Current ([^:]+):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s*(.+))?$")
     try:
         p = subprocess.run(["claude", "-p", "/usage", "--output-format", "json"],
-                           capture_output=True, text=True, timeout=timeout,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout,
                            cwd=tempfile.gettempdir(), stdin=subprocess.DEVNULL)
         text = json.loads(p.stdout).get("result") or ""
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, AttributeError):
@@ -465,7 +466,8 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
     for attempt in range(retries + 1):
         try:
             p = subprocess.run(cmd, input=prefix + diff, capture_output=True,
-                               text=True, timeout=st.llm_timeout, cwd=_CLI_WORKDIR,
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=st.llm_timeout, cwd=_CLI_WORKDIR,
                                env=os.environ.copy())
             out = json.loads(p.stdout) if p.stdout.strip() else {}
             u = out.get("usage") or {}
