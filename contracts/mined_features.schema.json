@@ -23,17 +23,20 @@
       "properties": {
         "base_sha": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "PR base commit the features were mined at"
         },
         "opened_at": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "description": "When the PR opened; only history from before this counts"
         },
         "rules_hash": {
           "type": "string",
           "description": "Covers rules.mining parameters"
         }
-      }
+      },
+      "description": "The point in time the features were mined at."
     },
     "columns": {
       "description": "Model inputs. Fixed names and types; order is set by the feature registry in the model version.",
@@ -145,12 +148,14 @@
             ],
             "properties": {
               "pr_number": {
-                "type": "integer"
+                "type": "integer",
+                "description": "Past PR number"
               },
               "overlap": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 1
+                "maximum": 1,
+                "description": "Jaccard over touched files with this PR"
               },
               "outcome": {
                 "enum": [
@@ -158,14 +163,17 @@
                   "revert",
                   "ci_fail",
                   "hotfix"
-                ]
+                ],
+                "description": "How the past PR turned out"
               },
               "merged_at": {
                 "type": "string",
-                "format": "date-time"
+                "format": "date-time",
+                "description": "When the past PR merged"
               }
             }
-          }
+          },
+          "description": "Past PRs behind similar_pr_bad_rate"
         },
         "scrutiny_top_path": {
           "type": [
@@ -175,13 +183,15 @@
           "additionalProperties": false,
           "properties": {
             "path": {
-              "type": "string"
+              "type": "string",
+              "description": "File path"
             },
             "ratio": {
               "type": "number",
               "description": "Same unit as revealed_path_scrutiny"
             }
-          }
+          },
+          "description": "Touched path with the highest scrutiny ratio, for revealed_path_scrutiny."
         },
         "failure_mode_top": {
           "type": [
@@ -195,18 +205,23 @@
                 "revert",
                 "ci_fail",
                 "hotfix"
-              ]
+              ],
+              "description": "Failure mode"
             },
             "share": {
-              "type": "number"
+              "type": "number",
+              "description": "Share of past bad changes on these paths with this mode, 0 to 1"
             },
             "median_lag_days": {
-              "type": "number"
+              "type": "number",
+              "description": "Median days from merge to the outcome event, as in path_detection_lag_days"
             },
             "sample_size": {
-              "type": "integer"
+              "type": "integer",
+              "description": "Past bad changes the share is computed from"
             }
-          }
+          },
+          "description": "Most common failure mode on these paths, for the path_failure_mode_* columns."
         },
         "size_context": {
           "type": [
@@ -220,12 +235,15 @@
               "description": "Directory or component the comparison used, e.g. streams/"
             },
             "pctile": {
-              "type": "number"
+              "type": "number",
+              "description": "Same unit as path_size_pctile"
             },
             "prior_changes": {
-              "type": "integer"
+              "type": "integer",
+              "description": "Past changes the percentile is computed from"
             }
-          }
+          },
+          "description": "Comparison behind path_size_pctile."
         },
         "release_context": {
           "type": [
@@ -235,15 +253,19 @@
           "additionalProperties": false,
           "properties": {
             "last_tag": {
-              "type": "string"
+              "type": "string",
+              "description": "Most recent release tag"
             },
             "typical_interval_days": {
-              "type": "number"
+              "type": "number",
+              "description": "Typical days between releases"
             },
             "expected_next_in_days": {
-              "type": "number"
+              "type": "number",
+              "description": "Days until the next release is expected"
             }
-          }
+          },
+          "description": "Release history behind release_cycle_position."
         }
       }
     }

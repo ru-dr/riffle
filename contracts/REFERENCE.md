@@ -17,14 +17,14 @@ How an organisation manages its code, as flat typed rules (kind + match + value)
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `id` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  |  |  |
-| `kind` | string |  |  |  |
-| `applies_to.repos` | list of string | `["*"]` |  |  |
+| `id` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  |  | Rule identifier |
+| `kind` | string |  |  | Rule kind, which decides the other fields the rule accepts |
+| `applies_to.repos` | list of string | `["*"]` |  | Repositories the rule applies to; * is every repo |
 | `applies_to.paths` | list of string |  |  | Limit to a monorepo package, e.g. packages/react-native/** |
-| `applies_to.branches` | list of string |  |  |  |
+| `applies_to.branches` | list of string |  |  | Branches the rule applies to |
 | `priority` | integer 0–100 | `50` |  | Conflict resolution: higher wins, then the more specific glob, then the later rule. |
-| `enabled` | boolean | `true` |  |  |
-| `note` | string |  |  |  |
+| `enabled` | boolean | `true` |  | false turns the rule off without removing it |
+| `note` | string |  |  | Free-text note about the rule |
 
 ### Rule kinds
 
@@ -35,8 +35,8 @@ How an organisation manages its code, as flat typed rules (kind + match + value)
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string |  | required |  |
-| `value` | `low`, `normal`, `elevated`, `critical` |  | required |  |
+| `match` | string |  | required | Path glob |
+| `value` | `low`, `normal`, `elevated`, `critical` |  | required | Criticality of the matching paths, low to critical, as 0-3 in max_criticality |
 
 #### `path_class`
 
@@ -45,8 +45,8 @@ How an organisation manages its code, as flat typed rules (kind + match + value)
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string |  | required |  |
-| `value` | `excluded`, `vendored`, `generated`, `lockfile`, `test`, `test_fixture`, `docs`, `config`, `build_config`, `dependency_manifest`, `i18n` |  | required |  |
+| `match` | string |  | required | Path glob |
+| `value` | `excluded`, `vendored`, `generated`, `lockfile`, `test`, `test_fixture`, `docs`, `config`, `build_config`, `dependency_manifest`, `i18n` |  | required | Class of the matching files |
 
 #### `sensitivity`
 
@@ -57,8 +57,8 @@ What the code handles. Split from change_signal so authn and authz stay distinct
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string |  | required |  |
-| `value` | `authn`, `authz`, `payments`, `pii`, `secrets`, `crypto`, `infra`, `public_api` |  | required |  |
+| `match` | string |  | required | Path glob |
+| `value` | `authn`, `authz`, `payments`, `pii`, `secrets`, `crypto`, `infra`, `public_api` |  | required | What the matching code handles |
 
 #### `change_signal`
 
@@ -69,8 +69,8 @@ Risky change types. Handled by the extractor's own path rules too; these declara
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string |  | required |  |
-| `value` | `schema_migration`, `wire_protocol`, `infra_as_code`, `build_system`, `dependency_bump`, `feature_flag`, `concurrency`, `native_interop`, `release_config` |  | required |  |
+| `match` | string |  | required | Path glob |
+| `value` | `schema_migration`, `wire_protocol`, `infra_as_code`, `build_system`, `dependency_bump`, `feature_flag`, `concurrency`, `native_interop`, `release_config` |  | required | Change type the matching paths signal |
 
 #### `component`
 
@@ -82,12 +82,12 @@ Names a monorepo package or module. The name is free text, but the model only se
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
 | `match` | string |  | required | e.g. streams/** or packages/virtualized-lists/** |
-| `value` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  | required |  |
+| `value` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  | required | Component name |
 | `tier` | integer 1–4 |  |  | Availability tier, 1 is most critical |
-| `exposure` | `internal`, `partner`, `external` |  |  |  |
-| `data_class` | `public`, `internal`, `confidential`, `restricted` |  |  |  |
-| `regimes` | list of `pci`, `gdpr`, `hipaa`, `sox`, `soc2`, `fedramp` |  |  |  |
-| `lifecycle` | `experimental`, `active`, `stable`, `deprecated` |  |  |  |
+| `exposure` | `internal`, `partner`, `external` |  |  | Who the component is exposed to; max_exposure encodes internal 0, partner 1, external 2 |
+| `data_class` | `public`, `internal`, `confidential`, `restricted` |  |  | Class of data the component holds; max_data_class encodes public 0 to restricted 3 |
+| `regimes` | list of `pci`, `gdpr`, `hipaa`, `sox`, `soc2`, `fedramp` |  |  | Compliance regimes the component falls under, counted in regulated_scope_count |
+| `lifecycle` | `experimental`, `active`, `stable`, `deprecated` |  |  | Lifecycle stage; deprecated sets touches_deprecated |
 | `blast_radius` | integer 0– |  |  | Declared downstream dependents |
 
 #### `owner`
@@ -101,7 +101,7 @@ Path ownership. import_codeowners reads CODEOWNERS instead of listing paths.
 |---|---|---|---|---|
 | `match` | string |  | required | Path glob, or the CODEOWNERS path when import_codeowners is true |
 | `value` | string |  | required | Team or login, e.g. @apache/kafka-streams |
-| `import_codeowners` | boolean | `false` |  |  |
+| `import_codeowners` | boolean | `false` |  | Read ownership from the CODEOWNERS file at match instead of listing paths |
 
 #### `policy`
 
@@ -113,7 +113,7 @@ Team policies checked against the diff. Each firing policy adds one to policy_vi
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
 | `match` | string |  | required | Path glob the policy covers |
-| `value` | `required_tests`, `high_scrutiny`, `perf_critical`, `no_import_from`, `flag_required`, `migration_reversible`, `migration_no_destructive`, `dependency_allowlist`, `dependency_denylist`, `regen_pair` |  | required |  |
+| `value` | `required_tests`, `high_scrutiny`, `perf_critical`, `no_import_from`, `flag_required`, `migration_reversible`, `migration_no_destructive`, `dependency_allowlist`, `dependency_denylist`, `regen_pair` |  | required | Policy to check against the diff |
 | `target` | string or list of string |  |  | no_import_from: forbidden path glob. dependency_*: package names. regen_pair: generated path glob. |
 | `tests` | string |  |  | required_tests: test glob that satisfies it; defaults to path_class test |
 | `languages` | list of `java`, `python`, `typescript`, `javascript`, `go`, `kotlin` |  |  | no_import_from only: languages to parse imports for. Others are skipped, and the feature is null for files in them |
@@ -129,8 +129,8 @@ Declared code freeze. days_to_freeze_start is left to the extractor.
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `start` | string (date-time) |  | required |  |
-| `end` | string (date-time) |  | required |  |
+| `start` | string (date-time) |  | required | When the freeze starts |
+| `end` | string (date-time) |  | required | When the freeze ends |
 | `match` | string | `"*"` |  | Branch glob |
 
 #### `pr_label`
@@ -143,7 +143,7 @@ Maps PR labels at open time. Different from issue_label, which is about linked i
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
 | `match` | string |  | required | Exact PR label name |
-| `value` | `priority`, `hotfix`, `security`, `safe` |  | required |  |
+| `value` | `priority`, `hotfix`, `security`, `safe` |  | required | What the label means; priority also needs level |
 | `level` | integer 0–3 |  |  | priority only: 3 is highest (P0) |
 
 #### `safe_change`
@@ -155,7 +155,7 @@ Which change kinds this team treats as safe. No match; the extractor classifies 
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `value` | `docs`, `tests`, `formatting`, `comments`, `generated`, `i18n` |  | required |  |
+| `value` | `docs`, `tests`, `formatting`, `comments`, `generated`, `i18n` |  | required | Change kind treated as safe |
 
 #### `pattern`
 
@@ -164,9 +164,9 @@ Which change kinds this team treats as safe. No match; the extractor classifies 
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string (regex) |  | required |  |
-| `value` | `revert`, `bugfix`, `hotfix`, `backport`, `conventional_type`, `security_fix` |  | required |  |
-| `field` | `commit_message`, `commit_trailer`, `pr_title`, `pr_body`, `branch_name` | `"commit_message"` |  |  |
+| `match` | string (regex) |  | required | Regex matched against field |
+| `value` | `revert`, `bugfix`, `hotfix`, `backport`, `conventional_type`, `security_fix` |  | required | What a match marks the change as |
+| `field` | `commit_message`, `commit_trailer`, `pr_title`, `pr_body`, `branch_name` | `"commit_message"` |  | Text the regex is matched against |
 
 #### `link`
 
@@ -177,9 +177,9 @@ Connects objects Riffle would otherwise treat as unrelated. match must contain a
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string (regex) |  | required |  |
-| `field` | `commit_message`, `commit_trailer`, `pr_title`, `pr_body` | `"commit_trailer"` |  |  |
-| `value` | `pr_ref`, `revert_target`, `cherry_pick_source`, `issue_key`, `external_change_id` |  | required |  |
+| `match` | string (regex) |  | required | Regex with a named group (?<ref>...) that captures the reference |
+| `field` | `commit_message`, `commit_trailer`, `pr_title`, `pr_body` | `"commit_trailer"` |  | Text the regex is matched against |
+| `value` | `pr_ref`, `revert_target`, `cherry_pick_source`, `issue_key`, `external_change_id` |  | required | What the captured reference points to |
 | `tracker` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  |  | For issue_key: which sources.trackers entry |
 
 #### `identity`
@@ -191,9 +191,9 @@ Recovers the real person when a bot lands the commit or email differs from login
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string (regex) |  | required |  |
-| `on` | `commit_trailer`, `commit_message`, `pr_body`, `co_authored_by` | `"commit_trailer"` |  |  |
-| `value` | `author`, `co_author`, `reviewer`, `lander` |  | required |  |
+| `match` | string (regex) |  | required | Regex with a named group (?<login>...) or (?<email>...) |
+| `on` | `commit_trailer`, `commit_message`, `pr_body`, `co_authored_by` | `"commit_trailer"` |  | Text the regex is matched against |
+| `value` | `author`, `co_author`, `reviewer`, `lander` |  | required | Role of the recovered person |
 
 #### `merge_signal`
 
@@ -204,7 +204,7 @@ What counts as merged. Needed when PRs are closed and the change lands another w
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `value` | `github_merge`, `linked_commit_on_default`, `bot_close_with_commit`, `direct_push` |  | required |  |
+| `value` | `github_merge`, `linked_commit_on_default`, `bot_close_with_commit`, `direct_push` |  | required | How a change counts as merged |
 | `match` | string | `"*"` |  | Actor login for bot_close_with_commit, else '*' |
 
 #### `issue_field`
@@ -215,10 +215,10 @@ Tracker fields beyond labels, e.g. Jira issuetype and priority.
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `tracker` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  | required |  |
+| `tracker` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  | required | sources.trackers entry |
 | `field` | string |  | required | e.g. issuetype, priority, customfield_10020 |
-| `match` | string |  | required |  |
-| `value` | `bug`, `incident`, `regression`, `security`, `not_a_bug` |  | required |  |
+| `match` | string |  | required | Field value to match |
+| `value` | `bug`, `incident`, `regression`, `security`, `not_a_bug` |  | required | What a matching issue counts as |
 | `severity` | integer 1–4 |  |  | 1 is worst; scales label weight |
 
 #### `issue_label`
@@ -227,10 +227,10 @@ Tracker fields beyond labels, e.g. Jira issuetype and priority.
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `tracker` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` | `"github"` |  |  |
-| `match` | string |  | required |  |
-| `value` | `bug`, `incident`, `regression`, `security`, `not_a_bug` |  | required |  |
-| `severity` | integer 1–4 |  |  |  |
+| `tracker` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` | `"github"` |  | Tracker the issue label is read from |
+| `match` | string |  | required | Issue label to match |
+| `value` | `bug`, `incident`, `regression`, `security`, `not_a_bug` |  | required | What a matching issue counts as |
+| `severity` | integer 1–4 |  |  | 1 is worst; scales label weight |
 
 #### `author_class`
 
@@ -239,9 +239,9 @@ Tracker fields beyond labels, e.g. Jira issuetype and priority.
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string |  | required |  |
-| `on` | `login`, `email_domain`, `branch_prefix`, `commit_trailer` | `"login"` |  |  |
-| `value` | `bot`, `agent`, `maintainer`, `employee`, `external` |  | required |  |
+| `match` | string |  | required | Value to match in the field named by on |
+| `on` | `login`, `email_domain`, `branch_prefix`, `commit_trailer` | `"login"` |  | What match is compared with |
+| `value` | `bot`, `agent`, `maintainer`, `employee`, `external` |  | required | Class given to matching authors |
 | `new_contributor_days` | integer 1–730 |  |  | Optional; overrides the default tenure cut for authors this rule matches |
 
 #### `ci_check`
@@ -252,9 +252,9 @@ Tracker fields beyond labels, e.g. Jira issuetype and priority.
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
 | `source` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  |  | sources.ci entry; default is GitHub checks |
-| `match` | string |  | required |  |
+| `match` | string |  | required | Check name to match |
 | `value` | `required`, `flaky`, `informational`, `auxiliary` |  | required | auxiliary (CodeQL, Scorecards, coverage) never triggers ci_fail |
-| `stage` | `pre_merge`, `post_merge`, `nightly`, `release` | `"pre_merge"` |  |  |
+| `stage` | `pre_merge`, `post_merge`, `nightly`, `release` | `"pre_merge"` |  | When the check runs |
 
 #### `test_class`
 
@@ -266,7 +266,7 @@ Test-level flakiness from sources.test_reports, for repos with one giant CI chec
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
 | `match` | string |  | required | Test id glob, e.g. org.apache.kafka.streams.integration.* |
-| `value` | `flaky`, `quarantined`, `slow` |  | required |  |
+| `value` | `flaky`, `quarantined`, `slow` |  | required | Class given to matching tests |
 
 #### `label_source`
 
@@ -276,9 +276,9 @@ Weight of an outcome source as a sample weight in this org's per-repo layer. Nev
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | `revert`, `ci_fail`, `hotfix`, `szz`, `follow_up_fix`, `route_override`, `incident_link`, `external_import` |  | required |  |
-| `value` | number 0–2 |  | required |  |
-| `window_days` | integer 1–90 |  |  |  |
+| `match` | `revert`, `ci_fail`, `hotfix`, `szz`, `follow_up_fix`, `route_override`, `incident_link`, `external_import` |  | required | Outcome source the weight applies to |
+| `value` | number 0–2 |  | required | Sample weight for this source in the org's per-repo layer, 0 to 2 |
+| `window_days` | integer 1–90 |  |  | Window in days for this source, in place of its default |
 
 #### `branch_class`
 
@@ -287,8 +287,8 @@ Weight of an outcome source as a sample weight in this org's per-repo layer. Nev
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `match` | string |  | required |  |
-| `value` | `default`, `release`, `hotfix`, `backport`, `long_lived`, `experimental` |  | required |  |
+| `match` | string |  | required | Branch glob |
+| `value` | `default`, `release`, `hotfix`, `backport`, `long_lived`, `experimental` |  | required | Class of the matching branches; release and hotfix set targets_release_branch when they are the base branch |
 
 #### `stack`
 
@@ -299,29 +299,29 @@ Stacked PR tooling, so a stack is understood as related changes.
 
 | Field | Allowed | Default | Required | Meaning |
 |---|---|---|---|---|
-| `value` | `ghstack`, `graphite`, `sapling`, `spr`, `branch_chain` |  | required |  |
+| `value` | `ghstack`, `graphite`, `sapling`, `spr`, `branch_chain` |  | required | Stacked PR tool |
 | `match` | string |  | required | Branch pattern or body marker the tool leaves |
 
 ### `sources` block
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `sources.trackers` | list of objects |  |  |  |
-| `sources.trackers[].id` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  |  |  |
-| `sources.trackers[].provider` | `github`, `jira`, `linear`, `bugzilla`, `youtrack` |  |  |  |
-| `sources.trackers[].base_url` | string (uri) |  |  |  |
-| `sources.trackers[].projects` | list of string |  |  |  |
-| `sources.trackers[].credentials_ref` | string |  |  |  |
-| `sources.ci` | list of objects |  |  |  |
-| `sources.ci[].id` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  |  |  |
+| `sources.trackers` | list of objects |  |  | Issue trackers, referenced by link and issue rules through their id. |
+| `sources.trackers[].id` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  |  | Tracker identifier, referenced by the tracker field of link, issue_field and issue_label rules |
+| `sources.trackers[].provider` | `github`, `jira`, `linear`, `bugzilla`, `youtrack` |  |  | Tracker product |
+| `sources.trackers[].base_url` | string (uri) |  |  | Base URL of the tracker |
+| `sources.trackers[].projects` | list of string |  |  | Tracker projects to read |
+| `sources.trackers[].credentials_ref` | string |  |  | Secret reference for the tracker's credentials, never the value |
+| `sources.ci` | list of objects |  |  | CI systems beyond GitHub checks, referenced by ci_check rules through their id. |
+| `sources.ci[].id` | string matching `^[a-z0-9][a-z0-9-]{0,63}$` |  |  | CI source identifier, referenced by the source field of ci_check rules |
 | `sources.ci[].provider` | `github_checks`, `commit_status`, `external_api` |  |  | commit_status covers Jenkins, Buildkite and anything posting legacy statuses |
-| `sources.ci[].context_glob` | string | `"*"` |  |  |
-| `sources.ci[].credentials_ref` | string |  |  |  |
-| `sources.test_reports.enabled` | boolean | `false` | later |  |
-| `sources.test_reports.format` | `junit_xml` | `"junit_xml"` | later |  |
-| `sources.test_reports.artifact_glob` | string | `"**/TEST-*.xml"` | later |  |
-| `sources.outcome_import.enabled` | boolean | `false` |  |  |
-| `sources.outcome_import.secret_ref` | string |  |  |  |
+| `sources.ci[].context_glob` | string | `"*"` |  | Glob over the check or status names read from this source |
+| `sources.ci[].credentials_ref` | string |  |  | Secret reference for the CI system's credentials, never the value |
+| `sources.test_reports.enabled` | boolean | `false` | later | Read test reports |
+| `sources.test_reports.format` | `junit_xml` | `"junit_xml"` | later | Test report file format |
+| `sources.test_reports.artifact_glob` | string | `"**/TEST-*.xml"` | later | Glob matching test report files |
+| `sources.outcome_import.enabled` | boolean | `false` |  | Accept outcomes at POST /v1/outcomes |
+| `sources.outcome_import.secret_ref` | string |  |  | Secret reference for the secret that signs POST /v1/outcomes requests, never the value |
 
 ### `labels` block
 
@@ -330,7 +330,7 @@ Stacked PR tooling, so a stack is understood as related changes.
 | `labels.target` | `union`, `weighted` | `"union"` |  | union: label_bad = any target source fires (binary). weighted: each source's label_source weight becomes a sample weight. Per-repo layer only |
 | `labels.szz_in_target` | boolean | `false` |  | SZZ stays a separate label unless true |
 | `labels.maturity_days` | integer 7–180 | `30` |  | Rows younger than this are dropped before training (label_mature) |
-| `labels.szz_maturity_days` | integer 30–365 | `90` |  |  |
+| `labels.szz_maturity_days` | integer 30–365 | `90` |  | Days before an SZZ label is mature, used for SZZ instead of maturity_days |
 | `labels.unobserved` | `mask`, `negative`, `downweight` | `"downweight"` |  | What to do when a label source had no data for a mature PR (e.g. CI results expired). Any observed source that fired still makes the row positive. Otherwise: mask drops the row; negative counts it as fully clean; downweight counts it as clean with sample weight unobserved_weight |
 | `labels.unobserved_weight` | number 0.05–1 | `0.5` |  | downweight only. Multiplies the row's sample weight for each unobserved source (0.5 with one missing, 0.25 with two) |
 | `labels.target_sources` | list of `revert`, `ci_fail`, `hotfix`, `szz`, `follow_up_fix`, `route_override`, `incident_link`, `external_import` | `["revert", "ci_fail", "hotfix"]` |  | Sources that can make a row positive. Others still get mined and reported as ablations, but do not enter the target |
@@ -345,33 +345,33 @@ Stacked PR tooling, so a stack is understood as related changes.
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `mining.similar_prs.k` | integer 3–20 | `5` |  |  |
+| `mining.similar_prs.k` | integer 3–20 | `5` |  | Number of nearest past PRs similar_pr_bad_rate is computed over |
 | `mining.similar_prs.min_file_overlap` | number 0.05–1 | `0.2` |  | Jaccard over touched files |
-| `mining.similar_prs.lookback_days` | integer 30–1095 | `365` |  |  |
+| `mining.similar_prs.lookback_days` | integer 30–1095 | `365` |  | Days of past PRs searched for neighbours |
 | `mining.similar_prs.min_neighbours` | integer 1–10 | `3` |  | Fewer than this and the feature is null |
-| `mining.scrutiny.lookback_days` | integer 30–1095 | `180` |  |  |
-| `mining.scrutiny.exclude_bot_reviews` | boolean | `true` |  |  |
-| `mining.scrutiny.min_prior_prs` | integer 1–50 | `5` |  |  |
-| `mining.failure_mode.lookback_days` | integer 90–1095 | `365` |  |  |
-| `mining.failure_mode.min_bad_changes` | integer 1–20 | `2` |  |  |
-| `mining.path_size.lookback_days` | integer 30–1095 | `365` |  |  |
-| `mining.path_size.min_prior_changes` | integer 3–100 | `10` |  |  |
+| `mining.scrutiny.lookback_days` | integer 30–1095 | `180` |  | Days of prior PR reviews counted |
+| `mining.scrutiny.exclude_bot_reviews` | boolean | `true` |  | Leave bot reviews out of revealed_path_scrutiny |
+| `mining.scrutiny.min_prior_prs` | integer 1–50 | `5` |  | Fewer prior PRs than this and the feature is null |
+| `mining.failure_mode.lookback_days` | integer 90–1095 | `365` |  | Days of past bad changes on the touched paths counted |
+| `mining.failure_mode.min_bad_changes` | integer 1–20 | `2` |  | Fewer past bad changes than this and the features are null |
+| `mining.path_size.lookback_days` | integer 30–1095 | `365` |  | Days of past changes to the same files compared against |
+| `mining.path_size.min_prior_changes` | integer 3–100 | `10` |  | Fewer past changes to the same files than this and the feature is null |
 | `mining.release_cycle.tag_pattern` | string (regex) | `"^v?\\d+\\.\\d+(\\.\\d+)?$"` |  | Which tags count as releases, e.g. ^\d+\.\d+\.0$ for minor releases only |
-| `mining.release_cycle.min_releases` | integer 2–20 | `3` |  |  |
-| `mining.release_cycle.interval_stat` | `median`, `mean` | `"median"` |  |  |
-| `mining.flaky_detection.enabled` | boolean | `true` |  |  |
-| `mining.flaky_detection.min_rerun_passes` | integer 1–20 | `3` |  |  |
-| `mining.flaky_detection.lookback_days` | integer 14–365 | `90` |  |  |
+| `mining.release_cycle.min_releases` | integer 2–20 | `3` |  | Fewer release tags than this and the feature is null |
+| `mining.release_cycle.interval_stat` | `median`, `mean` | `"median"` |  | Statistic over past release intervals used as the repo's typical release interval |
+| `mining.flaky_detection.enabled` | boolean | `true` |  | false turns off flaky detection from re-runs |
+| `mining.flaky_detection.min_rerun_passes` | integer 1–20 | `3` |  | Failed-then-passed re-runs needed before a check is marked flaky |
+| `mining.flaky_detection.lookback_days` | integer 14–365 | `90` |  | Days of check history searched for failed-then-passed re-runs |
 
 ### `model` block
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
 | `model.per_repo_layer.enabled` | boolean | `true` |  | false serves the global model only (layer_weight 0) |
-| `model.per_repo_layer.max_layer_weight` | number 0–1 | `1.0` |  |  |
+| `model.per_repo_layer.max_layer_weight` | number 0–1 | `1.0` |  | Upper limit on layer_weight, the per-repo layer's share of the score (0 to 1) |
 | `model.disabled_features` | list of string | `[]` | union | Feature names forced to null. Width of the vector never changes. Repos may only add. Example: agent_authored |
-| `model.backfill.lookback_days` | integer 90–3650 | `1095` |  |  |
-| `model.backfill.recent_first_days` | integer 30–365 | `180` |  |  |
+| `model.backfill.lookback_days` | integer 90–3650 | `1095` |  | Days of history mined on install |
+| `model.backfill.recent_first_days` | integer 30–365 | `180` |  | Most recent days of history mined first; older history follows in the background |
 
 ### Declared model columns
 
@@ -420,9 +420,9 @@ How the app behaves. Settings never change what the model sees or learns; those 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
 | `organization.outcome_sharing.enabled` | boolean | `false` | org only | Anonymised feature vectors and outcomes only. Never code, diffs or identities |
-| `organization.data_retention.store_diffs` | boolean | `false` | org only |  |
-| `organization.data_retention.retention_days` | integer 30–730 | `365` | org only |  |
-| `organization.label_prefix` | string | `"riffle"` | org only |  |
+| `organization.data_retention.store_diffs` | boolean | `false` | org only | Keep full diffs after features are computed |
+| `organization.data_retention.retention_days` | integer 30–730 | `365` | org only | Days stored data is kept |
+| `organization.label_prefix` | string | `"riffle"` | org only | Prefix of every label Riffle applies |
 | `organization.locked_keys` | list of string matching `^/` | `["/organization", "/llm/provider", "/llm/send"]` | org only | JSON pointers a repo file may not change |
 
 ### `scope`
@@ -430,7 +430,7 @@ How the app behaves. Settings never change what the model sees or learns; those 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
 | `scope.base_branches` | list of string (regex) | `[]` |  | Extra target branches besides the default branch |
-| `scope.include_drafts` | boolean | `false` |  |  |
+| `scope.include_drafts` | boolean | `false` |  | Post on draft PRs too |
 | `scope.quiet_authors` | list of string | `["dependabot[bot]", "renovate[bot]", "github-actions[bot]"]` | union | Scored and shown on the dashboard, but no comment or label. Nothing is left unscored |
 | `scope.quiet_title_keywords` | list of string | `["WIP", "DO NOT MERGE"]` | union | Same as quiet_authors, matched on the PR title |
 
@@ -438,12 +438,12 @@ How the app behaves. Settings never change what the model sees or learns; those 
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `rank_bands.mode` | `percentile`, `absolute` | `"percentile"` |  |  |
-| `rank_bands.percentile.senior_recommended_top_fraction` | number 0–1 | `0.05` |  |  |
+| `rank_bands.mode` | `percentile`, `absolute` | `"percentile"` |  | percentile cuts bands from the repo's score distribution; absolute cuts on fixed scores |
+| `rank_bands.percentile.senior_recommended_top_fraction` | number 0–1 | `0.05` |  | Share of the highest-scoring PRs placed in senior_recommended |
 | `rank_bands.percentile.review_first_top_fraction` | number 0–1 | `0.2` |  | Matches the top-20% effort-aware recall metric |
 | `rank_bands.percentile.window` | `repo`, `component` | `"repo"` |  | component ranks each monorepo package against itself |
-| `rank_bands.absolute.senior_recommended_min_score` | number 0–1 | `0.8` |  |  |
-| `rank_bands.absolute.review_first_min_score` | number 0–1 | `0.5` |  |  |
+| `rank_bands.absolute.senior_recommended_min_score` | number 0–1 | `0.8` |  | Lowest risk_score placed in senior_recommended |
+| `rank_bands.absolute.review_first_min_score` | number 0–1 | `0.5` |  | Lowest risk_score placed in review_first |
 | `rank_bands.holdout_fraction` | number 0.02–0.1 | `0.05` |  | Share of PRs left unranked (FIFO) to measure lift and limit feedback-loop bias |
 | `rank_bands.tie_break` | list of `similar_pr_bad_rate`, `path_detection_lag_days`, `revealed_path_scrutiny`, `path_size_pctile`, `release_cycle_position` | `["similar_pr_bad_rate", "path_detection_lag_days"]` |  | Only for identical rounded scores; PR age is always the last key |
 
@@ -451,26 +451,26 @@ How the app behaves. Settings never change what the model sees or learns; those 
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `floors.enabled` | boolean | `true` | decision pending |  |
-| `floors.paths` | list of objects | `[]` | decision pending, union |  |
-| `floors.paths[].pattern` | string |  | decision pending, union |  |
+| `floors.enabled` | boolean | `true` | decision pending | false turns off every floor |
+| `floors.paths` | list of objects | `[]` | decision pending, union | Minimum band for PRs that touch a path |
+| `floors.paths[].pattern` | string |  | decision pending, union | Path glob |
 | `floors.paths[].min_band` | `review_first`, `senior_recommended` |  | decision pending, union | standard is the lowest band, so it is not a floor |
-| `floors.ai_agents` | `review_first`, `senior_recommended` or null | `null` | decision pending |  |
-| `floors.first_time_contributors` | `review_first`, `senior_recommended` or null | `null` | decision pending |  |
+| `floors.ai_agents` | `review_first`, `senior_recommended` or null | `null` | decision pending | Minimum band for PRs by AI agents; null for none |
+| `floors.first_time_contributors` | `review_first`, `senior_recommended` or null | `null` | decision pending | Minimum band for PRs by first-time contributors; null for none |
 
 ### `size`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `size.thresholds.xs` | integer 0– | `0` |  |  |
-| `size.thresholds.s` | integer 0– | `10` |  |  |
-| `size.thresholds.m` | integer 0– | `100` |  |  |
-| `size.thresholds.l` | integer 0– | `500` |  |  |
-| `size.thresholds.xl` | integer 0– | `1000` |  |  |
-| `size.count_files` | boolean | `false` |  |  |
+| `size.thresholds.xs` | integer 0– | `0` |  | Lower bound of xs |
+| `size.thresholds.s` | integer 0– | `10` |  | Lower bound of s |
+| `size.thresholds.m` | integer 0– | `100` |  | Lower bound of m |
+| `size.thresholds.l` | integer 0– | `500` |  | Lower bound of l |
+| `size.thresholds.xl` | integer 0– | `1000` |  | Lower bound of xl |
+| `size.count_files` | boolean | `false` |  | Whether changed files count toward the size label |
 | `size.ignore_paths` | list of string | `["**/*.lock", "**/package-lock.json", "**/go.sum"]` |  | Excluded from the size label only; still counted for risk |
-| `size.apply_label` | boolean | `true` |  |  |
-| `size.large_pr_note` | string or null | `null` |  |  |
+| `size.apply_label` | boolean | `true` |  | Apply the size label |
+| `size.large_pr_note` | string or null | `null` |  | Note shown on large PRs; null for none |
 
 ### `authors`
 
@@ -485,61 +485,61 @@ How the app behaves. Settings never change what the model sees or learns; those 
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `reviewer_routing.mode` | `off`, `suggest`, `request` | `"suggest"` |  |  |
-| `reviewer_routing.use_codeowners` | boolean | `true` |  |  |
-| `reviewer_routing.senior_reviewers` | list of string matching `^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$` | `[]` |  |  |
-| `reviewer_routing.groups` | list of objects | `[]` |  |  |
-| `reviewer_routing.groups[].name` | string |  |  |  |
-| `reviewer_routing.groups[].paths` | list of string |  |  |  |
-| `reviewer_routing.groups[].reviewers` | list of string matching `^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$` |  |  |  |
-| `reviewer_routing.reviewers_per_pr` | integer 1–5 | `1` |  |  |
-| `reviewer_routing.algorithm` | `load_balance`, `round_robin`, `random` | `"load_balance"` |  |  |
-| `reviewer_routing.max_open_reviews_per_reviewer` | integer or null 1– | `null` |  |  |
-| `reviewer_routing.skip_title_keywords` | list of string | `["wip"]` |  |  |
+| `reviewer_routing.mode` | `off`, `suggest`, `request` | `"suggest"` |  | off, suggest reviewers, or request them on the PR |
+| `reviewer_routing.use_codeowners` | boolean | `true` |  | Use CODEOWNERS when choosing reviewers |
+| `reviewer_routing.senior_reviewers` | list of string matching `^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$` | `[]` |  | Reviewers for senior_recommended PRs |
+| `reviewer_routing.groups` | list of objects | `[]` |  | Reviewers by path |
+| `reviewer_routing.groups[].name` | string |  |  | Group name |
+| `reviewer_routing.groups[].paths` | list of string |  |  | Path globs the group reviews |
+| `reviewer_routing.groups[].reviewers` | list of string matching `^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$` |  |  | Reviewers in the group |
+| `reviewer_routing.reviewers_per_pr` | integer 1–5 | `1` |  | Reviewers chosen per PR |
+| `reviewer_routing.algorithm` | `load_balance`, `round_robin`, `random` | `"load_balance"` |  | How reviewers are picked |
+| `reviewer_routing.max_open_reviews_per_reviewer` | integer or null 1– | `null` |  | Most open reviews per reviewer; null for no limit |
+| `reviewer_routing.skip_title_keywords` | list of string | `["wip"]` |  | PR title keywords that skip reviewer routing |
 
 ### `availability`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `availability.users_unavailable` | list of string matching `^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$` | `[]` |  |  |
+| `availability.users_unavailable` | list of string matching `^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$` | `[]` |  | Users or teams currently unavailable to review |
 | `availability.timezone` | string | `"UTC"` |  | IANA name |
-| `availability.working_days` | list of `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` | `["mon", "tue", "wed", "thu", "fri"]` |  |  |
-| `availability.working_hours` | string matching `^([01][0-9]\|2[0-3]):[0-5][0-9]-([01][0-9]\|2[0-3]):[0-5][0-9]$` | `"09:00-17:00"` |  |  |
+| `availability.working_days` | list of `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` | `["mon", "tue", "wed", "thu", "fri"]` |  | Days that count as working days |
+| `availability.working_hours` | string matching `^([01][0-9]\|2[0-3]):[0-5][0-9]-([01][0-9]\|2[0-3]):[0-5][0-9]$` | `"09:00-17:00"` |  | Working hours on a working day, HH:MM-HH:MM in timezone |
 
 ### `review_targets`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `review_targets.senior_recommended_hours` | integer 1–720 | `4` |  |  |
-| `review_targets.review_first_hours` | integer 1–720 | `4` |  |  |
-| `review_targets.standard_hours` | integer 1–720 | `8` |  |  |
+| `review_targets.senior_recommended_hours` | integer 1–720 | `4` |  | Target for senior_recommended PRs, in working hours |
+| `review_targets.review_first_hours` | integer 1–720 | `4` |  | Target for review_first PRs, in working hours |
+| `review_targets.standard_hours` | integer 1–720 | `8` |  | Target for standard PRs, in working hours |
 
 ### `reminders`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `reminders.enabled` | boolean | `false` |  |  |
-| `reminders.min_age_hours` | integer 1–720 | `24` |  |  |
-| `reminders.min_staleness_hours` | integer 1–720 | `8` |  |  |
-| `reminders.ignore_drafts` | boolean | `true` |  |  |
-| `reminders.ignore_approved_with` | integer 0–10 | `1` |  |  |
-| `reminders.ignored_labels` | list of string | `[]` |  |  |
+| `reminders.enabled` | boolean | `false` |  | Send reminders |
+| `reminders.min_age_hours` | integer 1–720 | `24` |  | Hours a PR must be open before a reminder |
+| `reminders.min_staleness_hours` | integer 1–720 | `8` |  | Hours without activity before a reminder |
+| `reminders.ignore_drafts` | boolean | `true` |  | No reminders on draft PRs |
+| `reminders.ignore_approved_with` | integer 0–10 | `1` |  | No reminders on PRs with at least this many approvals |
+| `reminders.ignored_labels` | list of string | `[]` |  | PR labels that stop reminders |
 
 ### `rescore`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `rescore.on` | list of `push`, `ready_for_review`, `ci_completed`, `reopened`, `edited`, `labeled` | `["push", "ready_for_review", "ci_completed", "reopened"]` |  |  |
-| `rescore.max_rescores_per_pr` | integer 1–100 | `20` |  |  |
-| `rescore.min_minutes_between_edits` | integer 0–60 | `2` |  |  |
+| `rescore.on` | list of `push`, `ready_for_review`, `ci_completed`, `reopened`, `edited`, `labeled` | `["push", "ready_for_review", "ci_completed", "reopened"]` |  | PR events that trigger a rescore |
+| `rescore.max_rescores_per_pr` | integer 1–100 | `20` |  | Most rescores one PR gets |
+| `rescore.min_minutes_between_edits` | integer 0–60 | `2` |  | Minutes between rescores triggered by edits |
 
 ### `commands`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `commands.enabled` | boolean | `true` |  |  |
-| `commands.prefix` | string matching `^/[a-z-]+$` | `"/riffle"` |  |  |
-| `commands.override.allowed` | `write_access`, `maintainers`, `codeowners` | `"write_access"` | org only |  |
+| `commands.enabled` | boolean | `true` |  | Accept /riffle commands |
+| `commands.prefix` | string matching `^/[a-z-]+$` | `"/riffle"` |  | Command prefix |
+| `commands.override.allowed` | `write_access`, `maintainers`, `codeowners` | `"write_access"` | org only | Who may override a band |
 | `commands.override.require_reason` | boolean | `true` | org only | The reason is stored with the route_override training label |
 | `commands.override.allow_downgrade` | boolean | `true` | org only | Floors still apply |
 | `commands.disable_label` | string | `"riffle:disabled"` |  | Stops comments on that PR; it is still scored |
@@ -548,71 +548,71 @@ How the app behaves. Settings never change what the model sees or learns; those 
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `pr_output.post_comment` | boolean | `true` |  |  |
-| `pr_output.update_existing_comment` | boolean | `true` |  |  |
-| `pr_output.apply_labels` | boolean | `true` |  |  |
-| `pr_output.labels.review_first` | string | `"review first"` |  |  |
-| `pr_output.labels.standard` | string | `"standard"` |  |  |
-| `pr_output.labels.senior_recommended` | string | `"senior recommended"` |  |  |
-| `pr_output.labels.override` | string | `"wrong route"` |  |  |
-| `pr_output.component_label_prefix` | string or null | `null` |  |  |
-| `pr_output.bands_with_comment` | list of `review_first`, `standard`, `senior_recommended` | `["review_first", "senior_recommended"]` |  |  |
+| `pr_output.post_comment` | boolean | `true` |  | Post a comment on the PR |
+| `pr_output.update_existing_comment` | boolean | `true` |  | Edit the existing comment rather than posting a new one |
+| `pr_output.apply_labels` | boolean | `true` |  | Apply band labels |
+| `pr_output.labels.review_first` | string | `"review first"` |  | Label for review_first |
+| `pr_output.labels.standard` | string | `"standard"` |  | Label for standard |
+| `pr_output.labels.senior_recommended` | string | `"senior recommended"` |  | Label for senior_recommended |
+| `pr_output.labels.override` | string | `"wrong route"` |  | Label for a PR whose band was overridden |
+| `pr_output.component_label_prefix` | string or null | `null` |  | Prefix of component labels; null for none |
+| `pr_output.bands_with_comment` | list of `review_first`, `standard`, `senior_recommended` | `["review_first", "senior_recommended"]` |  | Bands whose PRs get a comment |
 | `pr_output.show_top_factors` | integer 0–5 | `3` |  | From SHAP; explains the rank even with the LLM off |
-| `pr_output.show_score` | boolean | `false` |  |  |
-| `pr_output.show_component` | boolean | `true` |  |  |
-| `pr_output.collapse` | boolean | `true` |  |  |
-| `pr_output.evidence.cite_similar_prs` | integer 0–5 | `3` |  |  |
-| `pr_output.evidence.failure_mode` | boolean | `true` |  |  |
-| `pr_output.evidence.scrutiny` | boolean | `true` |  |  |
-| `pr_output.evidence.path_size` | boolean | `true` |  |  |
-| `pr_output.evidence.release_cycle` | boolean | `true` |  |  |
+| `pr_output.show_score` | boolean | `false` |  | Show risk_score in the comment |
+| `pr_output.show_component` | boolean | `true` |  | Show the component in the comment |
+| `pr_output.collapse` | boolean | `true` |  | Collapse the comment |
+| `pr_output.evidence.cite_similar_prs` | integer 0–5 | `3` |  | Most similar past PRs cited |
+| `pr_output.evidence.failure_mode` | boolean | `true` |  | Cite failure_mode_top |
+| `pr_output.evidence.scrutiny` | boolean | `true` |  | Cite scrutiny_top_path |
+| `pr_output.evidence.path_size` | boolean | `true` |  | Cite size_context |
+| `pr_output.evidence.release_cycle` | boolean | `true` |  | Cite release_context |
 
 ### `explanation`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
 | `explanation.enabled` | boolean | `true` |  | Turning off never stops scoring |
-| `explanation.language` | string matching `^[a-z]{2}(-[A-Z]{2})?$` | `"en-US"` |  |  |
-| `explanation.max_bullets` | integer 1–7 | `3` |  |  |
-| `explanation.show_review_effort` | boolean | `true` |  |  |
-| `explanation.mention_missing_tests` | boolean | `true` |  |  |
-| `explanation.mention_missing_issue` | boolean | `false` |  |  |
-| `explanation.show_effective_config` | boolean | `false` |  |  |
+| `explanation.language` | string matching `^[a-z]{2}(-[A-Z]{2})?$` | `"en-US"` |  | Language of the explanation, e.g. en-US |
+| `explanation.max_bullets` | integer 1–7 | `3` |  | Most bullets in the explanation |
+| `explanation.show_review_effort` | boolean | `true` |  | Mention review effort |
+| `explanation.mention_missing_tests` | boolean | `true` |  | Mention missing tests |
+| `explanation.mention_missing_issue` | boolean | `false` |  | Mention a missing linked issue |
+| `explanation.show_effective_config` | boolean | `false` |  | Show the effective settings |
 | `explanation.known_fragile` | list of string | `[]` |  | Paths the narrator names explicitly |
-| `explanation.house_terms` | object | `{}` |  |  |
+| `explanation.house_terms` | object | `{}` |  | Up to 50 organisation terms for the narrator, as term to text |
 
 ### `llm`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
 | `llm.provider` | `none`, `hosted`, `self_hosted` | `"none"` |  | none = SHAP template explanations only |
-| `llm.endpoint` | string or null (uri) | `null` |  |  |
+| `llm.endpoint` | string or null (uri) | `null` |  | URL of the LLM endpoint |
 | `llm.send` | `features_only`, `diff_hunks`, `full_files` | `"features_only"` |  | Repos may only make this stricter |
-| `llm.excluded_paths` | list of string | `["**/.env*", "**/*.pem", "**/*.key", "**/*secret*"]` | union |  |
-| `llm.max_calls_per_hour` | integer 0–10000 | `60` |  |  |
+| `llm.excluded_paths` | list of string | `["**/.env*", "**/*.pem", "**/*.key", "**/*secret*"]` | union | Paths never sent to the LLM |
+| `llm.max_calls_per_hour` | integer 0–10000 | `60` |  | Most LLM calls per hour |
 
 ### `queue`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
 | `queue.epic_priority` | boolean | `false` |  | Linked issue priority breaks ties inside a band |
-| `queue.manual_boosts.enabled` | boolean | `false` |  |  |
-| `queue.manual_boosts.areas` | list of objects | `[]` |  |  |
-| `queue.manual_boosts.areas[].paths` | list of string |  |  |  |
+| `queue.manual_boosts.enabled` | boolean | `false` |  | Apply manual boosts |
+| `queue.manual_boosts.areas` | list of objects | `[]` |  | Paths whose PRs move up the queue |
+| `queue.manual_boosts.areas[].paths` | list of string |  |  | Path globs the boost applies to |
 | `queue.manual_boosts.areas[].boost` | number 0–0.2 | `0.05` |  | Moves queue position, never risk_score |
 
 ### `stacks`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `stacks.score_as` | `each_pr`, `whole_stack` | `"each_pr"` |  |  |
-| `stacks.comment_on` | `each_pr`, `stack_top` | `"each_pr"` |  |  |
+| `stacks.score_as` | `each_pr`, `whole_stack` | `"each_pr"` |  | Score each PR in a stack on its own, or the stack as a whole |
+| `stacks.comment_on` | `each_pr`, `stack_top` | `"each_pr"` |  | Comment on each PR in a stack, or only the top one |
 
 ### `limits`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `limits.max_comments_per_hour` | integer 1–1000 | `120` |  |  |
+| `limits.max_comments_per_hour` | integer 1–1000 | `120` |  | Most comments Riffle posts per hour |
 
 ### `overrides`
 
@@ -624,23 +624,23 @@ Each entry has `match` (`component` or `paths`) and may set `rank_bands`, `pr_ou
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `dashboard.visibility` | `org_members`, `repo_writers`, `admins` | `"repo_writers"` | org only |  |
+| `dashboard.visibility` | `org_members`, `repo_writers`, `admins` | `"repo_writers"` | org only | Who can see the dashboard |
 | `dashboard.show_individual_metrics` | boolean | `false` | org only | Per-person statistics stay hidden unless on |
-| `dashboard.group_by` | `band`, `component`, `owner`, `author_type` | `"band"` | org only |  |
+| `dashboard.group_by` | `band`, `component`, `owner`, `author_type` | `"band"` | org only | How the dashboard groups PRs |
 
 ### `audit`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `audit.enabled` | boolean | `true` | org only |  |
-| `audit.retention_days` | integer 30–1095 | `365` | org only |  |
+| `audit.enabled` | boolean | `true` | org only | Keep the audit log |
+| `audit.retention_days` | integer 30–1095 | `365` | org only | Days audit entries are kept |
 
 ### `notifications`
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `notifications.slack_webhook_secret_ref` | string or null | `null` | later |  |
-| `notifications.digest` | `off`, `daily`, `weekly` | `"off"` | later |  |
+| `notifications.slack_webhook_secret_ref` | string or null | `null` | later | Secret reference for a Slack webhook, never the value; null for none |
+| `notifications.digest` | `off`, `daily`, `weekly` | `"off"` | later | How often a digest is sent |
 
 ### Code checks
 
@@ -677,15 +677,15 @@ Nine repo-local columns mined from git, CI and review history that capture how o
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
-| `evidence.similar_prs` | list of objects |  |  |  |
-| `evidence.similar_prs[].pr_number` | integer |  |  |  |
-| `evidence.similar_prs[].overlap` | number 0–1 |  |  |  |
-| `evidence.similar_prs[].outcome` | `clean`, `revert`, `ci_fail`, `hotfix` |  |  |  |
-| `evidence.similar_prs[].merged_at` | string (date-time) |  |  |  |
-| `evidence.scrutiny_top_path` | object or null |  |  |  |
-| `evidence.failure_mode_top` | object or null |  |  |  |
-| `evidence.size_context` | object or null |  |  |  |
-| `evidence.release_context` | object or null |  |  |  |
+| `evidence.similar_prs` | list of objects |  |  | Past PRs behind similar_pr_bad_rate |
+| `evidence.similar_prs[].pr_number` | integer |  |  | Past PR number |
+| `evidence.similar_prs[].overlap` | number 0–1 |  |  | Jaccard over touched files with this PR |
+| `evidence.similar_prs[].outcome` | `clean`, `revert`, `ci_fail`, `hotfix` |  |  | How the past PR turned out |
+| `evidence.similar_prs[].merged_at` | string (date-time) |  |  | When the past PR merged |
+| `evidence.scrutiny_top_path` | object or null |  |  | Touched path with the highest scrutiny ratio, for revealed_path_scrutiny. |
+| `evidence.failure_mode_top` | object or null |  |  | Most common failure mode on these paths, for the path_failure_mode_* columns. |
+| `evidence.size_context` | object or null |  |  | Comparison behind path_size_pctile. |
+| `evidence.release_context` | object or null |  |  | Release history behind release_cycle_position. |
 
 ## Outcome import (`outcome_import.schema.json`)
 
@@ -696,13 +696,13 @@ Body of POST /v1/outcomes. Lets an org report outcomes Riffle cannot see (intern
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
 | `event_id` | string |  |  | Sender's unique id; resends are ignored |
-| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  |  |
-| `target.commit_sha` | string matching `^[0-9a-f]{40}$` |  |  |  |
-| `target.pr_number` | integer 1– |  |  |  |
+| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  | Repository as owner/name |
+| `target.commit_sha` | string matching `^[0-9a-f]{40}$` |  |  | Commit the outcome is about |
+| `target.pr_number` | integer 1– |  |  | PR the outcome is about |
 | `target.external_change_id` | string |  |  | Matched through link rules, e.g. D12345678 |
-| `outcome` | `revert`, `incident`, `ci_fail`, `hotfix`, `clean` |  |  |  |
+| `outcome` | `revert`, `incident`, `ci_fail`, `hotfix`, `clean` |  |  | What happened to the target |
 | `severity` | integer 1–4 |  |  | 1 is worst |
-| `occurred_at` | string (date-time) |  |  |  |
+| `occurred_at` | string (date-time) |  |  | When the outcome happened |
 | `source` | string |  |  | Free label for audit, e.g. internal-ci |
 
 ## Riffle repo miner training row (`mined_dataset.schema.json`)
@@ -922,26 +922,26 @@ Manifest written by the Go history miner (services/miner) for one repository and
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
 | `run_id` | string |  |  | Unique per run; reruns with the same run_id overwrite the same files (idempotent) |
-| `tenant_id` | string |  |  |  |
-| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  |  |
+| `tenant_id` | string |  |  | Installation the run belongs to |
+| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  | Repository as owner/name |
 | `miner_version` | string |  |  | Pinned into model_version via the feature extractor version |
-| `status` | `running`, `partial`, `complete`, `failed` |  |  |  |
-| `window.from` | string (date-time) |  |  |  |
-| `window.to` | string (date-time) |  |  |  |
+| `status` | `running`, `partial`, `complete`, `failed` |  |  | Run state; only complete runs are read |
+| `window.from` | string (date-time) |  |  | Start of the history covered |
+| `window.to` | string (date-time) |  |  | End of the history covered |
 | `window.head_sha` | string matching `^[0-9a-f]{40}$` |  |  | Default branch head the run mined up to |
-| `started_at` | string (date-time) |  |  |  |
-| `finished_at` | string or null (date-time) |  |  |  |
+| `started_at` | string (date-time) |  |  | When the run started |
+| `finished_at` | string or null (date-time) |  |  | When the run finished; null if it has not |
 | `checkpoint` | object or null |  |  | Where a partial or failed run resumes. Opaque to readers. |
-| `rate_limit.requests` | integer 0– |  |  |  |
+| `rate_limit.requests` | integer 0– |  |  | GitHub API requests made |
 | `rate_limit.conditional_hits` | integer 0– |  |  | 304 responses, which do not count against the limit |
-| `rate_limit.secondary_limit_waits` | integer 0– |  |  |  |
+| `rate_limit.secondary_limit_waits` | integer 0– |  |  | Times the run waited on a GitHub secondary rate limit |
 | `coverage.check_runs_from` | string or null (date-time) |  |  | Earliest check result still retrievable; ci_fail is unobserved before this |
-| `coverage.reviews_from` | string or null (date-time) |  |  |  |
-| `tables` | list of objects |  |  |  |
-| `tables[].name` | `commits`, `file_changes`, `pull_requests`, `reviews`, `check_runs`, `tags` |  |  |  |
+| `coverage.reviews_from` | string or null (date-time) |  |  | Earliest review still retrievable |
+| `tables` | list of objects |  |  | Parquet tables the run wrote. |
+| `tables[].name` | `commits`, `file_changes`, `pull_requests`, `reviews`, `check_runs`, `tags` |  |  | Table name; columns are listed in x-riffle-tables |
 | `tables[].uri` | string |  |  | gs:// or file:// path to the Parquet file |
-| `tables[].rows` | integer 0– |  |  |  |
-| `tables[].sha256` | string matching `^[0-9a-f]{64}$` |  |  |  |
+| `tables[].rows` | integer 0– |  |  | Row count |
+| `tables[].sha256` | string matching `^[0-9a-f]{64}$` |  |  | SHA-256 of the Parquet file |
 
 ### Table `commits`
 
