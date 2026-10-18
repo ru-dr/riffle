@@ -9,38 +9,38 @@
   "required": ["run_id", "tenant_id", "repo", "miner_version", "status", "window", "started_at", "tables"],
   "properties": {
     "run_id": { "type": "string", "maxLength": 64, "description": "Unique per run; reruns with the same run_id overwrite the same files (idempotent)" },
-    "tenant_id": { "type": "string" },
-    "repo": { "type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$" },
+    "tenant_id": { "type": "string", "description": "Installation the run belongs to" },
+    "repo": { "type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", "description": "Repository as owner/name" },
     "miner_version": { "type": "string", "description": "Pinned into model_version via the feature extractor version" },
-    "status": { "enum": ["running", "partial", "complete", "failed"] },
+    "status": { "enum": ["running", "partial", "complete", "failed"], "description": "Run state; only complete runs are read" },
     "window": {
       "description": "History covered. Backfill runs recent-first (rules model.backfill), so a partial run always covers the newest data.",
       "type": "object", "additionalProperties": false,
       "required": ["from", "to"],
       "properties": {
-        "from": { "type": "string", "format": "date-time" },
-        "to": { "type": "string", "format": "date-time" },
+        "from": { "type": "string", "format": "date-time", "description": "Start of the history covered" },
+        "to": { "type": "string", "format": "date-time", "description": "End of the history covered" },
         "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "Default branch head the run mined up to" }
       }
     },
-    "started_at": { "type": "string", "format": "date-time" },
-    "finished_at": { "type": ["string", "null"], "format": "date-time" },
+    "started_at": { "type": "string", "format": "date-time", "description": "When the run started" },
+    "finished_at": { "type": ["string", "null"], "format": "date-time", "description": "When the run finished; null if it has not" },
     "checkpoint": {
       "description": "Where a partial or failed run resumes. Opaque to readers.",
       "type": ["object", "null"], "additionalProperties": false,
       "properties": {
-        "table": { "type": "string" },
-        "cursor": { "type": "string", "maxLength": 512 },
-        "rows_written": { "type": "integer", "minimum": 0 }
+        "table": { "type": "string", "description": "Table the run resumes in" },
+        "cursor": { "type": "string", "maxLength": 512, "description": "Position within the table the run resumes from" },
+        "rows_written": { "type": "integer", "minimum": 0, "description": "Rows written before the checkpoint" }
       }
     },
     "rate_limit": {
       "description": "GitHub API budget used, for capacity planning.",
       "type": "object", "additionalProperties": false,
       "properties": {
-        "requests": { "type": "integer", "minimum": 0 },
+        "requests": { "type": "integer", "minimum": 0, "description": "GitHub API requests made" },
         "conditional_hits": { "type": "integer", "minimum": 0, "description": "304 responses, which do not count against the limit" },
-        "secondary_limit_waits": { "type": "integer", "minimum": 0 }
+        "secondary_limit_waits": { "type": "integer", "minimum": 0, "description": "Times the run waited on a GitHub secondary rate limit" }
       }
     },
     "coverage": {
@@ -48,19 +48,20 @@
       "type": "object", "additionalProperties": false,
       "properties": {
         "check_runs_from": { "type": ["string", "null"], "format": "date-time", "description": "Earliest check result still retrievable; ci_fail is unobserved before this" },
-        "reviews_from": { "type": ["string", "null"], "format": "date-time" }
+        "reviews_from": { "type": ["string", "null"], "format": "date-time", "description": "Earliest review still retrievable" }
       }
     },
     "tables": {
+      "description": "Parquet tables the run wrote.",
       "type": "array", "minItems": 1,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["name", "uri", "rows", "sha256"],
         "properties": {
-          "name": { "enum": ["commits", "file_changes", "pull_requests", "reviews", "check_runs", "tags"] },
+          "name": { "enum": ["commits", "file_changes", "pull_requests", "reviews", "check_runs", "tags"], "description": "Table name; columns are listed in x-riffle-tables" },
           "uri": { "type": "string", "description": "gs:// or file:// path to the Parquet file" },
-          "rows": { "type": "integer", "minimum": 0 },
-          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          "rows": { "type": "integer", "minimum": 0, "description": "Row count" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the Parquet file" }
         }
       }
     }

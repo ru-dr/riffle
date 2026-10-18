@@ -21,7 +21,8 @@
     },
     "repo": {
       "type": "string",
-      "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"
+      "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+      "description": "Repository as owner/name"
     },
     "target": {
       "description": "What the outcome is about. At least one key.",
@@ -31,11 +32,13 @@
       "properties": {
         "commit_sha": {
           "type": "string",
-          "pattern": "^[0-9a-f]{40}$"
+          "pattern": "^[0-9a-f]{40}$",
+          "description": "Commit the outcome is about"
         },
         "pr_number": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "description": "PR the outcome is about"
         },
         "external_change_id": {
           "type": "string",
@@ -51,7 +54,8 @@
         "ci_fail",
         "hotfix",
         "clean"
-      ]
+      ],
+      "description": "What happened to the target"
     },
     "severity": {
       "type": "integer",
@@ -61,7 +65,8 @@
     },
     "occurred_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "When the outcome happened"
     },
     "source": {
       "type": "string",

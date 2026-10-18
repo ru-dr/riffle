@@ -45,7 +45,8 @@
               "default": false,
               "description": "Anonymised feature vectors and outcomes only. Never code, diffs or identities"
             }
-          }
+          },
+          "description": "Opt-in sharing of outcomes with the global model."
         },
         "data_retention": {
           "type": "object",
@@ -53,20 +54,24 @@
           "properties": {
             "store_diffs": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "Keep full diffs after features are computed"
             },
             "retention_days": {
               "type": "integer",
               "minimum": 30,
               "maximum": 730,
-              "default": 365
+              "default": 365,
+              "description": "Days stored data is kept"
             }
-          }
+          },
+          "description": "What data is stored, and for how long."
         },
         "label_prefix": {
           "type": "string",
           "maxLength": 20,
-          "default": "riffle"
+          "default": "riffle",
+          "description": "Prefix of every label Riffle applies"
         },
         "locked_keys": {
           "type": "array",
@@ -100,7 +105,8 @@
         },
         "include_drafts": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Post on draft PRs too"
         },
         "quiet_authors": {
           "type": "array",
@@ -139,7 +145,8 @@
             "percentile",
             "absolute"
           ],
-          "default": "percentile"
+          "default": "percentile",
+          "description": "percentile cuts bands from the repo's score distribution; absolute cuts on fixed scores"
         },
         "percentile": {
           "type": "object",
@@ -149,7 +156,8 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1,
-              "default": 0.05
+              "default": 0.05,
+              "description": "Share of the highest-scoring PRs placed in senior_recommended"
             },
             "review_first_top_fraction": {
               "type": "number",
@@ -166,7 +174,8 @@
               "default": "repo",
               "description": "component ranks each monorepo package against itself"
             }
-          }
+          },
+          "description": "Band cut-offs as shares of PRs, used when mode is percentile."
         },
         "absolute": {
           "type": "object",
@@ -176,15 +185,18 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1,
-              "default": 0.8
+              "default": 0.8,
+              "description": "Lowest risk_score placed in senior_recommended"
             },
             "review_first_min_score": {
               "type": "number",
               "minimum": 0,
               "maximum": 1,
-              "default": 0.5
+              "default": 0.5,
+              "description": "Lowest risk_score placed in review_first"
             }
-          }
+          },
+          "description": "Band cut-offs as fixed scores, used when mode is absolute."
         },
         "holdout_fraction": {
           "type": "number",
@@ -221,7 +233,8 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "false turns off every floor"
         },
         "paths": {
           "type": "array",
@@ -231,7 +244,8 @@
             "additionalProperties": false,
             "properties": {
               "pattern": {
-                "type": "string"
+                "type": "string",
+                "description": "Path glob"
               },
               "min_band": {
                 "$ref": "#/$defs/floor_band"
@@ -242,7 +256,8 @@
             ]
           },
           "x-riffle-merge": "union",
-          "default": []
+          "default": [],
+          "description": "Minimum band for PRs that touch a path"
         },
         "ai_agents": {
           "oneOf": [
@@ -253,7 +268,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Minimum band for PRs by AI agents; null for none"
         },
         "first_time_contributors": {
           "oneOf": [
@@ -264,7 +280,8 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "description": "Minimum band for PRs by first-time contributors; null for none"
         }
       },
       "description": "Minimum bands applied AFTER scoring. Never change risk_score, always named in the comment, logged, and excluded from backtest and per-repo layer evaluation. Pending team decision.",
@@ -281,33 +298,40 @@
             "xs": {
               "type": "integer",
               "minimum": 0,
-              "default": 0
+              "default": 0,
+              "description": "Lower bound of xs"
             },
             "s": {
               "type": "integer",
               "minimum": 0,
-              "default": 10
+              "default": 10,
+              "description": "Lower bound of s"
             },
             "m": {
               "type": "integer",
               "minimum": 0,
-              "default": 100
+              "default": 100,
+              "description": "Lower bound of m"
             },
             "l": {
               "type": "integer",
               "minimum": 0,
-              "default": 500
+              "default": 500,
+              "description": "Lower bound of l"
             },
             "xl": {
               "type": "integer",
               "minimum": 0,
-              "default": 1000
+              "default": 1000,
+              "description": "Lower bound of xl"
             }
-          }
+          },
+          "description": "Where each size label starts. Must strictly increase from xs to xl."
         },
         "count_files": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Whether changed files count toward the size label"
         },
         "ignore_paths": {
           "type": "array",
@@ -323,7 +347,8 @@
         },
         "apply_label": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Apply the size label"
         },
         "large_pr_note": {
           "type": [
@@ -331,7 +356,8 @@
             "null"
           ],
           "maxLength": 200,
-          "default": null
+          "default": null,
+          "description": "Note shown on large PRs; null for none"
         }
       },
       "description": "Size labels for people. The model's size features are separate."
@@ -361,7 +387,8 @@
           "default": true,
           "description": "Mention when the author rarely touches these files"
         }
-      }
+      },
+      "description": "How PRs by AI agents and external authors are presented."
     },
     "reviewer_routing": {
       "$ref": "#/$defs/reviewer_routing"
@@ -375,7 +402,8 @@
           "items": {
             "$ref": "#/$defs/handle"
           },
-          "default": []
+          "default": [],
+          "description": "Users or teams currently unavailable to review"
         },
         "timezone": {
           "type": "string",
@@ -402,14 +430,17 @@
             "wed",
             "thu",
             "fri"
-          ]
+          ],
+          "description": "Days that count as working days"
         },
         "working_hours": {
           "type": "string",
           "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]-([01][0-9]|2[0-3]):[0-5][0-9]$",
-          "default": "09:00-17:00"
+          "default": "09:00-17:00",
+          "description": "Working hours on a working day, HH:MM-HH:MM in timezone"
         }
-      }
+      },
+      "description": "Who is unavailable, and the working days and hours."
     },
     "review_targets": {
       "type": "object",
@@ -419,19 +450,22 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 720,
-          "default": 4
+          "default": 4,
+          "description": "Target for senior_recommended PRs, in working hours"
         },
         "review_first_hours": {
           "type": "integer",
           "minimum": 1,
           "maximum": 720,
-          "default": 4
+          "default": 4,
+          "description": "Target for review_first PRs, in working hours"
         },
         "standard_hours": {
           "type": "integer",
           "minimum": 1,
           "maximum": 720,
-          "default": 8
+          "default": 8,
+          "description": "Target for standard PRs, in working hours"
         }
       },
       "description": "Working hours to first review. Shown on the dashboard; PRs past target move up within their band."
@@ -442,38 +476,45 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Send reminders"
         },
         "min_age_hours": {
           "type": "integer",
           "minimum": 1,
           "maximum": 720,
-          "default": 24
+          "default": 24,
+          "description": "Hours a PR must be open before a reminder"
         },
         "min_staleness_hours": {
           "type": "integer",
           "minimum": 1,
           "maximum": 720,
-          "default": 8
+          "default": 8,
+          "description": "Hours without activity before a reminder"
         },
         "ignore_drafts": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "No reminders on draft PRs"
         },
         "ignore_approved_with": {
           "type": "integer",
           "minimum": 0,
           "maximum": 10,
-          "default": 1
+          "default": 1,
+          "description": "No reminders on PRs with at least this many approvals"
         },
         "ignored_labels": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "default": []
+          "default": [],
+          "description": "PR labels that stop reminders"
         }
-      }
+      },
+      "description": "Reminders on open PRs."
     },
     "rescore": {
       "type": "object",
@@ -497,19 +538,22 @@
             "ready_for_review",
             "ci_completed",
             "reopened"
-          ]
+          ],
+          "description": "PR events that trigger a rescore"
         },
         "max_rescores_per_pr": {
           "type": "integer",
           "minimum": 1,
           "maximum": 100,
-          "default": 20
+          "default": 20,
+          "description": "Most rescores one PR gets"
         },
         "min_minutes_between_edits": {
           "type": "integer",
           "minimum": 0,
           "maximum": 60,
-          "default": 2
+          "default": 2,
+          "description": "Minutes between rescores triggered by edits"
         }
       },
       "description": "Stage 2 (scanners, dependency check) also triggers one rescore."
@@ -520,12 +564,14 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Accept /riffle commands"
         },
         "prefix": {
           "type": "string",
           "pattern": "^/[a-z-]+$",
-          "default": "/riffle"
+          "default": "/riffle",
+          "description": "Command prefix"
         },
         "override": {
           "type": "object",
@@ -537,7 +583,8 @@
                 "maintainers",
                 "codeowners"
               ],
-              "default": "write_access"
+              "default": "write_access",
+              "description": "Who may override a band"
             },
             "require_reason": {
               "type": "boolean",
@@ -550,7 +597,8 @@
               "description": "Floors still apply"
             }
           },
-          "x-riffle-org-only": true
+          "x-riffle-org-only": true,
+          "description": "Who may change a PR's band with /riffle band, and how."
         },
         "disable_label": {
           "type": "string",
@@ -566,15 +614,18 @@
       "properties": {
         "post_comment": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Post a comment on the PR"
         },
         "update_existing_comment": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Edit the existing comment rather than posting a new one"
         },
         "apply_labels": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Apply band labels"
         },
         "labels": {
           "type": "object",
@@ -583,22 +634,26 @@
             "review_first": {
               "type": "string",
               "maxLength": 30,
-              "default": "review first"
+              "default": "review first",
+              "description": "Label for review_first"
             },
             "standard": {
               "type": "string",
               "maxLength": 30,
-              "default": "standard"
+              "default": "standard",
+              "description": "Label for standard"
             },
             "senior_recommended": {
               "type": "string",
               "maxLength": 30,
-              "default": "senior recommended"
+              "default": "senior recommended",
+              "description": "Label for senior_recommended"
             },
             "override": {
               "type": "string",
               "maxLength": 30,
-              "default": "wrong route"
+              "default": "wrong route",
+              "description": "Label for a PR whose band was overridden"
             }
           },
           "description": "Text after organization.label_prefix; full label capped at 50 characters by code check"
@@ -608,7 +663,8 @@
             "string",
             "null"
           ],
-          "default": null
+          "default": null,
+          "description": "Prefix of component labels; null for none"
         },
         "bands_with_comment": {
           "type": "array",
@@ -618,7 +674,8 @@
           "default": [
             "review_first",
             "senior_recommended"
-          ]
+          ],
+          "description": "Bands whose PRs get a comment"
         },
         "show_top_factors": {
           "type": "integer",
@@ -629,15 +686,18 @@
         },
         "show_score": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Show risk_score in the comment"
         },
         "show_component": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Show the component in the comment"
         },
         "collapse": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Collapse the comment"
         },
         "evidence": {
           "type": "object",
@@ -647,28 +707,34 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 5,
-              "default": 3
+              "default": 3,
+              "description": "Most similar past PRs cited"
             },
             "failure_mode": {
               "type": "boolean",
-              "default": true
+              "default": true,
+              "description": "Cite failure_mode_top"
             },
             "scrutiny": {
               "type": "boolean",
-              "default": true
+              "default": true,
+              "description": "Cite scrutiny_top_path"
             },
             "path_size": {
               "type": "boolean",
-              "default": true
+              "default": true,
+              "description": "Cite size_context"
             },
             "release_cycle": {
               "type": "boolean",
-              "default": true
+              "default": true,
+              "description": "Cite release_context"
             }
           },
           "description": "Mined evidence the narrator may cite (contracts/mined_features.schema.json)"
         }
-      }
+      },
+      "description": "What Riffle posts on a PR."
     },
     "explanation": {
       "type": "object",
@@ -682,29 +748,35 @@
         "language": {
           "type": "string",
           "pattern": "^[a-z]{2}(-[A-Z]{2})?$",
-          "default": "en-US"
+          "default": "en-US",
+          "description": "Language of the explanation, e.g. en-US"
         },
         "max_bullets": {
           "type": "integer",
           "minimum": 1,
           "maximum": 7,
-          "default": 3
+          "default": 3,
+          "description": "Most bullets in the explanation"
         },
         "show_review_effort": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Mention review effort"
         },
         "mention_missing_tests": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Mention missing tests"
         },
         "mention_missing_issue": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Mention a missing linked issue"
         },
         "show_effective_config": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Show the effective settings"
         },
         "known_fragile": {
           "type": "array",
@@ -720,7 +792,8 @@
             "type": "string"
           },
           "maxProperties": 50,
-          "default": {}
+          "default": {},
+          "description": "Up to 50 organisation terms for the narrator, as term to text"
         }
       },
       "description": "Narrator output only. Phrases what the score and evidence contain; invents nothing."
@@ -744,7 +817,8 @@
             "null"
           ],
           "format": "uri",
-          "default": null
+          "default": null,
+          "description": "URL of the LLM endpoint"
         },
         "send": {
           "enum": [
@@ -766,13 +840,15 @@
             "**/*.key",
             "**/*secret*"
           ],
-          "x-riffle-merge": "union"
+          "x-riffle-merge": "union",
+          "description": "Paths never sent to the LLM"
         },
         "max_calls_per_hour": {
           "type": "integer",
           "minimum": 0,
           "maximum": 10000,
-          "default": 60
+          "default": 60,
+          "description": "Most LLM calls per hour"
         }
       },
       "description": "Secrets are always redacted before any call. Fixed, not a setting."
@@ -792,7 +868,8 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "Apply manual boosts"
             },
             "areas": {
               "type": "array",
@@ -805,7 +882,8 @@
                     "type": "array",
                     "items": {
                       "type": "string"
-                    }
+                    },
+                    "description": "Path globs the boost applies to"
                   },
                   "boost": {
                     "type": "number",
@@ -819,7 +897,8 @@
                   "paths"
                 ]
               },
-              "default": []
+              "default": [],
+              "description": "Paths whose PRs move up the queue"
             }
           },
           "description": "Off by default; excluded from backtest numbers"
@@ -836,16 +915,19 @@
             "each_pr",
             "whole_stack"
           ],
-          "default": "each_pr"
+          "default": "each_pr",
+          "description": "Score each PR in a stack on its own, or the stack as a whole"
         },
         "comment_on": {
           "enum": [
             "each_pr",
             "stack_top"
           ],
-          "default": "each_pr"
+          "default": "each_pr",
+          "description": "Comment on each PR in a stack, or only the top one"
         }
-      }
+      },
+      "description": "How stacked PRs are scored and commented on."
     },
     "limits": {
       "type": "object",
@@ -855,9 +937,11 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 1000,
-          "default": 120
+          "default": 120,
+          "description": "Most comments Riffle posts per hour"
         }
-      }
+      },
+      "description": "Caps on what Riffle posts."
     },
     "overrides": {
       "type": "array",
@@ -872,16 +956,19 @@
             "additionalProperties": false,
             "properties": {
               "component": {
-                "type": "string"
+                "type": "string",
+                "description": "Component name from a component rule"
               },
               "paths": {
                 "type": "array",
                 "items": {
                   "type": "string"
-                }
+                },
+                "description": "Path globs"
               }
             },
-            "minProperties": 1
+            "minProperties": 1,
+            "description": "Where the override applies: a component, or path globs. At least one key."
           },
           "rank_bands": {
             "$ref": "#/properties/rank_bands"
@@ -911,7 +998,8 @@
             "repo_writers",
             "admins"
           ],
-          "default": "repo_writers"
+          "default": "repo_writers",
+          "description": "Who can see the dashboard"
         },
         "show_individual_metrics": {
           "type": "boolean",
@@ -925,10 +1013,12 @@
             "owner",
             "author_type"
           ],
-          "default": "band"
+          "default": "band",
+          "description": "How the dashboard groups PRs"
         }
       },
-      "x-riffle-org-only": true
+      "x-riffle-org-only": true,
+      "description": "Who sees the dashboard and how it groups PRs."
     },
     "audit": {
       "type": "object",
@@ -936,13 +1026,15 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Keep the audit log"
         },
         "retention_days": {
           "type": "integer",
           "minimum": 30,
           "maximum": 1095,
-          "default": 365
+          "default": 365,
+          "description": "Days audit entries are kept"
         }
       },
       "description": "Logs overrides, config changes, floors applied and scores shown.",
@@ -957,7 +1049,8 @@
             "string",
             "null"
           ],
-          "default": null
+          "default": null,
+          "description": "Secret reference for a Slack webhook, never the value; null for none"
         },
         "digest": {
           "enum": [
@@ -965,10 +1058,12 @@
             "daily",
             "weekly"
           ],
-          "default": "off"
+          "default": "off",
+          "description": "How often a digest is sent"
         }
       },
-      "x-riffle-phase": "later"
+      "x-riffle-phase": "later",
+      "description": "Notifications outside GitHub."
     }
   },
   "$defs": {
@@ -1008,18 +1103,21 @@
             "suggest",
             "request"
           ],
-          "default": "suggest"
+          "default": "suggest",
+          "description": "off, suggest reviewers, or request them on the PR"
         },
         "use_codeowners": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "Use CODEOWNERS when choosing reviewers"
         },
         "senior_reviewers": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/handle"
           },
-          "default": []
+          "default": [],
+          "description": "Reviewers for senior_recommended PRs"
         },
         "groups": {
           "type": "array",
@@ -1030,19 +1128,22 @@
             "additionalProperties": false,
             "properties": {
               "name": {
-                "type": "string"
+                "type": "string",
+                "description": "Group name"
               },
               "paths": {
                 "type": "array",
                 "items": {
                   "type": "string"
-                }
+                },
+                "description": "Path globs the group reviews"
               },
               "reviewers": {
                 "type": "array",
                 "items": {
                   "$ref": "#/$defs/handle"
-                }
+                },
+                "description": "Reviewers in the group"
               }
             },
             "required": [
@@ -1050,13 +1151,15 @@
               "paths",
               "reviewers"
             ]
-          }
+          },
+          "description": "Reviewers by path"
         },
         "reviewers_per_pr": {
           "type": "integer",
           "minimum": 1,
           "maximum": 5,
-          "default": 1
+          "default": 1,
+          "description": "Reviewers chosen per PR"
         },
         "algorithm": {
           "enum": [
@@ -1064,7 +1167,8 @@
             "round_robin",
             "random"
           ],
-          "default": "load_balance"
+          "default": "load_balance",
+          "description": "How reviewers are picked"
         },
         "max_open_reviews_per_reviewer": {
           "type": [
@@ -1072,7 +1176,8 @@
             "null"
           ],
           "minimum": 1,
-          "default": null
+          "default": null,
+          "description": "Most open reviews per reviewer; null for no limit"
         },
         "skip_title_keywords": {
           "type": "array",
@@ -1081,7 +1186,8 @@
           },
           "default": [
             "wip"
-          ]
+          ],
+          "description": "PR title keywords that skip reviewer routing"
         }
       },
       "description": "The PR author is never suggested. Fixed behaviour."

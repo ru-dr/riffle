@@ -14,7 +14,8 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "pattern": "^5\\.[0-9]+$"
+      "pattern": "^5\\.[0-9]+$",
+      "description": "Rules format version as major.minor; the major must match this schema's x-riffle-version"
     },
     "includes": {
       "description": "Other rule files in the same repo, so large orgs can split rules by team, e.g. riffle/rules/streams.yml. Resolved depth-first, max depth 2.",
@@ -33,7 +34,8 @@
       "maxItems": 2000,
       "items": {
         "$ref": "#/$defs/rule"
-      }
+      },
+      "description": "Typed rules (kind + match + value) that the compiler reduces to the columns in x-riffle-model-columns"
     },
     "labels": {
       "description": "How outcomes become the breakage target, label_bad. Defaults follow docs/adr/0002-label-target.md. The global model always uses the default target_sources with binary union; org changes here apply only to that org's per-repo layer. The merge-outcome target (docs/adr/0009-merge-outcome-target.md) is configured in merge_outcome.",
@@ -64,7 +66,8 @@
           "type": "integer",
           "minimum": 30,
           "maximum": 365,
-          "default": 90
+          "default": 90,
+          "description": "Days before an SZZ label is mature, used for SZZ instead of maturity_days"
         },
         "unobserved": {
           "enum": [
@@ -188,7 +191,8 @@
               "type": "integer",
               "minimum": 3,
               "maximum": 20,
-              "default": 5
+              "default": 5,
+              "description": "Number of nearest past PRs similar_pr_bad_rate is computed over"
             },
             "min_file_overlap": {
               "type": "number",
@@ -201,7 +205,8 @@
               "type": "integer",
               "minimum": 30,
               "maximum": 1095,
-              "default": 365
+              "default": 365,
+              "description": "Days of past PRs searched for neighbours"
             },
             "min_neighbours": {
               "type": "integer",
@@ -210,7 +215,8 @@
               "default": 3,
               "description": "Fewer than this and the feature is null"
             }
-          }
+          },
+          "description": "Parameters for similar_pr_bad_rate and similar_pr_count."
         },
         "scrutiny": {
           "type": "object",
@@ -220,19 +226,23 @@
               "type": "integer",
               "minimum": 30,
               "maximum": 1095,
-              "default": 180
+              "default": 180,
+              "description": "Days of prior PR reviews counted"
             },
             "exclude_bot_reviews": {
               "type": "boolean",
-              "default": true
+              "default": true,
+              "description": "Leave bot reviews out of revealed_path_scrutiny"
             },
             "min_prior_prs": {
               "type": "integer",
               "minimum": 1,
               "maximum": 50,
-              "default": 5
+              "default": 5,
+              "description": "Fewer prior PRs than this and the feature is null"
             }
-          }
+          },
+          "description": "Parameters for revealed_path_scrutiny."
         },
         "failure_mode": {
           "type": "object",
@@ -242,15 +252,18 @@
               "type": "integer",
               "minimum": 90,
               "maximum": 1095,
-              "default": 365
+              "default": 365,
+              "description": "Days of past bad changes on the touched paths counted"
             },
             "min_bad_changes": {
               "type": "integer",
               "minimum": 1,
               "maximum": 20,
-              "default": 2
+              "default": 2,
+              "description": "Fewer past bad changes than this and the features are null"
             }
-          }
+          },
+          "description": "Parameters for the path_failure_mode_* columns and path_detection_lag_days."
         },
         "path_size": {
           "type": "object",
@@ -260,15 +273,18 @@
               "type": "integer",
               "minimum": 30,
               "maximum": 1095,
-              "default": 365
+              "default": 365,
+              "description": "Days of past changes to the same files compared against"
             },
             "min_prior_changes": {
               "type": "integer",
               "minimum": 3,
               "maximum": 100,
-              "default": 10
+              "default": 10,
+              "description": "Fewer past changes to the same files than this and the feature is null"
             }
-          }
+          },
+          "description": "Parameters for path_size_pctile."
         },
         "release_cycle": {
           "type": "object",
@@ -284,16 +300,19 @@
               "type": "integer",
               "minimum": 2,
               "maximum": 20,
-              "default": 3
+              "default": 3,
+              "description": "Fewer release tags than this and the feature is null"
             },
             "interval_stat": {
               "enum": [
                 "median",
                 "mean"
               ],
-              "default": "median"
+              "default": "median",
+              "description": "Statistic over past release intervals used as the repo's typical release interval"
             }
-          }
+          },
+          "description": "Parameters for release_cycle_position."
         },
         "flaky_detection": {
           "type": "object",
@@ -302,19 +321,22 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": true
+              "default": true,
+              "description": "false turns off flaky detection from re-runs"
             },
             "min_rerun_passes": {
               "type": "integer",
               "minimum": 1,
               "maximum": 20,
-              "default": 3
+              "default": 3,
+              "description": "Failed-then-passed re-runs needed before a check is marked flaky"
             },
             "lookback_days": {
               "type": "integer",
               "minimum": 14,
               "maximum": 365,
-              "default": 90
+              "default": 90,
+              "description": "Days of check history searched for failed-then-passed re-runs"
             }
           }
         }
@@ -324,7 +346,8 @@
       "enum": [
         "org",
         "repo"
-      ]
+      ],
+      "description": "Which file this is: org for riffle/rules.yml in the org's .github repo, repo for a repository's .github/riffle/rules.yml"
     },
     "model": {
       "description": "Settings that change what the model sees or learns. They live here, not in org-config, so they are hashed into model_version.",
@@ -344,9 +367,11 @@
               "type": "number",
               "minimum": 0,
               "maximum": 1,
-              "default": 1.0
+              "default": 1.0,
+              "description": "Upper limit on layer_weight, the per-repo layer's share of the score (0 to 1)"
             }
-          }
+          },
+          "description": "The per-repo layer fitted on this repo's own outcomes on top of the global model (docs/adr/0001-global-first.md)."
         },
         "disabled_features": {
           "type": "array",
@@ -366,13 +391,15 @@
               "type": "integer",
               "minimum": 90,
               "maximum": 3650,
-              "default": 1095
+              "default": 1095,
+              "description": "Days of history mined on install"
             },
             "recent_first_days": {
               "type": "integer",
               "minimum": 30,
               "maximum": 365,
-              "default": 180
+              "default": 180,
+              "description": "Most recent days of history mined first; older history follows in the background"
             }
           }
         }
@@ -397,7 +424,8 @@
             ],
             "properties": {
               "id": {
-                "$ref": "#/$defs/slug"
+                "$ref": "#/$defs/slug",
+                "description": "Tracker identifier, referenced by the tracker field of link, issue_field and issue_label rules"
               },
               "provider": {
                 "enum": [
@@ -406,23 +434,28 @@
                   "linear",
                   "bugzilla",
                   "youtrack"
-                ]
+                ],
+                "description": "Tracker product"
               },
               "base_url": {
                 "type": "string",
-                "format": "uri"
+                "format": "uri",
+                "description": "Base URL of the tracker"
               },
               "projects": {
                 "type": "array",
                 "items": {
                   "type": "string"
-                }
+                },
+                "description": "Tracker projects to read"
               },
               "credentials_ref": {
-                "type": "string"
+                "type": "string",
+                "description": "Secret reference for the tracker's credentials, never the value"
               }
             }
-          }
+          },
+          "description": "Issue trackers, referenced by link and issue rules through their id."
         },
         "ci": {
           "type": "array",
@@ -436,7 +469,8 @@
             ],
             "properties": {
               "id": {
-                "$ref": "#/$defs/slug"
+                "$ref": "#/$defs/slug",
+                "description": "CI source identifier, referenced by the source field of ci_check rules"
               },
               "provider": {
                 "enum": [
@@ -448,13 +482,16 @@
               },
               "context_glob": {
                 "type": "string",
-                "default": "*"
+                "default": "*",
+                "description": "Glob over the check or status names read from this source"
               },
               "credentials_ref": {
-                "type": "string"
+                "type": "string",
+                "description": "Secret reference for the CI system's credentials, never the value"
               }
             }
-          }
+          },
+          "description": "CI systems beyond GitHub checks, referenced by ci_check rules through their id."
         },
         "test_reports": {
           "x-riffle-phase": "later",
@@ -463,19 +500,23 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "Read test reports"
             },
             "format": {
               "enum": [
                 "junit_xml"
               ],
-              "default": "junit_xml"
+              "default": "junit_xml",
+              "description": "Test report file format"
             },
             "artifact_glob": {
               "type": "string",
-              "default": "**/TEST-*.xml"
+              "default": "**/TEST-*.xml",
+              "description": "Glob matching test report files"
             }
-          }
+          },
+          "description": "Test reports read for test_class rules."
         },
         "outcome_import": {
           "description": "Lets an org push outcomes Riffle cannot see (internal incidents, internal reverts) to POST /v1/outcomes, keyed by commit SHA or PR. Contract: contracts/outcome_import.schema.json.",
@@ -484,10 +525,12 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "default": false
+              "default": false,
+              "description": "Accept outcomes at POST /v1/outcomes"
             },
             "secret_ref": {
-              "type": "string"
+              "type": "string",
+              "description": "Secret reference for the secret that signs POST /v1/outcomes requests, never the value"
             }
           }
         }
@@ -505,10 +548,12 @@
       ],
       "properties": {
         "id": {
-          "$ref": "#/$defs/slug"
+          "$ref": "#/$defs/slug",
+          "description": "Rule identifier"
         },
         "kind": {
-          "type": "string"
+          "type": "string",
+          "description": "Rule kind, which decides the other fields the rule accepts"
         },
         "applies_to": {
           "description": "Narrows where a rule applies. In a repo file, repos is ignored.",
@@ -522,7 +567,8 @@
               },
               "default": [
                 "*"
-              ]
+              ],
+              "description": "Repositories the rule applies to; * is every repo"
             },
             "paths": {
               "type": "array",
@@ -535,7 +581,8 @@
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "description": "Branches the rule applies to"
             }
           }
         },
@@ -548,11 +595,13 @@
         },
         "enabled": {
           "type": "boolean",
-          "default": true
+          "default": true,
+          "description": "false turns the rule off without removing it"
         },
         "note": {
           "type": "string",
-          "maxLength": 300
+          "maxLength": 300,
+          "description": "Free-text note about the rule"
         }
       }
     },
@@ -637,7 +686,8 @@
           "const": "path_tier"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Path glob"
         },
         "value": {
           "enum": [
@@ -645,7 +695,8 @@
             "normal",
             "elevated",
             "critical"
-          ]
+          ],
+          "description": "Criticality of the matching paths, low to critical, as 0-3 in max_criticality"
         }
       },
       "required": [
@@ -670,7 +721,8 @@
           "const": "path_class"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Path glob"
         },
         "value": {
           "enum": [
@@ -685,7 +737,8 @@
             "build_config",
             "dependency_manifest",
             "i18n"
-          ]
+          ],
+          "description": "Class of the matching files"
         }
       },
       "required": [
@@ -712,7 +765,8 @@
           "const": "change_signal"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Path glob"
         },
         "value": {
           "enum": [
@@ -725,7 +779,8 @@
             "concurrency",
             "native_interop",
             "release_config"
-          ]
+          ],
+          "description": "Change type the matching paths signal"
         }
       },
       "required": [
@@ -755,7 +810,8 @@
           "description": "e.g. streams/** or packages/virtualized-lists/**"
         },
         "value": {
-          "$ref": "#/$defs/slug"
+          "$ref": "#/$defs/slug",
+          "description": "Component name"
         },
         "tier": {
           "type": "integer",
@@ -768,7 +824,8 @@
             "internal",
             "partner",
             "external"
-          ]
+          ],
+          "description": "Who the component is exposed to; max_exposure encodes internal 0, partner 1, external 2"
         },
         "data_class": {
           "enum": [
@@ -776,7 +833,8 @@
             "internal",
             "confidential",
             "restricted"
-          ]
+          ],
+          "description": "Class of data the component holds; max_data_class encodes public 0 to restricted 3"
         },
         "regimes": {
           "type": "array",
@@ -790,7 +848,8 @@
               "fedramp"
             ]
           },
-          "uniqueItems": true
+          "uniqueItems": true,
+          "description": "Compliance regimes the component falls under, counted in regulated_scope_count"
         },
         "lifecycle": {
           "enum": [
@@ -798,7 +857,8 @@
             "active",
             "stable",
             "deprecated"
-          ]
+          ],
+          "description": "Lifecycle stage; deprecated sets touches_deprecated"
         },
         "blast_radius": {
           "type": "integer",
@@ -843,7 +903,8 @@
         },
         "import_codeowners": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "Read ownership from the CODEOWNERS file at match instead of listing paths"
         }
       },
       "required": [
@@ -869,7 +930,8 @@
         },
         "match": {
           "type": "string",
-          "format": "regex"
+          "format": "regex",
+          "description": "Regex matched against field"
         },
         "value": {
           "enum": [
@@ -879,7 +941,8 @@
             "backport",
             "conventional_type",
             "security_fix"
-          ]
+          ],
+          "description": "What a match marks the change as"
         },
         "field": {
           "enum": [
@@ -889,7 +952,8 @@
             "pr_body",
             "branch_name"
           ],
-          "default": "commit_message"
+          "default": "commit_message",
+          "description": "Text the regex is matched against"
         }
       },
       "required": [
@@ -917,7 +981,8 @@
         },
         "match": {
           "type": "string",
-          "format": "regex"
+          "format": "regex",
+          "description": "Regex with a named group (?<ref>...) that captures the reference"
         },
         "field": {
           "enum": [
@@ -926,7 +991,8 @@
             "pr_title",
             "pr_body"
           ],
-          "default": "commit_trailer"
+          "default": "commit_trailer",
+          "description": "Text the regex is matched against"
         },
         "value": {
           "enum": [
@@ -935,7 +1001,8 @@
             "cherry_pick_source",
             "issue_key",
             "external_change_id"
-          ]
+          ],
+          "description": "What the captured reference points to"
         },
         "tracker": {
           "$ref": "#/$defs/slug",
@@ -965,7 +1032,8 @@
         },
         "match": {
           "type": "string",
-          "format": "regex"
+          "format": "regex",
+          "description": "Regex with a named group (?<login>...) or (?<email>...)"
         },
         "on": {
           "enum": [
@@ -974,7 +1042,8 @@
             "pr_body",
             "co_authored_by"
           ],
-          "default": "commit_trailer"
+          "default": "commit_trailer",
+          "description": "Text the regex is matched against"
         },
         "value": {
           "enum": [
@@ -982,7 +1051,8 @@
             "co_author",
             "reviewer",
             "lander"
-          ]
+          ],
+          "description": "Role of the recovered person"
         }
       },
       "required": [
@@ -1014,7 +1084,8 @@
             "linked_commit_on_default",
             "bot_close_with_commit",
             "direct_push"
-          ]
+          ],
+          "description": "How a change counts as merged"
         },
         "match": {
           "type": "string",
@@ -1043,14 +1114,16 @@
           "const": "issue_field"
         },
         "tracker": {
-          "$ref": "#/$defs/slug"
+          "$ref": "#/$defs/slug",
+          "description": "sources.trackers entry"
         },
         "field": {
           "type": "string",
           "description": "e.g. issuetype, priority, customfield_10020"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Field value to match"
         },
         "value": {
           "enum": [
@@ -1059,7 +1132,8 @@
             "regression",
             "security",
             "not_a_bug"
-          ]
+          ],
+          "description": "What a matching issue counts as"
         },
         "severity": {
           "type": "integer",
@@ -1089,10 +1163,12 @@
         },
         "tracker": {
           "$ref": "#/$defs/slug",
-          "default": "github"
+          "default": "github",
+          "description": "Tracker the issue label is read from"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Issue label to match"
         },
         "value": {
           "enum": [
@@ -1101,12 +1177,14 @@
             "regression",
             "security",
             "not_a_bug"
-          ]
+          ],
+          "description": "What a matching issue counts as"
         },
         "severity": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 4
+          "maximum": 4,
+          "description": "1 is worst; scales label weight"
         }
       },
       "required": [
@@ -1127,7 +1205,8 @@
           "const": "author_class"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Value to match in the field named by on"
         },
         "on": {
           "enum": [
@@ -1136,7 +1215,8 @@
             "branch_prefix",
             "commit_trailer"
           ],
-          "default": "login"
+          "default": "login",
+          "description": "What match is compared with"
         },
         "value": {
           "enum": [
@@ -1145,7 +1225,8 @@
             "maintainer",
             "employee",
             "external"
-          ]
+          ],
+          "description": "Class given to matching authors"
         },
         "new_contributor_days": {
           "type": "integer",
@@ -1180,7 +1261,8 @@
           "description": "sources.ci entry; default is GitHub checks"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Check name to match"
         },
         "value": {
           "enum": [
@@ -1198,7 +1280,8 @@
             "nightly",
             "release"
           ],
-          "default": "pre_merge"
+          "default": "pre_merge",
+          "description": "When the check runs"
         }
       },
       "required": [
@@ -1234,7 +1317,8 @@
             "flaky",
             "quarantined",
             "slow"
-          ]
+          ],
+          "description": "Class given to matching tests"
         }
       },
       "required": [
@@ -1264,17 +1348,20 @@
             "route_override",
             "incident_link",
             "external_import"
-          ]
+          ],
+          "description": "Outcome source the weight applies to"
         },
         "value": {
           "type": "number",
           "minimum": 0,
-          "maximum": 2
+          "maximum": 2,
+          "description": "Sample weight for this source in the org's per-repo layer, 0 to 2"
         },
         "window_days": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 90
+          "maximum": 90,
+          "description": "Window in days for this source, in place of its default"
         }
       },
       "required": [
@@ -1296,7 +1383,8 @@
           "const": "branch_class"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Branch glob"
         },
         "value": {
           "enum": [
@@ -1306,7 +1394,8 @@
             "backport",
             "long_lived",
             "experimental"
-          ]
+          ],
+          "description": "Class of the matching branches; release and hotfix set targets_release_branch when they are the base branch"
         }
       },
       "required": [
@@ -1337,7 +1426,8 @@
             "sapling",
             "spr",
             "branch_chain"
-          ]
+          ],
+          "description": "Stacked PR tool"
         },
         "match": {
           "type": "string",
@@ -1366,7 +1456,8 @@
           "const": "sensitivity"
         },
         "match": {
-          "type": "string"
+          "type": "string",
+          "description": "Path glob"
         },
         "value": {
           "enum": [
@@ -1378,7 +1469,8 @@
             "crypto",
             "infra",
             "public_api"
-          ]
+          ],
+          "description": "What the matching code handles"
         }
       },
       "required": [
@@ -1437,7 +1529,8 @@
             "dependency_allowlist",
             "dependency_denylist",
             "regen_pair"
-          ]
+          ],
+          "description": "Policy to check against the diff"
         },
         "target": {
           "description": "no_import_from: forbidden path glob. dependency_*: package names. regen_pair: generated path glob.",
@@ -1501,11 +1594,13 @@
         },
         "start": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "description": "When the freeze starts"
         },
         "end": {
           "type": "string",
-          "format": "date-time"
+          "format": "date-time",
+          "description": "When the freeze ends"
         },
         "match": {
           "type": "string",
@@ -1558,7 +1653,8 @@
             "hotfix",
             "security",
             "safe"
-          ]
+          ],
+          "description": "What the label means; priority also needs level"
         },
         "level": {
           "type": "integer",
@@ -1598,7 +1694,8 @@
             "comments",
             "generated",
             "i18n"
-          ]
+          ],
+          "description": "Change kind treated as safe"
         }
       },
       "required": [
