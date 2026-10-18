@@ -39,8 +39,10 @@ import config
 import gitio
 import aggregate
 import progress
-from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local
-from labels import build_labels, build_szz_index, szz_cache_covers, szz_window
+from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
+from labels import (POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
+                    szz_window)
+from merge_labels import at_open, build_merge_labels, classify_close
 from github_api import GitHubAPI
 
 
@@ -685,6 +687,107 @@ def _landed_resolver(repo: str, owner: str, name: str, branch: str):
     return resolve
 
 
+def _open_snapshot(repo: str, pr: dict, pushes: list | None, default_branch: str,
+                   grace_s: int) -> dict | None:
+    """The PR as it stood when it opened (ADR 0010): {"base", "head", "kind",
+    "behind"}, or None when it can't be recovered (features then use the
+    final diff).
+    head  the newest commit on the PR branch's first-parent line committed at
+          or before open + grace. When a force-push after open replaced the
+          branch, the walk starts from the head that push replaced (GraphQL
+          beforeCommit). The walk stops at GitHub's base.sha (the base tip
+          before merge, which never holds the PR's own commits), so commits
+          landed on main with their original dates can't be mistaken for it.
+    base  where that head forked from the base branch.
+    kind  exact (no force-push after open, known from GraphQL) | recovered
+          (walked from a replaced head) | approx (force-push history unknown)"""
+    final = (pr.get("head") or {}).get("sha")
+    opened = pr.get("created_at")
+    if not final or not opened or not gitio.rev_parse_safe(repo, f"{final}^{{commit}}"):
+        return None
+    cut = _parse_ts(opened) + timedelta(seconds=max(0, grace_s))
+    api_base = (pr.get("base") or {}).get("sha")
+    if not api_base or not gitio.rev_parse_safe(repo, f"{api_base}^{{commit}}"):
+        return None
+    start, kind = final, ("approx" if pushes is None else "exact")
+    later = [b for t, b in (pushes or []) if t and _parse_ts(t) > cut]
+    if later:
+        if not later[0] or not gitio.rev_parse_safe(repo, f"{later[0]}^{{commit}}"):
+            return None
+        start, kind = later[0], "recovered"
+    head = next((sha for sha, ct in gitio.first_parent_chain(repo, start, api_base)
+                 if ct <= cut.timestamp()), None)
+    if not head:
+        return None
+    try:
+        base = gitio.merge_base(repo, api_base, head)
+    except gitio.GitError:
+        return None
+    return {"base": base, "head": head, "kind": kind,
+            "behind": gitio.count_before(repo, base, api_base, cut)}
+
+
+def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str,
+                            st: config.Settings) -> None:
+    """Set pr["_open"] on every PR whose at-open state can be recovered.
+    Fetches each PR's final head (refs/pull/N/head, no local refs) when it isn't
+    in the clone yet (squash and rebase merges rewrite it), asks GraphQL for
+    force-pushes, and fetches the heads those pushes replaced."""
+    nums = [p["number"] for p in prs if p.get("number") is not None]
+    have = gitio.existing_commits(repo, [(p.get("head") or {}).get("sha") for p in prs])
+    missing = [p["number"] for p in prs if p.get("number") is not None
+               and (p.get("head") or {}).get("sha") and p["head"]["sha"] not in have]
+    if missing:
+        gitio.fetch_pr_heads(repo, missing)
+    pushes = api.force_pushes(nums) if api is not None else {}
+    gitio.fetch_shas(repo, [b for evs in pushes.values() if evs for _t, b in evs if b])
+    kinds: Counter = Counter()
+    # each snapshot is a handful of git subprocesses: run them in parallel
+    with ThreadPoolExecutor(max_workers=max(1, st.workers)) as pool:
+        snaps = list(pool.map(lambda pr: _open_snapshot(
+            repo, pr, pushes.get(pr.get("number")), default_branch, st.rework_grace_s), prs))
+    for pr, snap in zip(prs, snaps):
+        if snap:
+            pr["_open"] = snap
+        kinds[snap["kind"] if snap else "final"] += 1
+    print(f"[open-snapshot] {dict(kinds)} (final = at-open diff not recoverable; "
+          f"features use the final diff)", file=sys.stderr)
+
+
+def _stale_open_prs(api, merged: list[dict], st: config.Settings) -> list[dict]:
+    """PRs still open after st.abandon_days with no human non-author comment
+    or review: abandoned, so unmerged rows (ADR 0009). Only from the creation
+    window of the merged PRs mined. Open PRs that did get a response have no
+    outcome yet and are left out."""
+    if not merged:
+        return []
+    oldest = min(p.get("created_at") or "" for p in merged)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=st.abandon_days)
+              ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if getattr(api, "use_landed", False):
+        return []                     # closed PRs skipped there; open ones would skew the mix
+    cands = api.open_prs(oldest, cutoff)
+    if not cands:
+        return []
+    with ThreadPoolExecutor(max_workers=max(1, min(8, st.workers))) as pool:
+        timelines = list(pool.map(lambda p: api.pr_timeline(p["number"]), cands))
+    out = []
+    for pr, events in zip(cands, timelines):
+        if events is None:
+            continue
+        author = (pr.get("user") or {}).get("login", "").lower()
+        responded = any(
+            ev.get("event") in ("commented", "reviewed")
+            and (ev.get("user") or {}).get("type") != "Bot"
+            and not str((ev.get("user") or {}).get("login", "")).lower().endswith("[bot]")
+            and str((ev.get("user") or {}).get("login", "")).lower() != author
+            for ev in events)
+        if not responded:
+            pr.update(_unmerged=True, _stale_open=True, _events=events, merge_via=None)
+            out.append(pr)
+    return out
+
+
 def _szz_relevant_commits(repo: str, prs: list[dict], base_resolver, workers: int) -> set[str]:
     """Every commit of every merged PR's final range: the only commits whose
     SZZ entries a label reads (szz_delay intersects the index with exactly
@@ -692,9 +795,33 @@ def _szz_relevant_commits(repo: str, prs: list[dict], base_resolver, workers: in
     def _one(pr):
         base, head = _pr_diff_range(repo, pr, base_resolver)
         return gitio.commits_in_range(repo, base, head) if base and head else set()
-    merged = [p for p in prs if p.get("merged_at")]
+    merged = [p for p in prs if p.get("merged_at") and not p.get("_unmerged")]
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         return set().union(*pool.map(_one, merged)) if merged else set()
+
+
+def _prepare_unmerged(repo: str, prs: list[dict], default_branch: str) -> list[dict]:
+    """Fetch the commits of closed-unmerged PRs (no local refs, see
+    gitio.fetch_pr_heads) and set each one's diff base to where its branch
+    forked from the base commit GitHub recorded (or the default branch when
+    that commit is gone). PRs whose head can't be fetched are dropped."""
+    gitio.fetch_pr_heads(repo, [p["number"] for p in prs if p.get("number") is not None])
+    have = gitio.existing_commits(repo, [(p.get("head") or {}).get("sha") for p in prs])
+    out = []
+    for pr in prs:
+        head = (pr.get("head") or {}).get("sha")
+        if not head or head not in have:
+            continue
+        base = (pr.get("base") or {}).get("sha")
+        if not base or not gitio.rev_parse_safe(repo, f"{base}^{{commit}}"):
+            base = default_branch
+        try:
+            pr["_git_base"] = gitio.merge_base(repo, base, head)
+        except gitio.GitError:
+            continue
+        pr["merge_commit_sha"] = None          # GitHub's test merge, not in the clone
+        out.append(pr)
+    return out
 
 
 def mine_repo(repo: str, owner: str, name: str, st: config.Settings,

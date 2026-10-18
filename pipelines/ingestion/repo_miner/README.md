@@ -285,6 +285,78 @@ Six label columns, filled from outcomes after merge (not inference inputs):
   `mined_at - merged_at` is at least your chosen threshold (e.g. 30 days, longer
   for SZZ).
 
+## Merge-outcome labels
+
+On by default since v2.0.0, so one run feeds both models: the breakage model
+(`label_bad`, merged rows) and the merge model (`label_merged`, all rows), the
+second target from `docs/adr/0009-merge-outcome-target.md`.
+`--no-merge-outcome` (TUI: untick "Merge outcome (+ unmerged PRs)") gives the
+v1 output: merged PRs and breakage labels only. Every shard PC must use the
+same setting, or the merge model only sees some of the repos. Repos mined
+before v2.0.0 need a re-mine to get merge labels.
+
+- Rows: closed-unmerged PRs from the same creation window as the merged PRs
+  mined, so the merged / unmerged mix is the repo's own. Their commits are
+  fetched from `refs/pull/N/head` without local refs, so no `git log --all`
+  scan sees them. Features are computed at the fork point as usual;
+  post-merge labels (`label_bad`, `days_to_*`, ...) are null on these rows,
+  and they never count as history for the repo-local columns. Repos mined in
+  landed-commit mode, and `--pr-discovery git`, get no unmerged rows.
+- `label_merged` on every row. `label_rework` on merged rows: a human
+  non-author change request, or commits / force-pushes more than 5 minutes
+  after open (`post_open_commits`, `post_open_force_pushes`,
+  `changes_requested_reviews` hold the counts).
+- On unmerged rows: `label_duplicate`, `label_unwanted`, `label_abandoned`,
+  `label_ci_technical`, and `close_reason`. From the PR's timeline up to close,
+  plus the required checks on its head commit. With `--llm`, a classifier
+  reads the title, comments, reviews, labels, renames and closer and picks
+  `close_reason` (one call per unmerged PR with human activity); without it,
+  phrase and label rules decide (first of duplicate, unwanted, ci_technical,
+  abandoned, else other). `close_reason_source` is `llm` or `rules`.
+- PRs still open after 60 days (`abandon_days`) with no human response are
+  rows too: unmerged, abandoned, `closed_at` null. Drafts and open PRs that
+  got a response are left out.
+- A repo is only mined in landed-commit mode when most closed PRs on the first
+  page link to commits on the default branch. A low GitHub-merge share alone
+  is also what a repo flooded with rejected AI PRs looks like.
+- Also `created_at` and `closed_at`, for time splits.
+- Every per-row stage, the LLM flags included, runs on unmerged rows too, so
+  no feature is null only because a PR didn't merge (that pattern would give
+  `label_merged` away). LLM spend grows with the row count.
+
+
+## Merge-model signals (`features/merge_signals.py`)
+
+The AIDev catalog's merge-model features the miner's own data can supply:
+
+- Per PR: `has_linked_issue`, `body_headings`, `body_checklist_items`,
+  `body_has_test_plan`, `agent_boilerplate` (from the body); `agent_name`
+  (claude_code, codex, copilot, cursor, devin, jules, sweep: from login,
+  head branch, git identity, watermark) and `head_branch_agent_prefix`;
+  `author_account_age_days` (one cached `/users` call per author);
+  `has_contributing`, `has_agents_md` (files at the base commit).
+- Per repo, prior-only (PRs closed strictly before this one opened, last 365
+  days; null under 5 PRs): `repo_outside_merge_rate` (+ count),
+  `agent_recent_merge_rate` (+ count), `repo_median_first_response_hours`,
+  `repo_agent_pr_load_30d`, `max_sim_open_prs` and `max_sim_recent_merged`
+  (word-set Jaccard of title at open + body). The merge rates need
+  unmerged rows, so they stay null with `--no-merge-outcome`.
+
+The body is read at mining time (its edits are not in the timeline), so the
+body features can see edits made after open.
+
+## At-open snapshot (ADR 0010)
+
+Diff features (sizes, path flags, blame, scanners, CVEs, LLM flags, ...) are
+computed from the PR's head when it opened, not its final state, so commits
+pushed under review don't leak into the features. The head is the newest
+commit on the branch's first-parent line dated at or before open + 5 minutes;
+a force-push after open is undone with GraphQL's `beforeCommit` (one batched
+call per 25 PRs) and a fetch of that commit. Labels still use what landed.
+`open_snapshot` is `exact`, `recovered` (from a force-push), `approx`
+(force-push history unreadable) or `final` (not recoverable: diff features
+use the final diff; drop or mask them when training).
+
 ## SZZ window
 
 `--szz` blames only fix commits dated between the oldest mined merge and the
