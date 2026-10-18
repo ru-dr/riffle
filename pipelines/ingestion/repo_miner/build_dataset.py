@@ -1,0 +1,661 @@
+#!/usr/bin/env python3
+"""
+build_dataset.py — clone a list of GitHub repos and mine them all into ONE
+growing dataset file.
+
+Reads GitHub URLs (one per line) from a repos file, clones each into the clone
+directory (removing any existing copy first — a fresh FULL clone, since the
+extractor needs complete history; do not use --depth), then runs mine_repo.py on
+each with --append so every repo's rows accumulate in a single output file,
+de-duplicated by (repo, pr_number).
+
+Usage:
+    python build_dataset.py
+        # reads repos.txt -> writes dataset.parquet, cloning into cloned_repos\\
+
+    python build_dataset.py --repos-file repos.txt --out dataset.parquet ^
+        --clone-dir cloned_repos --max-prs 200 [--ci-history] [--llm] [--skip-existing]
+
+Flags:
+    --repos-file   file with one GitHub URL per line (# comments allowed)
+    --out          single dataset file rows are appended to (.parquet/.csv/.jsonl)
+    --clone-dir    where repos are cloned (created if missing)
+    --max-prs N    cap PRs per repo (passed through to the miner)
+    --ci-history   build the historical CI-fail-rate features (slow; passed through)
+    --llm          enable the LLM semantic flags (headless Claude Code by default; passed through)
+    --skip-existing  reuse an already-cloned repo instead of re-cloning (faster re-runs)
+    --keep-clones  do NOT delete each clone after mining it (default: delete, so
+                   only one repo's clone is on disk at a time)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import time
+
+import progress
+
+
+TEST_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "test_output", "test_dataset.jsonl")
+
+
+_WEIGHT_RE = re.compile(r"\[~?([\d,]+) commits\]")
+
+
+def _parse_weight(line: str) -> int | None:
+    """Approx. commit count from a repos.txt line's "[~N commits]" tag."""
+    m = _WEIGHT_RE.search(line)
+    return int(m.group(1).replace(",", "")) if m else None
+
+
+def balanced_shards(weights: list[int | None], n: int) -> list[list[int]]:
+    """
+    Split item indices into n shards with EQUAL repo counts (differing by at
+    most 1) and balanced total weight (approx. commits: drives clone, history
+    walk and SZZ cost; with a fixed --max-prs the API/LLM cost per repo is the
+    same). Greedy: heaviest repo first, each to the lightest shard that still
+    has room. Deterministic, so every machine computes the same split.
+    Unknown weights count as the median.
+    """
+    known = sorted(w for w in weights if w)
+    median = known[len(known) // 2] if known else 1
+    w = [x or median for x in weights]
+    base, extra = divmod(len(w), n)
+    caps = [base + (1 if k < extra else 0) for k in range(n)]
+    shards: list[list[int]] = [[] for _ in range(n)]
+    totals = [0] * n
+    for i in sorted(range(len(w)), key=lambda i: (-w[i], i)):
+        k = min((k for k in range(n) if len(shards[k]) < caps[k]),
+                key=lambda k: (totals[k], k))
+        shards[k].append(i)
+        totals[k] += w[i]
+    return [sorted(sh) for sh in shards]           # keep file order within a shard
+
+
+def split_id(entries, weights, n: int) -> str:
+    """Short fingerprint of everything the split depends on (ordered repo list,
+    sizes, PC count). PCs that print the same ID got disjoint shares of the
+    same list; a different ID means a different repos.txt or PC count."""
+    import hashlib
+    key = "\n".join(f"{o}/{r}={w}" for (o, r, _), w in zip(entries, weights)) + f"\n{n}"
+    return hashlib.sha256(key.encode()).hexdigest()[:8]
+
+
+def _warn_untagged(entries, weights) -> None:
+    """Repos without a [~N commits] tag are balanced as the median size, so
+    the split can drift; say so instead of splitting quietly wrong."""
+    missing = [f"{o}/{r}" for (o, r, _), w in zip(entries, weights) if not w]
+    if missing:
+        print(f"[shard] WARNING: {len(missing)} repo(s) have no [~N commits] tag and "
+              f"count as median size, so the split may be unbalanced: "
+              f"{', '.join(missing)}. Add a tag, e.g. from `git rev-list --count HEAD`.",
+              flush=True)
+
+
+def _print_shard_plan(entries, weights, n: int) -> None:
+    _warn_untagged(entries, weights)
+    shards = balanced_shards(weights, n)
+    totals = [sum(weights[i] or 0 for i in sh) for sh in shards]
+    print(f"[shard-plan] split ID {split_id(entries, weights, n)}: {len(entries)} repos over {n} PCs "
+          f"(heaviest/lightest PC: {max(totals) / max(1, min(totals)):.2f}x)")
+    for k, sh in enumerate(shards, 1):
+        print(f"  PC {k}/{n}: {len(sh)} repos, ~{totals[k - 1]:,} commits")
+        for i in sh:                                  # one repo per line
+            w = f"~{weights[i]:,} commits" if weights[i] else "untagged"
+            print(f"    - {entries[i][0]}/{entries[i][1]}  ({w})")
+
+
+def _mined_repos(out: str) -> dict[str, int]:
+    """Lower-cased "owner/name" of every repo already in the dataset, so a
+    rerun after a stop skips finished repos. A repo only lands in --out after
+    a clean, complete mine (a stopped one stays in its .partial.jsonl
+    checkpoint), so presence here means done. Checks the .jsonl fallback too.
+    Returns {repo: rows already mined}, so the TUI can count them as done."""
+    found: dict[str, int] = {}
+    cands = [out]
+    if out.endswith(".parquet"):
+        cands.append(out.rsplit(".", 1)[0] + ".jsonl")
+    for path in cands:
+        if not os.path.isfile(path):
+            continue
+        try:
+            if path.endswith(".parquet"):
+                import pyarrow.parquet as pq
+                for r in pq.read_table(path, columns=["repo"]).column("repo").to_pylist():
+                    if r:
+                        found[str(r).lower()] = found.get(str(r).lower(), 0) + 1
+            else:
+                with open(path, encoding="utf-8") as fh:
+                    for line in fh:
+                        if line.strip():
+                            r = json.loads(line).get("repo")
+                            if r:
+                                found[str(r).lower()] = found.get(str(r).lower(), 0) + 1
+        except Exception as e:                              # noqa: BLE001
+            print(f"[resume] couldn't read {path} ({e}); not skipping any repo", flush=True)
+            return {}
+    return found
+
+
+def _write_test_parquet(jsonl_path: str) -> None:
+    """Test runs also save the same rows as parquet (what a real run writes),
+    so the parquet path can be checked before mining the full corpus."""
+    out = jsonl_path.rsplit(".", 1)[0] + ".parquet"
+    try:
+        import pandas as pd
+        df = pd.read_json(jsonl_path, lines=True, dtype=False)
+        df.to_parquet(out, index=False)
+        back = pd.read_parquet(out)
+        print(f"[test] parquet: {out} ({back.shape[0]} rows x {back.shape[1]} cols)", flush=True)
+    except ImportError:
+        print("[test] parquet skipped: pip install pandas pyarrow", flush=True)
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[test] parquet FAILED: {type(e).__name__}: {e}", flush=True)
+
+
+def _parse_url(line: str):
+    """(owner, name, url) from a GitHub URL line, or None for blanks/comments/bad."""
+    url = line.split("#", 1)[0].strip()       # drop inline "# Train" style comments
+    if not url:
+        return None
+    m = re.search(r"github\.com[:/]+([^/]+)/(.+?)(?:\.git)?/?$", url)
+    if not m:
+        return None
+    return m.group(1), m.group(2), url
+
+
+def _rmtree(path: str) -> None:
+    """Remove a tree, handling Windows' read-only .git files."""
+    def onerror(func, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except Exception:
+            pass
+    shutil.rmtree(path, onerror=onerror)
+
+
+# Blame-derived columns. A repo mined while blame was failing (before v1.6.0,
+# for repos that ship .git-blame-ignore-revs) has these all empty or zero.
+_BLAME_COLS = ("max_file_top_author_share", "max_file_minor_contributor_count",
+               "min_mod_line_age_days_min", "max_mod_lines_distinct_authors")
+
+
+def _read_out(out: str):
+    """The dataset as a pandas DataFrame (parquet, or the .jsonl fallback)."""
+    import pandas as pd
+    for path in ([out] + ([out.rsplit(".", 1)[0] + ".jsonl"] if out.endswith(".parquet") else [])):
+        if os.path.isfile(path):
+            return path, (pd.read_parquet(path) if path.endswith(".parquet")
+                          else pd.read_json(path, lines=True))
+    return None, None
+
+
+def _audit(out: str) -> list[str]:
+    """Blame coverage per repo, measured only on PRs that touch files that
+    already existed (AGE is set): a PR that only adds new files has no history
+    to blame, so it can't count against the repo. Among the rest coverage
+    should be ~100%. Returns the repos to re-mine (coverage under 50%)."""
+    path, df = _read_out(out)
+    if df is None or df.empty:
+        print(f"[audit] nothing in {out}")
+        return []
+    cols = [c for c in _BLAME_COLS if c in df.columns]
+    bad, check = [], []
+    print(f"[audit] {path}: {len(df)} rows, {df['repo'].nunique()} repos")
+    print(f"  {'repo':40s} {'rows':>5s}  {'new-only':>8s}  {'blame':>6s}  {'szz+':>4s}")
+    for repo, g in df.groupby("repo"):
+        has = (g[cols].fillna(0) != 0).any(axis=1) if cols else pd_false(g)
+        existing = g["AGE"].notna() if "AGE" in g else has | True
+        n_new = int((~existing).sum())
+        cov = float(has[existing].mean()) if existing.any() else float("nan")
+        szz = int(g["label_szz_bug"].fillna(False).astype(bool).sum()) if "label_szz_bug" in g else 0
+        note = ""
+        if existing.sum() >= 10 and cov < 0.5:
+            bad.append(repo); note = "   <- re-mine"
+        elif existing.sum() >= 10 and cov < 0.95:
+            check.append(repo); note = "   <- check"
+        cov_s = "   n/a" if cov != cov else f"{cov:6.0%}"
+        print(f"  {repo:40s} {len(g):5d}  {n_new:8d}  {cov_s}  {szz:4d}{note}")
+    print("  (blame = share of PRs touching existing files that got blame data; "
+          "new-only = PRs that only add files, which have no history to blame)")
+    if bad:
+        print("[audit] re-mine: blame was failing for these. Fix with:\n  python build_dataset.py "
+              + " ".join(f"--remine-repo {r}" for r in bad) + " <your usual flags>")
+    if check:
+        print("[audit] check: some blames failed for " + ", ".join(check) + ". Look for "
+              "'[blame] warning' in logs/run-*.log; one-off failures (a corrupt object, "
+              "an LFS file) are harmless, a pattern means re-mine after fixing the cause")
+    if not bad and not check:
+        print("[audit] every repo has blame data where there was history to blame")
+    return bad
+
+
+def pd_false(g):
+    import pandas as pd
+    return pd.Series(False, index=g.index)
+
+
+def _save_llm_reuse(rows, path: str, repo: str) -> None:
+    """Keep the LLM answers of rows about to be dropped, keyed by their commits,
+    so the re-mine reuses them instead of calling the LLM again. Their blame
+    features were wrong; their LLM answers weren't."""
+    from features import llm_flags
+    cols = [c for c in llm_flags.FLAG_SCHEMA if c in rows.columns]
+    if not cols or rows.empty:
+        return
+    recs = []
+    for r in rows.to_dict("records"):
+        flags = {c: (None if r.get(c) is None or r.get(c) != r.get(c) else r.get(c)) for c in cols}
+        if r.get("base_sha") and r.get("head_sha") and any(v is not None for v in flags.values()):
+            recs.append({"base_sha": r["base_sha"], "head_sha": r["head_sha"],
+                         "flags": {k: (v.item() if hasattr(v, "item") else v) for k, v in flags.items()}})
+    if recs:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(recs, fh)
+        print(f"[remine] {repo}: kept {len(recs)} LLM answers to reuse ({path})", flush=True)
+
+
+def _drop_repo(out: str, repo: str, cache_dir: str = "ci_cache") -> None:
+    """Remove one repo's rows from the dataset (atomic rewrite), plus its SZZ
+    cache and checkpoint lines, so the next run mines it from scratch."""
+    key = repo.lower()
+    owner, _, name = repo.partition("/")
+    path, df = _read_out(out)
+    if df is not None and "repo" in df.columns:
+        mine = df[df["repo"].str.lower() == key]
+        _save_llm_reuse(mine, os.path.join(cache_dir, f"{owner}_{name}.llm_reuse.json"), repo)
+        keep = df[df["repo"].str.lower() != key]
+        n = len(df) - len(keep)
+        if n:
+            tmp = path + ".tmp"
+            if path.endswith(".parquet"):
+                keep.to_parquet(tmp, index=False)
+            else:
+                keep.to_json(tmp, orient="records", lines=True)
+            os.replace(tmp, path)
+        print(f"[remine] {repo}: removed {n} rows from {path}", flush=True)
+    for f in (os.path.join(cache_dir, f"{owner}_{name}.szz.json"),
+              os.path.join(cache_dir, f"{owner}_{name}.szz.json.partial.jsonl")):
+        if os.path.isfile(f):
+            os.remove(f)
+            print(f"[remine] {repo}: removed {f}", flush=True)
+    ckpt = out + ".partial.jsonl"
+    if os.path.isfile(ckpt):
+        with open(ckpt, encoding="utf-8") as fh:
+            lines = fh.readlines()
+        kept = [l for l in lines if not l.strip() or (json.loads(l).get("repo") or "").lower() != key]
+        if len(kept) != len(lines):
+            with open(ckpt, "w", encoding="utf-8") as fh:
+                fh.writelines(kept)
+            print(f"[remine] {repo}: removed {len(lines) - len(kept)} checkpointed rows", flush=True)
+
+
+# --- skipping -----------------------------------------------------------------
+# A repo can be skipped up front (--skip-big N: more than N commits by its
+# repos.txt tag) or on request while the batch runs: the TUI writes repo names
+# to the file named by RIFFLE_CONTROL, one per line. A skip never writes rows to
+# --out, so a later run without it mines the repo as normal (a repo stopped
+# mid-mine keeps its checkpoint and resumes).
+_CONTROL = os.getenv("RIFFLE_CONTROL")
+
+
+def _skip_requested(repo: str) -> bool:
+    if not _CONTROL:
+        return False
+    try:
+        with open(_CONTROL, encoding="utf-8") as fh:
+            return repo.lower() in {l.strip().lower() for l in fh if l.strip()}
+    except OSError:
+        return False
+
+
+def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
+    """Run cmd, stopping it if a skip is requested for repo meanwhile.
+    Returns (exit code, skipped). The miner gets SIGINT first so it stops
+    cleanly with its checkpoint, then is killed if it doesn't exit."""
+    import signal
+    proc = subprocess.Popen(cmd)
+    while True:
+        try:
+            return proc.wait(timeout=1), False
+        except subprocess.TimeoutExpired:
+            pass
+        if _skip_requested(repo):
+            print(f"[skip] {repo}: skip requested; stopping it", flush=True)
+            try:
+                proc.send_signal(signal.SIGINT if os.name != "nt" else signal.SIGTERM)
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            return proc.returncode, True
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Clone a list of GitHub repos and mine them into one dataset.")
+    ap.add_argument("--repos-file", default="repos.txt",
+                    help="file with one GitHub URL per line (# comments allowed)")
+    ap.add_argument("--out", default="dataset.parquet",
+                    help="single output dataset (rows appended, deduped)")
+    ap.add_argument("--clone-dir", default="cloned_repos",
+                    help="directory to clone repos into")
+    ap.add_argument("--max-prs", type=int, default=None)
+    ap.add_argument("--min-age-days", type=int, default=90,
+                    help="skip PRs merged in the last N days (passed through; default 90, 0 = off)")
+    ap.add_argument("--ci-history", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--szz", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--declared-labels", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--merge-outcome", action=argparse.BooleanOptionalAction, default=True,
+                    help="also mine closed-unmerged PRs and add the merge-outcome "
+                         "labels (ADR 0009, default on); --no-merge-outcome for "
+                         "breakage rows only")
+    ap.add_argument("--max-unmerged", type=int, default=None,
+                    help="cap unmerged rows per repo (default: the window's real mix)")
+    ap.add_argument("--pr-discovery", choices=["api", "git"], default="api")
+    ap.add_argument("--llm", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument("--no-scanners", action="store_true")
+    ap.add_argument("--no-api-contract", action="store_true")
+    ap.add_argument("--no-review-history", action="store_true")
+    ap.add_argument("--llm-model", default=None, help="e.g. sonnet, opus, haiku (passed through)")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="PRs mined in parallel per repo (passed through)")
+    ap.add_argument("--llm-concurrency", type=int, default=None,
+                    help="max concurrent LLM calls (passed through)")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="reuse an existing clone instead of re-cloning")
+    ap.add_argument("--keep-clones", action="store_true",
+                    help="keep each clone after mining (default: delete it before "
+                         "cloning the next, so only one clone is on disk at a time)")
+    ap.add_argument("--repo-retries", type=int, default=2,
+                    help="extra attempts per repo if clone or mine fails (default 2, "
+                         "so 3 total). The miner checkpoints, so a retried mine "
+                         "resumes rather than redoing finished PRs.")
+    ap.add_argument("--shard", default=None, metavar="K/N",
+                    help="this machine is PC K of N: mine only its share of the repos "
+                         "file. Shares have equal repo counts and balanced size (by the "
+                         "[~N commits] tags), and every PC computes the same split")
+    ap.add_argument("--shard-plan", type=int, default=None, metavar="N",
+                    help="print how the repos split over N PCs, then exit")
+    ap.add_argument("--remine", action="store_true",
+                    help="mine every repo even if it's already in --out (default: "
+                         "skip finished repos, so a rerun after a stop resumes)")
+    ap.add_argument("--remine-repo", action="append", default=[], metavar="OWNER/NAME",
+                    help="drop this repo's rows, SZZ cache and checkpoint from --out, then "
+                         "mine it again (repeatable). Use after --audit flags a repo")
+    ap.add_argument("--skip-big", type=int, default=0, metavar="N",
+                    help="skip repos with more than N commits (by their repos.txt "
+                         "[~N commits] tag) for a quick run; 0 = off. Skipped repos aren't "
+                         "written, so a later run without it mines them")
+    ap.add_argument("--auto-remine", action="store_true",
+                    help="before mining, audit --out and re-mine every repo in this run's "
+                         "share whose blame data shows it was mined while blame was failing")
+    ap.add_argument("--audit", action="store_true",
+                    help="report each repo's share of rows with blame data and flag repos "
+                         "mined while blame was failing, then exit")
+    ap.add_argument("--test", action="store_true",
+                    help="test run: first repo only, --test-prs PRs, fresh output in "
+                         "test_output/test_dataset.jsonl (readable JSON lines); clone kept")
+    ap.add_argument("--test-prs", type=int, default=10)
+    ap.add_argument("--test-repo", default="https://github.com/pallets/flask",
+                    help="repo used by --test instead of the repos file (default: "
+                         "pallets/flask, the smallest repo in the corpus)")
+    args = ap.parse_args()
+
+    if args.audit:
+        _audit(args.out)
+        return
+    for repo in args.remine_repo:
+        if repo.count("/") != 1:
+            sys.exit(f"--remine-repo wants OWNER/NAME, got {repo!r}")
+
+    size_of: dict = {}
+    if args.test:
+        entries = [p for p in [_parse_url(args.test_repo)] if p]
+    else:
+        if not os.path.isfile(args.repos_file):
+            sys.exit(f"repos file not found: {args.repos_file}")
+        with open(args.repos_file, encoding="utf-8") as fh:
+            lines = [line for line in fh if _parse_url(line)]
+        entries = [_parse_url(line) for line in lines]
+        weights = [_parse_weight(line) for line in lines]
+        size_of = {f"{o}/{n}".lower(): w for (o, n, _), w in zip(entries, weights)}
+        if args.shard_plan:
+            _print_shard_plan(entries, weights, args.shard_plan)
+            return
+        if args.shard:
+            try:
+                k, n = (int(x) for x in args.shard.split("/"))
+                assert 1 <= k <= n
+            except (ValueError, AssertionError):
+                sys.exit(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
+            _warn_untagged(entries, weights)
+            sid = split_id(entries, weights, n)
+            mine = balanced_shards(weights, n)[k - 1]
+            total = sum(weights[i] or 0 for i in mine)
+            entries = [entries[i] for i in mine]
+            print(f"[shard] split ID {sid} · PC {k}/{n}: {len(entries)} repos, ~{total:,} "
+                  f"commits. Every PC must show the same split ID (same repos.txt and "
+                  f"PC count) or shares may overlap.", flush=True)
+    if not entries:
+        sys.exit("no valid GitHub URLs found in the repos file")
+    if args.test:
+        args.max_prs = args.test_prs
+        args.skip_existing = True            # reuse the test clone between runs
+        args.out = TEST_OUT
+        args.keep_clones = True
+        os.makedirs(os.path.dirname(TEST_OUT), exist_ok=True)
+        for f in (TEST_OUT, TEST_OUT + ".partial.jsonl", TEST_OUT.rsplit(".", 1)[0] + ".parquet"):
+            if os.path.isfile(f):
+                os.remove(f)                 # fresh file every test run
+        print(f"[test] {entries[0][0]}/{entries[0][1]}, {args.max_prs} PRs -> {TEST_OUT}",
+              flush=True)
+
+    # Re-mine only repos this run will actually mine (this PC's share), and
+    # drop their old rows only then; dropping a repo another PC mines would
+    # lose its rows here without replacing them.
+    mine_here = {f"{o}/{n}".lower() for o, n, _ in entries}
+    if args.auto_remine and not args.test:
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            flagged = _audit(args.out)
+        auto = [r for r in flagged if r.lower() in mine_here
+                and r.lower() not in {x.lower() for x in args.remine_repo}]
+        others = [r for r in flagged if r.lower() not in mine_here]
+        if auto:
+            print(f"[auto-remine] blame was failing for {', '.join(auto)}; re-mining them", flush=True)
+        else:
+            print("[auto-remine] audit found nothing to re-mine in this run's repos", flush=True)
+        if others:
+            print(f"[auto-remine] also flagged, but mined by another PC: {', '.join(others)}", flush=True)
+        args.remine_repo = list(args.remine_repo) + auto
+    for repo in args.remine_repo:
+        if repo.lower() not in mine_here:
+            sys.exit(f"--remine-repo {repo}: not in this run's repos"
+                     + (f" (this is PC {args.shard}; it's in another PC's share)" if args.shard else
+                        f" (not in {args.repos_file})") + ". Nothing was changed.")
+    for repo in args.remine_repo:
+        _drop_repo(args.out, repo)
+
+    os.makedirs(args.clone_dir, exist_ok=True)
+    done_repos = {} if (args.remine or args.test) else _mined_repos(args.out)
+    if done_repos:
+        print(f"[resume] {len(done_repos)} repos already in {args.out}; skipping them "
+              f"(--remine to redo)", flush=True)
+    here = os.path.dirname(os.path.abspath(__file__))
+    miner = os.path.join(here, "mine_repo.py")
+
+    print(f"[batch] {len(entries)} repos -> {args.out}\n", flush=True)
+    progress.emit("batch_start", repos=[f"{o}/{n}" for o, n, _ in entries], out=args.out)
+    attempts = max(1, args.repo_retries + 1)
+    ok, failed, skipped = 0, [], []
+    if args.skip_big and not args.test:
+        big = [f"{o}/{n}" for o, n, _ in entries if (size_of.get(f"{o}/{n}".lower()) or 0) > args.skip_big
+               and f"{o}/{n}".lower() not in done_repos]
+        if big:
+            print(f"[skip] {len(big)} repos over {args.skip_big:,} commits will be skipped this run: "
+                  + ", ".join(big), flush=True)
+    for i, (owner, name, url) in enumerate(entries, 1):
+        target = os.path.join(args.clone_dir, f"{owner}_{name}")
+        print(f"=== [{i}/{len(entries)}] {owner}/{name} ===", flush=True)
+        if f"{owner}/{name}".lower() in done_repos:
+            print("[resume] already mined; skipping\n", flush=True)
+            ok += 1
+            n_done = done_repos[f"{owner}/{name}".lower()]
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=n_done, total=n_done,
+                          status="ok", already=True)
+            continue
+        commits = size_of.get(f"{owner}/{name}".lower()) or 0
+        why = ("big" if args.skip_big and not args.test and commits > args.skip_big
+               else "requested" if _skip_requested(f"{owner}/{name}") else None)
+        if why:
+            note = f"~{commits:,} commits > {args.skip_big:,}" if why == "big" else "skipped from the TUI"
+            print(f"[skip] {owner}/{name}: {note}; not mined this run\n", flush=True)
+            skipped.append(f"{owner}/{name} ({why})")
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped",
+                          skip=why, commits=commits)
+            continue
+        progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="clone")
+
+        # --- clone (retried) — one clone kept across mine retries -------------
+        if os.path.isdir(target):
+            if args.skip_existing:
+                print(f"[clone] reusing existing {target}", flush=True)
+            else:
+                print(f"[clone] removing existing {target}", flush=True)
+                _rmtree(target)
+        cloned = os.path.isdir(target)
+        for c_attempt in range(1, attempts + 1):
+            if cloned:
+                break
+            print(f"[clone] git clone {url} (attempt {c_attempt}/{attempts})", flush=True)
+            rc, was_skipped = _run_watched(["git", "clone", url, target], f"{owner}/{name}")
+            if was_skipped:
+                break
+            if rc == 0:
+                cloned = True
+                break
+            print(f"[clone] FAILED (exit {rc})", flush=True)
+            if os.path.isdir(target):
+                _rmtree(target)                      # clear a partial clone
+            if c_attempt < attempts:
+                time.sleep(min(120, 15 * c_attempt))
+        if not cloned and _skip_requested(f"{owner}/{name}"):
+            if os.path.isdir(target):
+                _rmtree(target)                      # a half-made clone is useless
+            print(f"[skip] {owner}/{name}: skipped while cloning\n", flush=True)
+            skipped.append(f"{owner}/{name} (requested)")
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped", skip="requested")
+            continue
+        if not cloned:
+            print("[clone] giving up after retries; skipping repo\n", flush=True)
+            failed.append(f"{owner}/{name} (clone)")
+            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="clone", rc=rc)
+            continue
+
+        # --- mine (retried; checkpoint makes a retry resume, not redo) --------
+        cmd = [sys.executable, miner, "--repo", target,
+               "--out", args.out, "--append"]
+        if args.max_prs is not None:
+            cmd += ["--max-prs", str(args.max_prs)]
+        cmd += ["--min-age-days", str(args.min_age_days)]
+        for on, flag in ((args.ci_history, "ci-history"), (args.szz, "szz"),
+                         (args.declared_labels, "declared-labels"), (args.llm, "llm")):
+            cmd.append(f"--{flag}" if on else f"--no-{flag}")
+        if not args.merge_outcome:
+            cmd.append("--no-merge-outcome")
+        if args.max_unmerged is not None:
+            cmd += ["--max-unmerged", str(args.max_unmerged)]
+        if args.pr_discovery != "api":
+            cmd += ["--pr-discovery", args.pr_discovery]
+        if args.no_scanners:
+            cmd.append("--no-scanners")
+        if args.no_api_contract:
+            cmd.append("--no-api-contract")
+        if args.no_review_history:
+            cmd.append("--no-review-history")
+        if args.llm_model:
+            cmd += ["--llm-model", args.llm_model]
+        if args.workers is not None:
+            cmd += ["--workers", str(args.workers)]
+        if args.llm_concurrency is not None:
+            cmd += ["--llm-concurrency", str(args.llm_concurrency)]
+
+        mined = False
+        progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="mine")
+        was_skipped = False
+        for m_attempt in range(1, attempts + 1):
+            rc, was_skipped = _run_watched(cmd, f"{owner}/{name}")
+            if was_skipped:
+                break
+            if rc == 3:
+                break                       # LLM circuit breaker: don't retry
+            if rc == 0:
+                ok += 1
+                mined = True
+                break
+            print(f"[mine] FAILED (exit {rc}) attempt {m_attempt}/{attempts}",
+                  flush=True)
+            if m_attempt < attempts:
+                time.sleep(min(120, 15 * m_attempt))
+        if rc == 3:
+            print("[mine] LLM circuit breaker tripped; aborting the batch so the "
+                  "dataset isn't left with half-populated LLM columns. Fix the LLM, "
+                  "then rerun with --skip-existing to resume.", flush=True)
+            failed.append(f"{owner}/{name} (llm breaker)")
+            break
+        if was_skipped:
+            print(f"[skip] {owner}/{name}: stopped mid-mine; finished PRs stay in the "
+                  f"checkpoint, so a later run resumes it", flush=True)
+            skipped.append(f"{owner}/{name} (requested)")
+            progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped", skip="requested")
+            if not args.keep_clones and os.path.isdir(target):
+                print(f"[clone] removing {target} (skipped)", flush=True)
+                _rmtree(target)
+            print(flush=True)
+            continue
+        if not mined:
+            print("[mine] giving up after retries; moving on", flush=True)
+            failed.append(f"{owner}/{name} (mine)")
+            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="mine", rc=rc)
+
+        # delete the clone once its repo is fully mined, so disk never piles up
+        # (one clone on disk at a time). Its rows are in --out and a rerun skips
+        # finished repos, so the clone isn't needed again. This holds even with
+        # --skip-existing: that flag only reuses a clone left by a stopped or
+        # failed repo, which is kept so its resume doesn't re-clone. ci_cache/
+        # and checkpoints are kept. --keep-clones opts out.
+        if mined and not args.keep_clones and os.path.isdir(target):
+            print(f"[clone] removing {target} (mining done)", flush=True)
+            _rmtree(target)
+        elif not mined and os.path.isdir(target):
+            print(f"[clone] keeping {target} so a rerun resumes without re-cloning",
+                  flush=True)
+        print(flush=True)
+
+    if args.test and os.path.isfile(TEST_OUT):
+        _write_test_parquet(TEST_OUT)
+    print(f"[batch] done: {ok}/{len(entries)} repos mined -> {args.out}"
+          + (f" ({len(skipped)} skipped)" if skipped else ""))
+    progress.emit("batch_done", ok=ok, n=len(entries), failed=failed, skipped=skipped)
+    if skipped:
+        print("[batch] skipped (mine them later by running again without the skip):")
+        for s_ in skipped:
+            print("  -", s_)
+    if failed:
+        print("[batch] failures:")
+        for f in failed:
+            print("  -", f)
+
+
+if __name__ == "__main__":
+    main()

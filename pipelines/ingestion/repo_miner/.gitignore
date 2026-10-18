@@ -1,0 +1,12 @@
+.env
+out/
+clones/
+cloned_repos/
+ci_cache/
+data/
+*.parquet
+*.jsonl
+test_output/
+logs/
+.tui_settings.json
+.venv/

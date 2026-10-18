@@ -1,7 +1,7 @@
 # 0002: Training label target
 
 - **Date:** 2026-09-29
-- **Status:** Proposed
+- **Status:** Accepted
 - **Owners:** Training workstream #2
 
 ## Context
@@ -14,7 +14,10 @@ CI results may have expired, so some sources are unobserved for older PRs.
 
 ## Decision
 
-- Target: `label_bad = revert OR ci_fail OR hotfix`, binary.
+- This record covers the breakage target: did a merged PR go bad. Whether a PR
+  merges at all is a separate target, `label_merged`, in
+  [ADR 0009](0009-merge-outcome-target.md). The two are never combined.
+- Target: `label_bad = revert OR ci_fail OR hotfix`, binary, on merged PRs only.
   - `revert`: a later commit reverts the PR within 30 days.
   - `ci_fail`: required checks on the merge commit fail. Auxiliary and flaky
     checks are excluded.
@@ -25,8 +28,9 @@ CI results may have expired, so some sources are unobserved for older PRs.
 - Unobserved sources: `downweight`. An observed source that fired still makes
   the row positive. Otherwise the row counts as clean at weight 0.5 per missing
   source.
-- The global model uses this definition only. Org label weights apply as
-  sample weights in that org's per-repo layer, never in the global model.
+- For the breakage target, the global model uses this definition only. Org
+  label weights apply as sample weights in that org's per-repo layer, never in
+  the global model.
 
 Schema: `labels` block and `label_source` rules in
 `contracts/org_rules.schema.json`. Defaults match this record.
