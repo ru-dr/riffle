@@ -705,6 +705,214 @@ Body of POST /v1/outcomes. Lets an org report outcomes Riffle cannot see (intern
 | `occurred_at` | string (date-time) |  |  |  |
 | `source` | string |  |  | Free label for audit, e.g. internal-ci |
 
+## Riffle repo miner training row (`mined_dataset.schema.json`)
+
+**Version:** 1.0
+
+One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null.
+
+| Key | Allowed | Default | Flags | Meaning |
+|---|---|---|---|---|
+| `AGE` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `EXP` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `Entropy` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `FIX` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `LA` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `LD` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `LT` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `ND` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `NF` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `NS` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `REXP` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `SEXP` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `agent_boilerplate` | boolean or null |  |  | Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `agent_name` | `claude_code`, `codex`, `copilot`, `cursor`, `devin`, `jules`, `sweep`, `None` |  |  | Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `agent_recent_closed_count` | number or null |  |  | Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `agent_recent_merge_rate` | any |  |  | Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. Type not pinned yet: null in every sampled row. |
+| `ai_agent_authored` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `api_contract_change` | `additive`, `breaking`, `None` |  |  | Source 5 API contract diff. Computed in `pipelines/ingestion/repo_miner/features/api_contract.py`. |
+| `author_account_age_days` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `author_association` | `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `MANNEQUIN`, `NONE`, `None` |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `author_days_since_last_change` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `author_email` | string or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `author_file_familiarity` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `author_is_bot` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `author_post_merge_ci_fail_rate` | any |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row. |
+| `author_prs_merged_repo` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `author_revert_rate` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `authz_check_change` | `none`, `added`, `removed`, `weakened`, `moved`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `base_behind_by` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `base_sha` | string |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `body_checklist_items` | number or null |  |  | Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `body_has_test_plan` | boolean or null |  |  | Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `body_headings` | number or null |  |  | Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `body_len` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `bound_or_comparison_edit` | number or null |  |  | Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`. |
+| `ccn_delta` | number or null |  |  | Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`. |
+| `change_intent` | `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `build_ci`, `chore`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `changes_public_api_signature` | boolean or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `changes_requested_reviews` | number or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `ci_observed` | boolean or null |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+| `close_reason` | `duplicate`, `unwanted`, `ci_technical`, `abandoned`, `other`, `None` |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `close_reason_source` | `llm`, `rules`, `None` |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `closed_at` | string or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `cochange_degree` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `cochange_partners_missing` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `concurrent_open_prs_same_files` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `concurrent_open_prs_same_hunks` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `config_or_feature_flag_change` | `none`, `config`, `feature_flag`, `both`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `created_at` | string or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `days_to_hotfix` | any |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row. |
+| `days_to_revert` | any |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row. |
+| `days_to_szz_fix` | any |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row. |
+| `db_schema_or_query_change` | `none`, `schema`, `query`, `both`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `declared_hotfix` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `dependency_major_bump_count` | number or null |  |  | Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`. |
+| `docs_only` | boolean or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `entropy_pctile_repo` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `error_handling_change` | `none`, `added`, `removed`, `modified`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `exception_swallowed` | boolean or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `expected_test_cochange_missing` | boolean or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `feature_flag_guarding` | `n_a`, `guarded`, `partial`, `unguarded`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `frac_generated_lines` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `frac_test_lines` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `ghsa_malware_dep` | boolean or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `ghsa_max_severity_introduced` | `LOW`, `MODERATE`, `HIGH`, `CRITICAL`, `None` |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `hardcoded_secret_added` | number or null |  |  | Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`. |
+| `has_agents_md` | boolean or null |  |  | Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `has_contributing` | boolean or null |  |  | Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `has_linked_issue` | boolean or null |  |  | Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `has_milestone` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `head_branch_agent_prefix` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `head_from_fork` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `head_sha` | string |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `hotfix_window_closed` | boolean or null |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+| `input_validation_change` | `none`, `added`, `weakened`, `modified`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `la_norm` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `label_abandoned` | boolean or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `label_bad` | boolean or null |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+| `label_bad_observed` | boolean or null |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+| `label_ci_fail` | any |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row. |
+| `label_ci_fail_optional` | any |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row. |
+| `label_ci_technical` | boolean or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `label_duplicate` | boolean or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `label_hotfix` | boolean or null |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+| `label_merged` | boolean or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `label_revert` | boolean or null |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+| `label_rework` | boolean or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `label_szz_bug` | boolean or null |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+| `label_unwanted` | boolean or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `lang_mix` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `ld_norm` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `llm_touches_authn_authz` | boolean or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `max_NDEV` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_NUC` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_abandoned_lines_share` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_ccn_changed_func` | number or null |  |  | Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`. |
+| `max_file_churn_365d` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_file_churn_90d` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_file_complexity_ccn` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_file_fix_density` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_file_hotspot_score` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_file_minor_contributor_count` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_file_post_merge_ci_fail_rate` | any |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row. |
+| `max_file_revert_density` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_file_top_author_share` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_fix_decay_density` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_hotfix_count_365d` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_hunk_fix_proximity` | number or null |  |  | Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`. |
+| `max_mod_lines_distinct_authors` | number or null |  |  | Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`. |
+| `max_mod_lines_prior_fix_share` | number or null |  |  | Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`. |
+| `max_recent_merge_burst_7d` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_revert_decay_density` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `max_sim_open_prs` | number or null |  |  | Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `max_sim_recent_merged` | number or null |  |  | Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `max_test_cochange_ratio` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `mean_file_age_days` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `mean_file_fix_density` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `mean_file_revert_density` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `mean_hunk_fix_proximity` | number or null |  |  | Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`. |
+| `mean_mod_lines_self_authored_share` | number or null |  |  | Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`. |
+| `median_mod_line_age_days_median` | number or null |  |  | Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`. |
+| `merge_via` | `github`, `landed_commit`, `None` |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `merged_at` | string or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `migration_reversibility` | `destructive`, `reversible`, `None` |  |  | Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`. |
+| `min_days_since_last_fix` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `min_days_since_last_revert` | any |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row. |
+| `min_file_hotspot_rank` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `min_hotspot_rank_touched` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `min_mod_line_age_days_min` | number or null |  |  | Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`. |
+| `mined_at` | string |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `n_deps_added` | number or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `n_deps_downgraded` | number or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `n_deps_upgraded` | number or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `n_files_added` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `n_files_removed` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `n_files_renamed` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `n_funcs_modified` | number or null |  |  | Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`. |
+| `n_major_bumps` | number or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `n_topk_hotspots_touched` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `new_env_or_config_key` | number or null |  |  | Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`. |
+| `nf_pctile_repo` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `null_handling_change` | `none`, `added`, `removed`, `new_nullable_deref`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `numeric_money_precision` | boolean or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `observability_delta` | number or null |  |  | Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`. |
+| `observed_through` | string or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `open_snapshot` | `exact`, `recovered`, `approx`, `final`, `None` |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `osv_ghsa_disagreement` | any |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. Type not pinned yet: null in every sampled row. |
+| `osv_vulns_fixed` | number or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `osv_vulns_introduced` | number or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `patch_missing_files` | number or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `path_detection_lag_days` | any |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row. |
+| `path_failure_mode_ci` | any |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row. |
+| `path_failure_mode_hotfix` | any |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row. |
+| `path_failure_mode_revert` | any |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row. |
+| `path_size_pctile` | number or null |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. |
+| `post_open_commits` | number or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `post_open_force_pushes` | number or null |  |  | Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `pr_number` | integer |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `pr_size_pctile_repo` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `refactor_vs_behavior` | `pure_refactor`, `behavior_change`, `mixed`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `release_cycle_position` | number or null |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. |
+| `repo` | string |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `repo_agent_pr_load_30d` | number or null |  |  | Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `repo_median_first_response_hours` | any |  |  | Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. Type not pinned yet: null in every sampled row. |
+| `repo_outside_closed_count` | number or null |  |  | Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `repo_outside_merge_rate` | number or null |  |  | Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. |
+| `repo_revert_base_rate` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `resource_lifecycle_change` | `none`, `acquire_no_release`, `release_removed`, `modified`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `retry_timeout_idempotency_change` | boolean or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `revealed_path_scrutiny` | any |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row. |
+| `revert_window_closed` | boolean or null |  |  | Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+| `satd_added` | integer or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `security_sensitive_ops` | boolean or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `semantic_risk_1to5` | integer or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `semgrep_cwe_top25_new` | boolean or null |  |  | Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`. |
+| `semgrep_findings_new` | number or null |  |  | Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`. |
+| `semgrep_high_conf_security_new` | number or null |  |  | Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`. |
+| `similar_pr_bad_rate` | any |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row. |
+| `similar_pr_count` | number or null |  |  | Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. |
+| `sum_file_complexity_ccn` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `sum_hotfix_count_365d` | number or null |  |  | Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. |
+| `targets_default_branch` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `test_code_alignment` | `none`, `unrelated`, `partial`, `aligned`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `test_only` | boolean or null |  |  | Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`. |
+| `tests_added_for_behavior_change` | `yes`, `no`, `n_a`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `time_handling_change` | boolean or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `title_len` | number or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `touches_auth_path` | boolean or null |  |  | Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`. |
+| `touches_ci_config` | boolean or null |  |  | Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`. |
+| `touches_codeowners_or_riffle_yml` | boolean or null |  |  | Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`. |
+| `touches_dep_manifest` | boolean or null |  |  | Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`. |
+| `touches_infra` | boolean or null |  |  | Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`. |
+| `touches_lockfile` | boolean or null |  |  | Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`. |
+| `touches_migration` | boolean or null |  |  | Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`. |
+| `touches_topk_hotspot` | boolean or null |  |  | Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `transaction_boundary_change` | `none`, `added`, `removed`, `widened`, `narrowed`, `None` |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `unrelated_change_share` | integer or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `unused_import_or_dead_code_added` | number or null |  |  | Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`. |
+| `vuln_has_fix_available` | boolean or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+
 ## Riffle mined history manifest (`mined_history.schema.json`)
 
 **Version:** 1.0
