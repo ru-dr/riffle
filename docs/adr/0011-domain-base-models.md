@@ -18,6 +18,22 @@ or the other domains.
 
 ## Decision
 
+```
+PR event
+   |
+   v
+Router -- repository -> domain, decided at install and cached
+   |        no match, or more than one: fail open, PR queued unranked and flagged
+   v
+Domain models (base), one set per domain, e.g. "python-ml"
+   |        label_merged (all closed PRs) and label_bad (merged PRs)
+   v
+Per-repo layer (ADR 0001, unchanged: layer_weight ramps with mature labels)
+   |
+   v
+Calibrator (per domain) -> scores
+```
+
 - **Base layer is per domain.** Each domain has its own gradient-boosted
   models, one per target in ADR 0009 (`label_merged`, `label_bad`). The
   per-repo layer from ADR 0001 sits on top unchanged: same fitting, same
