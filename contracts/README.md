@@ -78,10 +78,35 @@ JSON Schema ignores these; our loaders and compiler read them.
 - Nothing leaves by default: outcome sharing is off, and no schema here
   carries code, diffs, or author identities out of the installation.
 
+## Flat form
+
+Every contract's data flattens to key-value pairs without loss (ADR 0012):
+each key is the value's JSON Pointer, the same notation as
+`organization.locked_keys`.
+
+```python
+from flatten import flatten, unflatten
+flatten({"labels": {"maturity_days": 30}, "rules": [{"id": "a", "kind": "pr_label"}]})
+# {"/labels/maturity_days": 30, "/rules/0/id": "a", "/rules/0/kind": "pr_label"}
+unflatten(flat, schema)   # back to the document; the schema decides list vs object
+```
+
+- Lists of scalars stay one value (`/scope/quiet_authors`); lists of objects
+  are split by index. `~` is `~0` and `/` is `~1` inside a key.
+- `flat_keys.json` lists every key pattern of every schema (`*` is a list
+  index, `{key}` a free-form key) with its types and default. It is
+  generated with `REFERENCE.md`.
+- The schemas stay nested; the flat form is derived, never edited.
+
 ## Validation
 
-- `python contracts/gen_reference.py` regenerates `REFERENCE.md`. CI runs it
-  with `--check` and fails if a schema changed without regenerating.
+- `python contracts/gen_reference.py` regenerates `REFERENCE.md` and
+  `flat_keys.json`. CI runs it with `--check` and fails if a schema changed
+  without regenerating.
+- `python -m pytest contracts/tests` checks that every schema's data
+  round-trips through the flat form, every `oneOf` branch included.
+- `pipelines/ingestion/repo_miner/tests/test_dataset_contract.py` checks that
+  the repo miner writes exactly the columns of `mined_dataset.schema.json`.
 - CI validates every schema against the draft 2020-12 meta-schema.
 - CI validates every file in `fixtures/config/` against its schema. Files
   under `invalid/` must fail.

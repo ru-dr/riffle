@@ -39,6 +39,14 @@ it touches.
   unavailable, the affected features come back `None` (treated as *missing* by
   XGBoost/LightGBM) rather than a misleading `0`.
 - **No `riffle.yml`.** Source 1 is intentionally out of scope.
+- **Contract.** Every row has exactly the columns of
+  `contracts/mined_dataset.schema.json`, whichever stages are on: a stage
+  that is off leaves its columns `null`, never missing.
+  `tests/test_dataset_contract.py` mines a small repo with stages on and off
+  and fails on any column the contract doesn't list, any contract column the
+  miner didn't write, a row that doesn't validate, or a row that doesn't
+  round-trip through the flat form (ADR 0012). Adding a column means adding
+  it to the contract in the same PR.
 
 ## Install
 

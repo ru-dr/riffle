@@ -42,7 +42,7 @@ import progress
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
 from labels import (POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
                     szz_window)
-from merge_labels import at_open, build_merge_labels, classify_close
+from merge_labels import COLUMNS as MERGE_LABEL_COLUMNS, at_open, build_merge_labels, classify_close
 from github_api import GitHubAPI
 
 
@@ -491,9 +491,10 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         # exact | recovered | approx | final: how the at-open diff was found
         "open_snapshot": snapshot_kind,
     }
-    if st.enable_merge_outcome:
-        row["created_at"] = pr.get("created_at")
-        row["closed_at"] = pr.get("closed_at")
+    # with merge-outcome mining off these stay null, like every other stage's
+    # columns, so each row keeps contracts/mined_dataset.schema.json's columns
+    row["created_at"] = pr.get("created_at") if st.enable_merge_outcome else None
+    row["closed_at"] = pr.get("closed_at") if st.enable_merge_outcome else None
 
     # --- Source 4a/4b: diff stats + high-risk paths
     row.update(diff_stats.compute(repo, base_sha, head_sha, st))
@@ -635,6 +636,8 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
                 if events is not None:
                     llm_reason = classify_close(pr, events, st)
         row.update(build_merge_labels(pr, events, ci_head, st, llm_reason))
+    else:
+        row.update({c: None for c in MERGE_LABEL_COLUMNS})
     return row
 
 

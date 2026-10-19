@@ -36,3 +36,21 @@ jobs:
       # next build runs TypeScript, so this covers typecheck and build in one
       # step. It also renders the OG images, which have failed before now.
       - run: bun run build
+
+  # Schemas, their flat form (ADR 0012), and the repo miner matching
+  # contracts/mined_dataset.schema.json. Python only; no network.
+  contracts:
+    name: contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pytest jsonschema pyyaml
+
+      - run: python contracts/gen_reference.py --check
+
+      - run: python -m pytest contracts/tests pipelines/ingestion/repo_miner/tests -q

@@ -5,6 +5,7 @@ import json, sys, pathlib
 
 HERE = pathlib.Path(__file__).parent
 OUT = HERE / "REFERENCE.md"
+FLAT_OUT = HERE / "flat_keys.json"
 
 def load(name):
     return json.loads((HERE / name).read_text())
@@ -177,13 +178,21 @@ def main():
     for name in sorted(n for n in files if n not in known):
         md += other_section(name, load(name))
     text = "\n".join(md).rstrip() + "\n"
+    # flat-form keys of every schema's data (ADR 0012)
+    sys.path.insert(0, str(HERE))
+    import flatten
+    flat = json.dumps({name: flatten.catalog(load(name)) for name in sorted(files)},
+                      indent=2, ensure_ascii=False) + "\n"
     if "--check" in sys.argv:
         if not OUT.exists() or OUT.read_text() != text:
             sys.exit("REFERENCE.md is out of date. Run python contracts/gen_reference.py")
-        print("REFERENCE.md up to date")
+        if not FLAT_OUT.exists() or FLAT_OUT.read_text() != flat:
+            sys.exit("flat_keys.json is out of date. Run python contracts/gen_reference.py")
+        print("REFERENCE.md and flat_keys.json up to date")
         return
     OUT.write_text(text)
-    print(f"wrote {OUT} ({len(text.splitlines())} lines)")
+    FLAT_OUT.write_text(flat)
+    print(f"wrote {OUT} ({len(text.splitlines())} lines) and {FLAT_OUT.name}")
 
 if __name__ == "__main__":
     main()
