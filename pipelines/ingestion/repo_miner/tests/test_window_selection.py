@@ -144,3 +144,19 @@ def test_health_flags():
     rows += [{"label_merged": False, "author_association": "NONE", "author_is_bot": True,
               "close_reason": "other"} for _ in range(30)]
     assert any("bot PRs are" in f for f in health.check(rows)["flags"])
+
+
+# ---- pinned selection (resume) ---------------------------------------------------
+
+def test_selection_round_trip_and_settings_change(tmp_path):
+    st = _st(window_from="2025-01-01", window_to="2025-06-30", max_prs=100)
+    path = str(tmp_path / "o_r.selection.json")
+    mine_repo.save_selection(path, st, {"merged": [{"number": 1}], "unmerged": [], "stale": [],
+                                         "lead_in": [], "lead_sidecars": []})
+    sel = mine_repo.load_selection(path, st)
+    assert sel["merged"] == [{"number": 1}]
+    mine_repo.update_selection(path, {"evidence": {"bob": "2025-01-02T00:00:00Z"}})
+    assert mine_repo.load_selection(path, st)["evidence"] == {"bob": "2025-01-02T00:00:00Z"}
+    st.max_prs = 200                                  # different settings: not reused
+    assert mine_repo.load_selection(path, st) is None
+    assert mine_repo.load_selection(str(tmp_path / "missing.json"), st) is None

@@ -180,6 +180,8 @@ def ci_fail_labels(api, pr: dict) -> tuple[str | None, str | None, list[dict]]:
 
 
 CI_SIDECAR = "__ci__"
+# per (fix commit, path) blame results kept next to the SZZ cache, across runs
+BLAME_STORE_SUFFIX = ".blames.jsonl"
 _CI_FAIL = {"failure", "timed_out", "startup_failure", "action_required"}
 
 
@@ -341,10 +343,17 @@ def build_szz_index(repo: str, st: config.Settings,
                 continue                      # no line here can blame to a relevant commit
         tasks.append((c.sha, c.parents[0], fix_time, paths))
 
-    # Crash-safe checkpoint: each fix commit's bug-introducing shas are appended
-    # to <cache>.partial.jsonl as it finishes, and a re-run skips those.
-    ckpt = (cache_path + ".partial.jsonl") if cache_path else None
-    done: dict[str, list[str]] = {}
+    # Crash-safe blame store: each (fix commit, path) result is appended to
+    # <cache>.blames.jsonl as it finishes, and a re-run blames only the pairs
+    # it doesn't have. A blame result depends only on the history and the
+    # blame settings, so the checkpoint's fingerprint leaves out the window and
+    # the relevant set: a resume whose PR selection or window moved still
+    # reuses every pair it can.
+    ckpt = (cache_path + BLAME_STORE_SUFFIX) if cache_path else None
+    if cache_path and os.path.isfile(cache_path + ".partial.jsonl"):
+        os.remove(cache_path + ".partial.jsonl")   # pre-5.1 per-commit checkpoint
+    ck_fp = dict(szz_fingerprint(repo, None), checkpoint="per-path")
+    pairs: dict[tuple[str, str], list[str]] = {}
     if ckpt and os.path.isfile(ckpt):
         # first line is the fingerprint the results were made under; a
         # checkpoint from other blame settings or history starts over
@@ -352,21 +361,30 @@ def build_szz_index(repo: str, st: config.Settings,
             with open(ckpt, encoding="utf-8") as fh:
                 first = fh.readline()
                 try:
-                    ok = json.loads(first).get("fingerprint") == fp
+                    ok = json.loads(first).get("fingerprint") == ck_fp
                 except (json.JSONDecodeError, AttributeError):
                     ok = False
                 for line in (fh if ok else ()):
                     try:
                         rec = json.loads(line)
-                        done[rec["sha"]] = rec["bugs"]
-                    except (json.JSONDecodeError, KeyError, TypeError):
+                        for path, bugs in rec["paths"].items():
+                            pairs[(rec["sha"], path)] = bugs
+                    except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
                         continue              # torn last line from a crash
             if not ok:
                 os.remove(ckpt)
         except OSError:
             pass
 
-    todo = [t for t in tasks if t[0] not in done]
+    todo = []
+    for sha_, parent_, t_, paths_ in tasks:
+        missing = [p for p in paths_ if (sha_, p) not in pairs]
+        if missing:
+            todo.append((sha_, parent_, t_, missing))
+    done: dict[str, list[str]] = {}            # fix commits fully known, for progress
+    for sha_, _p, _t, paths_ in tasks:
+        if all((sha_, p) in pairs for p in paths_):
+            done[sha_] = []
     if on_progress:
         on_progress(len(done), len(tasks))
     if todo:
@@ -383,7 +401,7 @@ def build_szz_index(repo: str, st: config.Settings,
             fresh = not os.path.isfile(ckpt)
             ck = open(ckpt, "a", encoding="utf-8")
             if fresh:
-                ck.write(json.dumps({"fingerprint": fp}) + "\n")
+                ck.write(json.dumps({"fingerprint": ck_fp}) + "\n")
                 ck.flush()
         try:
             workers = max(1, min(st.workers, len(todo)))
@@ -411,12 +429,14 @@ def build_szz_index(repo: str, st: config.Settings,
 
                 _top_up()
                 for n, fut in enumerate(_finished(), 1):
-                    sha, bugs, b_calls, b_fails = fut.result()
+                    sha, by_path, b_calls, b_fails = fut.result()
                     blame_calls += b_calls
                     blame_fails += b_fails
-                    done[sha] = bugs
+                    for path, bugs in by_path.items():
+                        pairs[(sha, path)] = bugs
+                    done[sha] = []
                     if ck:
-                        ck.write(json.dumps({"sha": sha, "bugs": bugs}) + "\n")
+                        ck.write(json.dumps({"sha": sha, "paths": by_path}) + "\n")
                         ck.flush()
                     if on_progress and (n % emit_every == 0 or n == len(todo)):
                         on_progress(len(done), len(tasks))
@@ -439,8 +459,9 @@ def build_szz_index(repo: str, st: config.Settings,
     # Assemble in log order so the index (keys and list order) is exactly what
     # the serial loop produced, however the workers finished.
     index: dict = {}
-    for sha, _parent, fix_time, _paths in tasks:
-        for bug in done.get(sha, []):
+    for sha, _parent, fix_time, paths in tasks:
+        by_path = {p: pairs.get((sha, p), []) for p in paths}
+        for bug in _fix_bugs_in_order(by_path, paths):
             fixes = index.setdefault(bug, [])
             if (sha, fix_time) not in fixes:
                 fixes.append((sha, fix_time))
@@ -458,35 +479,47 @@ def build_szz_index(repo: str, st: config.Settings,
                 json.dump({"fingerprint": fp, "window": [_iso(since), _iso(until)],
                            "index": index}, fh)
             os.replace(tmp, cache_path)
-            if ckpt and os.path.isfile(ckpt):
-                os.remove(ckpt)
+            # the blame store stays: a later run on the same history (another
+            # window, a shifted PR selection) reuses every pair it has
         except OSError:
             pass
     return index
 
 
 def _szz_fix_bugs(repo: str, sha: str, parent: str,
-                  paths: list[str]) -> tuple[str, list[str], int, int]:
-    """One fix commit's bug-introducing commits, in first-seen order (path
-    order, then line order). Runs in a worker process: blames only the lines
-    the fix deletes or modifies, at the fix's parent. Also returns how many
-    blames ran and failed, so the parent can warn instead of failing silently."""
+                  paths: list[str]) -> tuple[str, dict[str, list[str]], int, int]:
+    """One fix commit's bug-introducing commits per path, each in line order.
+    Runs in a worker process: blames only the lines the fix deletes or
+    modifies, at the fix's parent. Per path, so a checkpoint can keep each
+    (fix commit, path) result whatever later runs ask for. Also returns how
+    many blames ran and failed, so the parent can warn instead of failing
+    silently."""
     before = gitio.blame_stats()
-    bugs: list[str] = []
-    seen: set[str] = set()
+    by_path: dict[str, list[str]] = {}
     old_by_path = gitio.deleted_or_modified_lines_many(repo, parent, sha, paths)
     for path in paths:
         old_lines = old_by_path[path]
-        if not old_lines:
-            continue
-        blame = gitio.blame_lines(repo, parent, path, old_lines)
-        for ln in old_lines:
-            bl = blame.get(ln)
-            if bl and bl.orig_commit and bl.orig_commit not in seen:
-                seen.add(bl.orig_commit)
-                bugs.append(bl.orig_commit)
+        bugs: list[str] = []
+        if old_lines:
+            blame = gitio.blame_lines(repo, parent, path, old_lines)
+            for ln in old_lines:
+                bl = blame.get(ln)
+                if bl and bl.orig_commit and bl.orig_commit not in bugs:
+                    bugs.append(bl.orig_commit)
+        by_path[path] = bugs
     after = gitio.blame_stats()
-    return sha, bugs, after["calls"] - before["calls"], after["fails"] - before["fails"]
+    return sha, by_path, after["calls"] - before["calls"], after["fails"] - before["fails"]
+
+
+def _fix_bugs_in_order(by_path: dict[str, list[str]], paths: list[str]) -> list[str]:
+    """A fix commit's bug-introducing commits in first-seen order: path order,
+    then line order (what one blame pass over `paths` yields)."""
+    out: list[str] = []
+    for p in paths:
+        for b in by_path.get(p, []):
+            if b not in out:
+                out.append(b)
+    return out
 
 
 def szz_delay(repo: str, pr: dict, base: str, head: str,

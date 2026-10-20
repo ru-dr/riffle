@@ -210,6 +210,19 @@ health flags. Scale the estimates for the full run from those.
 - Stop any time (ctrl+c / TUI Stop). Finished PRs are in `<out>.partial.jsonl`
   and finished repos are in `--out`; rerunning the same command (keep
   `--skip-existing`) skips both and continues. `--remine` redoes every repo.
+- **Resume picks up exactly where it stopped (v5.1.0).** The first run of a
+  repo pins its PR selection (`ci_cache/<owner>_<name>.selection.json`: the
+  merged, unmerged, stale-open and lead-in PRs, and the maintainer evidence),
+  so a resume mines the same PRs even if more merged since, and skips the PR
+  list, lead-in and timeline fetches. Removed after a clean write and by
+  `--remine-repo`; a run with different selection settings makes a new one.
+- **SZZ blames are stored per (fix commit, file)** in
+  `ci_cache/<owner>_<name>.szz.json.blames.jsonl` as they finish, and kept
+  after the run. A resume blames only the pairs it doesn't have, and so does a
+  later run with another window or PR selection on the same history (HEAD,
+  blame settings and ignore-revs unchanged); `--remine-repo` clears it. Keep
+  "Reuse clones" / `--skip-existing` on: a fresh clone with new commits
+  changes HEAD, and the store starts over.
 
 ## Repo-local mined features
 
