@@ -277,6 +277,15 @@ it here, c copies the link). The web view (read-only, LAN,
 random key per launch) has log search, level filter, wrap / follow / pause /
 expand, copy and download, and keyboard shortcuts (`?` lists them).
 
+**Big picture** (web view, PC only): press `b`, click "Big picture", or open
+the link with `#big`. A full-screen dark page readable from across a room:
+the run state as a word (MINING, LLM PAUSED, STOPPED: ERROR, FINISHED,
+OFFLINE), the percent done, the time, CPU and memory used, PRs mined, time
+left, elapsed, PRs per minute, the repo being mined and repositories done,
+any alert (breaker, plan pause, low memory, health flag) and the last log
+lines. Work runs down the left edge, time and system down the right. It keeps the screen awake while open;
+`d` dims it, `b`, Esc or a click leaves it.
+
 LLM usage: exact token counts per run (in, cache read / write, out) and the
 API-price equivalent of those tokens, plus the Claude plan's current-session
 usage and reset countdown from Claude Code's own `/usage` (run headless; no
