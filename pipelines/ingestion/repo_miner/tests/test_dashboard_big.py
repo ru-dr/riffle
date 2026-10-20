@@ -24,7 +24,9 @@ def test_big_picture_elements_are_on_the_page():
     assert "(max-width:899px)" in dashboard.PAGE           # the portrait phone layout
     assert "#b_big{display:none}" not in dashboard.PAGE    # no longer hidden on phones
     assert "bigAllowed" not in dashboard.PAGE
-    assert dashboard.PAGE.count("<svg class=\"lockup\"") == 2   # header brand and the big picture's small logo
+    assert dashboard.PAGE.count("<svg class=\"lockup") == 2     # header lockup and the big picture's icon
+    mark = dashboard.MARK_SVG
+    assert 0 < mark.count("<path") < dashboard.LOCKUP_SVG.count("<path")           # icon only, no wordmark
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
