@@ -19,6 +19,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import secrets
 import socket
 import threading
@@ -138,6 +139,9 @@ LOCKUP_SVG = r"""<svg class="lockup" role="img" aria-label="Riffle" viewBox="0 0
 <path d="M721.447 150V130.8H753.127V32.8797H721.447V13.6797H772.327V130.8H805.927V150H721.447Z" fill="currentColor"/>
 <path d="M847.441 150C828.433 150 812.881 134.256 812.881 115.248V86.6397C812.881 67.4397 828.433 52.0797 847.441 52.0797H862.801C881.425 52.0797 896.401 66.4797 897.361 84.7197V105.456H832.081V115.248C832.081 123.696 838.993 130.608 847.441 130.608H862.801C871.249 130.608 878.161 123.696 878.161 115.248V113.328H897.361V115.248C897.361 134.256 882.001 150 862.801 150H847.441ZM832.081 90.0957H878.161V86.6397C878.161 77.9997 871.441 71.2797 862.801 71.2797H847.441C838.801 71.2797 832.081 78.1917 832.081 86.6397V90.0957Z" fill="currentColor"/>
 </svg>"""
+# the icon alone (the lockup's first two shapes, the Riffle wordmark left out), for the big picture's corner
+MARK_SVG = ('<svg class="lockup mark" role="img" aria-label="Riffle" viewBox="30 0 300 164" fill="none" '
+            'xmlns="http://www.w3.org/2000/svg">' + "".join(re.findall(r"<path .*?/>", LOCKUP_SVG, re.S)[:2]) + "</svg>")
 FAVICON_B64 = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgNDAwIj4KICA8Y2lyY2xlIGN4PSIyMDAiIGN5PSIyMDAiIHI9IjIwMCIgZmlsbD0iIzE2MTcxZCIvPgogIDxnIGZpbGw9IiNmYmZhZjciIHRyYW5zZm9ybT0idHJhbnNsYXRlKDQ4LjAwIDEzMC43Nikgc2NhbGUoMC44NDQ0KSI+PHBhdGggZD0iTTEyMC4zMjEgMC4yNzkzNTlDMTIwLjY2MSAwLjI1MTg1OSAxMjEuMDAxIDAuMjMzODU4IDEyMS4zNDIgMC4yMjUzNThDMTMwLjY5IDAuMDI3ODU4NSAxNDAuMDY3IDAuMTY3ODYxIDE0OS40MTkgMC4xNDE2MTFDMTU1LjY5MiAwLjEyNDExMSAxNjIuMTUzIC0wLjIwMjg5MSAxNjguNDA3IDAuMjAwNjA5QzE2OS4yNyAwLjI1NjM1OSAxNzAuODI2IDAuMjU4MzYyIDE3MS40NzcgMC45MTMzNjJDMTcyLjA0OSAxLjQ4OTExIDE3Mi40MDEgMi41MDE2MSAxNzIuMzUgMy4zMTA2MUMxNzIuMTg0IDUuOTM5ODYgMTYzLjg2NCAxMi4zNTU0IDE2MS43NDIgMTQuMzIwNkMxNTguNDU2IDE3LjM2MjYgMTQwLjk5OCAzMy41MDU0IDEzOC40NTggMzQuNTk0OUMxMzUuMzE2IDM1Ljk0MjQgMTI4Ljg5NiAzNS4yOTM2IDEyNS4zNTUgMzUuMjcxNkwxMDYuNjUxIDM1LjI1ODlDMTAzLjk1NSAzNS4yMzU0IDkzLjc3OTggMzQuNjIxMSA5MS4wOTA4IDM2LjE1MDlDODkuNTQ2OCAzNy4wMjk0IDkwLjczMjggMzkuODI5NiA5Mi4xODIzIDQxLjE0NjlDOTkuMTA4NSA0Ny40NDA5IDEwNi4xMjIgNTMuNjczNiAxMTMuMDU4IDU5Ljk5NTlMMTY0LjcxMiAxMDcuMTU0QzE2OS45MzcgMTExLjk4NSAxNzUuNTIxIDExNi41NCAxODAuNjI4IDEyMS41MjhDMTg2LjE4OSAxMjYuOTYgMTgzLjEzMyAxMjguODIgMTc2Ljc4NCAxMjguNzQ0TDE0NS45ODEgMTI4Ljc1OEMxNDMuMzM0IDEyOC43NTMgMTMwLjk1NiAxMjkuMTUzIDEyOS4yNjIgMTI3Ljk3NkMxMjUuODY4IDEyNS42MTggMTIwLjg1NSAxMjAuNzYzIDExNy42NSAxMTcuODU2TDkyLjA5ODUgOTQuNTgwNkw0Ny44NDA1IDU0LjMxMjFDNDMuMTY0MyA1MC4wMjc5IDM4LjM4NDggNDUuODU2MSAzMy42NTEgNDEuNjM5NkMzMS44MDgzIDM5Ljk5ODEgMzAuOTEyMyAzOC4wMjc2IDMyLjM1MTMgMzUuNzg1MUMzMy4xODA4IDM1LjI1ODEgMzUuMjM1MyAzNS4wMzM2IDM2LjIxODggMzUuMDIyNEM1MC42ODE1IDM0Ljg1NjkgNjUuMjM3IDM1LjI2OTQgNzkuNjkyIDM0Ljg3NDFDODEuNzI5NSAzMy44MjQ0IDkwLjA5NzUgMjUuNzQyOSA5Mi4xNDkzIDIzLjg2ODRDOTcuMzU2MyAxOS4yMDU2IDEwMi41NiAxNC40MTA0IDEwNy44MzIgOS44MzM2MUMxMTEuMDQzIDcuMDQ2MTEgMTE2LjIzNyAxLjAwOTM2IDEyMC4zMjEgMC4yNzkzNTlaIi8+PHBhdGggZD0iTTE3Mi43MzIgMzUuMDE4MkMxNzQuODY3IDM0LjgyNDIgMTc4LjQwNyAzNC45NTQyIDE4MC42NjMgMzQuOTYxMkwxOTQuNjAzIDM0Ljk2MzdMMjExLjU2MiAzNC45NTU3QzIxNS4yMTggMzQuOTU1NyAyMTkuNzI1IDM0LjgyNDcgMjIzLjI4OCAzNS4zNjlDMjI1LjgxMyAzNS43NTQ1IDIzMC4wMDEgNDAuNDU5NSAyMzIuMDUxIDQyLjI5ODJMMjUyLjUyOCA2MC44NjUyTDI5Ni40NiAxMDAuODUzQzMwMy43OSAxMDcuNTUzIDMxMS4yNSAxMTQuMjI1IDMxOC42MSAxMjAuODk5QzMxOS4xNDUgMTIxLjM4NCAzMjAuMzMgMTIyLjQgMzIwLjczIDEyMi45MUMzMjcuMDc1IDEzMSAzMTIuNzE1IDEyOC43NTMgMzA4LjkzOCAxMjguNzQ0TDI4NS44OTUgMTI4LjY5OEMyODMuODE1IDEyOC42OTUgMjc1LjY0MyAxMjguNTA0IDI3NC4xMDggMTI4Ljg4NEMyNzEuNjYzIDEyOS40ODkgMjYyLjcxIDEzOC4yNzIgMjYwLjU0OCAxNDAuMjQ4TDI0My43NDIgMTU1LjQwMkMyNDEuNzIyIDE1Ny4yMzUgMjM3LjM2NSAxNjEuMzk4IDIzNS40MTYgMTYyLjY3OEMyMzMuMDczIDE2My45ODggMjIyLjk4IDE2My41NDQgMjE5Ljg5OSAxNjMuNTQxTDE5OC45NjQgMTYzLjU3NUMxOTYuMDcgMTYzLjU3IDE4NC40NjUgMTY0LjA1MSAxODIuNDIxIDE2Mi45OThDMTgxLjM3MyAxNjEuOTU4IDE4MS4wMjggMTU5LjQ1OSAxODIuMTYyIDE1OC4yOTRDMTg3LjcwNCAxNTIuNTk1IDE5MS4xNiAxNDkuODI5IDE5Ny40MDUgMTQ0LjI1MUMyMDEuNjE2IDE0MC40OSAyMTAuMzUyIDEzMi4yMSAyMTUuMzMgMTI4LjY2OEMyMjYuNjY4IDEyNy45NzcgMjM4LjQ0OCAxMjguNjI0IDI0OS44NzcgMTI4LjQyNEMyNTMuNjk4IDEyOC4zNTcgMjU3LjU0OCAxMjguNzAzIDI2MS4zMDUgMTI3Ljk5MUMyNjMuMTU4IDEyNy42MzMgMjY0LjA2MyAxMjUuMzk2IDI2Mi45MDMgMTI0LjIwMkMyNTYuNDQgMTE3LjUzOCAyNDguMjM3IDExMC42MzIgMjQxLjQ2NCAxMDQuNDQ3QzIyOC42MTkgOTIuNjE3NyAyMTUuNzExIDgwLjg1NyAyMDIuNzQgNjkuMTY1N0wxODQuMjYxIDUyLjM3NzVDMTgwLjM1MyA0OC44NDkyIDE3Ni40MzMgNDUuMzY1NSAxNzIuNTc3IDQxLjc3NzVDMTcwLjI4NCAzOS42NDM1IDE2OC4yNTggMzYuMDUgMTcyLjczMiAzNS4wMTgyWiIvPjwvZz4KPC9zdmc+Cg=="
 
 PAGE = r"""<!doctype html>
@@ -373,7 +377,7 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
     "now   now   now   repos"
     "alert alert alert alert"
     "log   log   log   log"
-    "seen  seen  seen  hint";
+    "brand seen  seen  hint";
   overflow:hidden}
 #big.on{display:grid}
 #big.dim{filter:brightness(.55)}
@@ -392,6 +396,10 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
 #big .alert{grid-area:alert;margin-top:var(--bp-break)}
 #big .log{grid-area:log;margin-top:var(--bp-step)}
 #big .seen{grid-area:seen;align-self:last baseline;margin-top:var(--bp-step)}
+#big .bp-brand{grid-area:brand;align-self:last baseline;margin-top:var(--bp-step);display:flex;align-items:center;
+  gap:1.2vh;color:var(--bp-dim);min-width:0}
+#big .bp-brand .lockup{height:clamp(14px,2.6vh,30px);width:auto;color:var(--bp-dim)}
+#big .bp-brand .bpver{font-family:var(--mono);font-size:var(--bp-label);line-height:1.1;white-space:nowrap}
 #big .hint{grid-area:hint;align-self:last baseline;margin-top:var(--bp-step)}
 
 #big .word.run{color:#3ddc84}#big .word.warn{color:#f0b443}#big .word.bad{color:#ff6b6b}#big .word.done{color:#7aa7ff}
@@ -421,7 +429,32 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
 #big .clock,#big .sys,#big .sys .fact,#big .f-rate,#big .f-repos{align-items:flex-end;text-align:right}
 #big .hint{text-align:right}
 #big .seen.off{color:#ff6b6b;font-weight:600}
-@media (max-width:899px),(hover:none) and (pointer:coarse){#b_big{display:none}}
+#big .bpbtn{font:inherit;color:var(--bp-soft);background:transparent;border:1px solid var(--bp-rule);
+  border-radius:6px;padding:0 14px;min-height:40px;margin-left:8px}
+/* phones, portrait: one column of the same things, big status word and percent first, two facts per row,
+   facts in the right column flush right like the desktop's fourth column; Dim and Exit are buttons
+   because there is no keyboard and an accidental tap must not leave the page */
+@media (max-width:899px){
+  #big{--bp-tight:.6vh;--bp-step:1.4vh;--bp-break:2.2vh;
+    --bp-label:clamp(11px,3.1vw,15px);--bp-value:clamp(18px,6.2vw,30px);
+    --bp-head:clamp(24px,8vw,44px);--bp-log:clamp(10px,2.9vw,13px);
+    padding:max(2.5vh,env(safe-area-inset-top,0px)) max(5vw,env(safe-area-inset-right,0px))
+      max(2vh,env(safe-area-inset-bottom,0px)) max(5vw,env(safe-area-inset-left,0px));
+    grid-template-columns:repeat(2,minmax(0,1fr));column-gap:4vw;
+    grid-template-rows:auto auto auto auto auto auto auto auto minmax(0,1fr) auto auto;
+    grid-template-areas:"word word" "pct pct" "bar bar" "prs eta" "ela rate" "now now" "repos sys"
+      "alert alert" "log log" "seen seen" "brand hint"}
+  #big .clock{display:none}
+  #big .f-now .val{font-size:clamp(14px,4.6vw,22px)}
+  #big .alert{font-size:clamp(15px,4.6vw,22px);white-space:normal;line-height:1.2}
+  #big .pct{font-size:clamp(64px,27vw,150px);line-height:.85}
+  #big .bar{height:1.6vh;min-height:10px}
+  #big .f-eta{align-items:flex-end;text-align:right}
+  #big .f-repos{align-items:flex-start;text-align:left}
+  #big .sys{flex-direction:row;justify-content:flex-end;gap:4vw}
+  #big .bp-brand .lockup{height:clamp(16px,3vh,22px)}
+  #big .hint{display:flex;align-items:center;justify-content:flex-end}
+}
 </style></head><body>
 <div class="wrap">
 <header>
@@ -506,12 +539,13 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
   <div class="fact f-eta"><span class="lbl">Time left</span><span class="val" id="bg_eta">—</span></div>
   <div class="fact f-ela"><span class="lbl">Elapsed</span><span class="val" id="bg_elapsed">—</span></div>
   <div class="fact f-rate"><span class="lbl">PRs per minute</span><span class="val" id="bg_rate">—</span></div>
-  <div class="fact f-now"><span class="lbl">Now mining</span><span class="val" id="bg_repo">—</span></div>
+  <div class="fact f-now"><span class="lbl" id="bg_now_lbl">Now mining</span><span class="val" id="bg_repo">—</span></div>
   <div class="fact f-repos"><span class="lbl">Repositories</span><span class="val" id="bg_repos">—</span></div>
   <div class="alert" id="bg_alert"></div>
   <div class="log" id="bg_log"></div>
+  <div class="bp-brand">@@MARK@@<span class="bpver" id="bg_ver">v—</span></div>
   <div class="seen" id="bg_seen">—</div>
-  <div class="hint">b or click to exit · d dim</div>
+  <div class="hint" id="bg_hint">b or click to exit · d dim</div>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="help" role="dialog" aria-modal="true" aria-labelledby="help_t"><div class="box">
@@ -631,7 +665,7 @@ function render(s){
   if (!s) return;
   last = s;
   const v = s.version ? "v" + s.version : "";
-  setText("ver", v); $("foot_ver").textContent = v;
+  setText("ver", v); $("foot_ver").textContent = v; $("bg_ver").textContent = v ? "miner " + v : "";
   const state = s.state || "idle";
   $("state").className = "chip " + (state === "running" ? "live" : /killed|exit|breaker/.test(state) ? "dead" : state === "stopped" ? "stopped" : "");
   setText("state_t", ui.paused ? state + " · paused" : state);
@@ -679,6 +713,12 @@ function render(s){
   $("logfile").textContent = lf; $("logname").textContent = (s.log || []).length + " lines";
   const paths = $("paths"); paths.replaceChildren();
   if (s.out) paths.appendChild(el("div", null, "output  " + s.out));
+  const asm = s.assembly;
+  if (asm) paths.appendChild(el("div", asm.state === "failed" ? "bad" : null, "snapshots  " + (
+    asm.state === "running" ? "assembling the snapshot tables..."
+    : asm.state === "failed" ? "assembly FAILED: " + (asm.err || "see the log")
+    : Number(asm.snapshots).toLocaleString() + " snapshots from " + Number(asm.prs).toLocaleString() +
+      " PRs, " + Number(asm.commits).toLocaleString() + " head commits")));
   if (s.log_path) paths.appendChild(el("div", null, "log     " + s.log_path));
   document.title = (state === "running" ? (p * 100).toFixed(0) + "% · " : "") + "Riffle Miner";
 }
@@ -766,10 +806,7 @@ async function wake(on){
   } catch (e) { big.lock = null; }
 }
 document.addEventListener("visibilitychange", () => { if (big.on) wake(true); });
-const bigAllowed = () => window.matchMedia("(min-width: 900px)").matches &&
-  !window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 function bigToggle(on){
-  if (!bigAllowed()) on = false;
   big.on = on === undefined ? !big.on : on;
   $("big").classList.toggle("on", big.on); $("big").classList.toggle("dim", big.dim);
   document.body.style.overflow = big.on ? "hidden" : "";
@@ -787,6 +824,7 @@ function renderBig(){
   if (stale && lastOk) { word = "OFFLINE"; cls = "bad"; }
   else if (s.breaker || /killed|exit|failed|breaker/.test(st)) { word = "STOPPED: ERROR"; cls = "bad"; }
   else if (s.llm_paused) { word = "LLM PAUSED"; cls = "warn"; }
+  else if (st === "running" && s.assembly && s.assembly.state === "running") { word = "ASSEMBLING"; cls = "run"; }
   else if (st === "running") { word = "MINING"; cls = "run"; }
   else if (st === "finished") { word = "FINISHED"; cls = "done"; }
   else if (st === "stopped") { word = "STOPPED"; cls = "warn"; }
@@ -805,7 +843,9 @@ function renderBig(){
   $("bg_rate").textContent = s.rate ? s.rate.replace(/\s*PR\/min$/, "") : "—";
   const rows = s.rows || [];
   const cur = rows.find(r => r.status === "active" || r.status === "warn");
-  $("bg_repo").textContent = cur ? cur.name + (cur.total ? " · " + Number(cur.done).toLocaleString() + "/" + Number(cur.total).toLocaleString() : "") : "—";
+  const asmOn = s.assembly && s.assembly.state === "running";
+  $("bg_now_lbl").textContent = asmOn ? "Now building" : "Now mining";
+  $("bg_repo").textContent = asmOn ? "snapshot tables" : cur ? cur.name + (cur.total ? " · " + Number(cur.done).toLocaleString() + "/" + Number(cur.total).toLocaleString() : "") : "—";
   $("bg_repos").textContent = s.repos || "—";
   const res = s.resources || {};
   $("bg_cpu").textContent = res.cpu_frac != null ? Math.round(res.cpu_frac * 100) + "%" : "—";
@@ -830,9 +870,13 @@ function renderBig(){
   seen.classList.toggle("off", Boolean(stale && lastOk));
 }
 $("b_big").onclick = () => bigToggle(true);
-$("big").onclick = () => bigToggle(false);
+if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) {
+  const btn = (text, fn) => { const b = el("button", "bpbtn", text); b.type = "button";
+    b.onclick = e => { e.stopPropagation(); fn(); }; return b; };
+  $("bg_hint").replaceChildren(btn("Dim", bigDim), btn("Exit", () => bigToggle(false)));
+} else $("big").onclick = () => bigToggle(false);
 setInterval(renderBig, 1000);
 if (location.hash === "#big") bigToggle(true);
 tick(); setInterval(tick, 2000); setInterval(ago, 1000);
 </script></body></html>
-""".replace("@@LOCKUP@@", LOCKUP_SVG).replace("@@FAVICON@@", FAVICON_B64)
+""".replace("@@LOCKUP@@", LOCKUP_SVG).replace("@@MARK@@", MARK_SVG).replace("@@FAVICON@@", FAVICON_B64)

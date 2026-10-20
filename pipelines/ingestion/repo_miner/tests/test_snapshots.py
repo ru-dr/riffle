@@ -312,3 +312,21 @@ def test_assembly_keeps_one_capture_per_pr(world, tmp_path):
     snaps, commits = S.assemble([world["at_open"]], str(tmp_path), world["st"])
     assert len({r["snapshot_id"] for r in snaps}) == len(snaps)
     assert len({(r["repo"], r["pr_number"], r["head_sha"]) for r in commits}) == len(commits) == 4
+
+
+def test_batch_end_assembly_writes_tables_and_skips_when_off(world, tmp_path, capsys):
+    import argparse
+    import json
+    import build_dataset
+    ds = tmp_path / "dataset_pc1of2.jsonl"
+    ds.write_text(json.dumps(world["at_open"], default=str) + "\n", encoding="utf-8")
+    raw = tmp_path / "raw"
+    (raw / "o_r").mkdir(parents=True)
+    args = argparse.Namespace(test=False, snapshots=True, assemble_snapshots=True,
+                              out=str(ds), snapshot_root=str(raw))
+    build_dataset._assemble_snapshots(args)                  # empty capture folder: nothing to build
+    assert (tmp_path / "dataset_pc1of2_snapshots.jsonl").exists()
+    (tmp_path / "dataset_pc1of2_snapshots.jsonl").unlink()
+    for off in ({"snapshots": False}, {"assemble_snapshots": False}, {"test": True}):
+        build_dataset._assemble_snapshots(argparse.Namespace(**{**vars(args), **off}))
+        assert not (tmp_path / "dataset_pc1of2_snapshots.jsonl").exists()

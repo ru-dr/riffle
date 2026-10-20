@@ -60,6 +60,7 @@ else:
 
 import config  # noqa: E402  (loads .env, so GITHUB_TOKEN from it counts)
 import dashboard  # noqa: E402
+import naming  # noqa: E402
 from features import llm_flags  # noqa: E402
 
 try:
@@ -394,6 +395,7 @@ class RiffleTUI(App):
         self.max_prs: int | None = None
         self.test_mode = False
         self.out_paths: list[str] = []
+        self.assembly: dict | None = None      # snapshot-table build: running | done | failed
         self.log_fh = None
         self.log_path: str | None = None
         self._procs: dict[int, object] = {}  # psutil.Process by pid (keeps cpu_percent state)
@@ -417,6 +419,9 @@ class RiffleTUI(App):
                 yield Input("repos.txt", id="repos_file", compact=True)
                 yield Label("Output dataset")
                 yield Input("dataset.parquet", id="out", compact=True)
+                yield Label("Name prefix / postfix (blank = auto pc tag; {pc} {n} {host} {date})")
+                yield Input("", id="out_prefix", placeholder="prefix", compact=True)
+                yield Input("", id="out_postfix", placeholder="postfix", compact=True)
                 yield Label("Number of PCs (1 = mine everything here)")
                 yield Input("1", id="pcs", type="integer", compact=True)
                 yield Label("This PC # (1..PCs)")
@@ -455,7 +460,8 @@ class RiffleTUI(App):
                                id="close_other_only", compact=True)
                 yield Checkbox("Wait for Claude plan reset (don't fail calls)", True,
                                id="quota_wait", compact=True)
-                yield Checkbox("PR snapshots (capture while mining)", True, id="snapshots",
+                yield Checkbox("PR snapshots (capture while mining, tables built at the end)", True,
+                               id="snapshots",
                                compact=True)
                 yield Checkbox("SZZ label", True, id="szz", compact=True)
                 yield Checkbox("CI history", True, id="ci_history", compact=True)
@@ -720,6 +726,10 @@ class RiffleTUI(App):
         shard = self._shard()
         if shard:
             cmd += ["--shard", shard]
+        if self._val("out_prefix"):
+            cmd += ["--out-prefix", self._val("out_prefix")]
+        if self._val("out_postfix"):
+            cmd += ["--out-postfix", self._val("out_postfix")]
         if self._val("workers"):
             cmd += ["--workers", self._val("workers")]
         if self._val("llm_conc"):
@@ -749,13 +759,14 @@ class RiffleTUI(App):
         """Absolute file(s) this run will save to."""
         if test:
             return [TEST_OUT, TEST_OUT.rsplit(".", 1)[0] + ".parquet"]
-        out = self._val("out") or "dataset.parquet"
+        out = naming.tagged_out(self._val("out") or "dataset.parquet", self._shard(),
+                                self._val("out_prefix"), self._val("out_postfix"))
         out = out if os.path.isabs(out) else os.path.join(HERE, out)
         if out.endswith(".parquet"):
             import importlib.util
             if not (importlib.util.find_spec("pandas") and importlib.util.find_spec("pyarrow")):
                 out = out.rsplit(".", 1)[0] + ".jsonl"      # miner's fallback
-        return [out]
+        return [out, *naming.snapshot_outs(out)] if self._on("snapshots") else [out]
 
     def _shard(self) -> str | None:
         """"K/N" for this PC, or None when mining everything on one machine."""
@@ -806,8 +817,12 @@ class RiffleTUI(App):
 
     async def _run_audit(self) -> None:
         out = self._val("out") or "dataset.parquet"
+        shard = ["--shard", self._shard()] if self._shard() else []
+        for flag, wid in (("--out-prefix", "out_prefix"), ("--out-postfix", "out_postfix")):
+            if self._val(wid):
+                shard += [flag, self._val(wid)]
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, BUILD, "--out", out, "--audit", cwd=HERE,
+            sys.executable, BUILD, "--out", out, *shard, "--audit", cwd=HERE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         text, _ = await proc.communicate()
         flagged = []
@@ -917,6 +932,7 @@ class RiffleTUI(App):
             self.max_prs = int(tp) if tp.isdigit() else 10
         self.repos.clear()
         self.stats = RunStats(started=time.time())
+        self.assembly = None
         self.query_one("#repos", DataTable).clear()
         fd, self.control_path = tempfile.mkstemp(prefix="riffle-control-", suffix=".txt")
         os.close(fd)
@@ -938,7 +954,8 @@ class RiffleTUI(App):
         self._log(f"$ {' '.join(cmd[2:])}", style="bold")
         self._log(f"[tui] saving to: {'  +  '.join(self.out_paths)}", style="cyan")
         if self.log_path:
-            self._log(f"[tui] log file: {self.log_path}", style="cyan")
+            self._log(f"[tui] log file: {self.log_path}  ·  trace: "
+                      f"{self.log_path.rsplit('.', 1)[0] + '.trace.jsonl'}", style="cyan")
         self.run_worker(self._run_proc(cmd), exclusive=True, group="proc")
         self._set_running(True)
 
@@ -982,6 +999,8 @@ class RiffleTUI(App):
     async def _run_proc(self, cmd: list[str]) -> None:
         env = dict(os.environ, RIFFLE_EVENTS=self.events_path, PYTHONUNBUFFERED="1",
                    RIFFLE_CONTROL=self.control_path or "")
+        if self.log_path:               # the structured trace sits next to the run log
+            env["RIFFLE_TRACE"] = self.log_path.rsplit(".", 1)[0] + ".trace.jsonl"
         self.proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=HERE, env=env, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -1049,7 +1068,7 @@ class RiffleTUI(App):
             self.log_fh.close()
         try:
             os.makedirs(LOG_DIR, exist_ok=True)
-            self.log_path = os.path.join(LOG_DIR, time.strftime("run-%Y%m%d-%H%M%S.log"))
+            self.log_path = os.path.join(LOG_DIR, naming.run_stem(self._shard()) + ".log")
             self.log_fh = open(self.log_path, "a", encoding="utf-8", buffering=1)
         except OSError:
             self.log_fh, self.log_path = None, None
@@ -1114,6 +1133,8 @@ class RiffleTUI(App):
         elif ev == "stage":
             r = self._repo(e["repo"])
             r.stage = e.get("stage", r.stage)
+        elif ev == "assemble":
+            self.assembly = {k: v for k, v in e.items() if k not in ("t", "ev")}
         elif ev == "rate_limit":
             r = self._repo(e["repo"])
             r.rl_until = t + (e.get("wait") or 0)
@@ -1350,6 +1371,7 @@ class RiffleTUI(App):
             "llm_skipped": llm_skip, "llm_paused": paused,
             "llm_usage": usage,
             "breaker": self.stats.breaker,
+            "assembly": self.assembly,
         })
 
     def _resources(self) -> str | None:
