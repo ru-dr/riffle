@@ -148,6 +148,7 @@ export const SECTIONS: DocSection[] = [
     pages: [
       { slug: "architecture/services", title: "Services", description: "What each service owns, and where each one is allowed to fail.", file: "services.md" },
       { slug: "architecture/contracts", title: "Contracts", description: "The JSON shapes that cross every service boundary.", file: "contracts.md" },
+      { slug: "architecture/repo-miner", title: "Repo miner", description: "How the training-data miner works: architecture, every stage, every column, every flag, and why.", source: "../pipelines/ingestion/repo_miner/ARCHITECTURE.md" },
     ],
   },
   {
