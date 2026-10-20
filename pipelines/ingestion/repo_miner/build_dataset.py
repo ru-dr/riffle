@@ -410,6 +410,8 @@ def main():
     ap.add_argument("--window-from", default=None, help="date window start YYYY-MM-DD (passed through)")
     ap.add_argument("--window-to", default=None, help="date window end YYYY-MM-DD (passed through)")
     ap.add_argument("--lead-in-days", type=int, default=None, help="history lead-in days (passed through)")
+    ap.add_argument("--cap-on", choices=["all", "training"], default=None,
+                    help="what --max-prs counts in window mode (passed through)")
     ap.add_argument("--only-domain", default=None,
                     help="mine only repos tagged [domain: NAME] in the repos file")
     ap.add_argument("--snapshots", action=argparse.BooleanOptionalAction, default=True,
@@ -649,6 +651,8 @@ def main():
             cmd += ["--window-from", args.window_from, "--window-to", args.window_to or ""]
         if args.lead_in_days is not None:
             cmd += ["--lead-in-days", str(args.lead_in_days)]
+        if args.cap_on:
+            cmd += ["--cap-on", args.cap_on]
         if domain_of.get(f"{owner}/{name}".lower()):
             cmd += ["--domain", domain_of[f"{owner}/{name}".lower()]]
         cmd.append("--snapshots" if args.snapshots else "--no-snapshots")

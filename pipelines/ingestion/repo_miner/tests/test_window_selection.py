@@ -160,3 +160,19 @@ def test_selection_round_trip_and_settings_change(tmp_path):
     st.max_prs = 200                                  # different settings: not reused
     assert mine_repo.load_selection(path, st) is None
     assert mine_repo.load_selection(str(tmp_path / "missing.json"), st) is None
+
+
+def test_cap_on_training_counts_only_training_prs():
+    import scope
+    prs = _prs()
+    for p in prs:                                   # every other PR by a maintainer
+        if p["number"] % 2:
+            p["author_association"] = "MEMBER"
+    st = _st(window_from="2025-01-01", window_to="2025-12-31", max_prs=30, lead_in_days=0,
+             cap_on="training", llm_sample_pct=0)
+    api = FakeAPI(prs, st)
+    kept = api.window_prs() + api.unmerged
+    train = [p for p in kept if scope.pr_list_is_training(p, "o/r", 0)]
+    assert len(train) == 30 and len(kept) > 30      # maintainer PRs are mined too
+    st.cap_on = "all"
+    assert len(FakeAPI(prs, st).window_prs() + FakeAPI(prs, st).unmerged) <= 60

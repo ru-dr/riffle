@@ -45,6 +45,7 @@ Earlier drafts (1–4) were never merged and need no migration.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 1.3 | 2026-10-19 | Optional `snapshot_weight` (1 / the PR's snapshot count) and `moment_bucket` (miner v6.0.0) |
 | 1.2 | 2026-10-19 | Optional `outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer` (miner v5.0.0) |
 | 1.1 | 2026-10-19 | The same 5 optional provenance and domain columns as `mined_dataset` 1.1 |
 | 1.0 | 2026-10-19 | PR snapshot rows (miner v3.1.0): every `mined_dataset` column plus 9 identity and 20 state columns |

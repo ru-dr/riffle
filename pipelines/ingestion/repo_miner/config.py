@@ -267,6 +267,9 @@ class Settings:
     # history lead-in (proposal 1.4): PRs created this many days before the
     # kept block, as metadata only, so its first PRs have a history
     lead_in_days: int = 180
+    # what max_prs counts in window mode: "all" kept PRs, or "training" PRs
+    # only (scope.py), so the target is the number of PRs the model trains on
+    cap_on: str = "all"
     # dataset domain (ADR 0011), written on every row; from the repos file tag
     domain: str | None = None
     # skip PRs merged in the last N days, so the cap picks PRs old enough for

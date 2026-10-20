@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://riffle.dev/contracts/mined_snapshot.schema.json",
   "title": "Riffle PR snapshot row",
-  "x-riffle-version": "1.2",
-  "x-riffle-miner-version": "5.0.0",
-  "description": "One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots.py), labelled with how the PR finally ended. Every column of mined_dataset.schema.json, with three groups taken as of snapshot_at instead of the PR's open: the code features of the head commit then (diff sizes, path flags, deterministic, scanner, dependency and API-contract columns), the merge signals (repo_outside_merge_rate and the rest), and the snapshot state columns. Git-history, blame, LLM and PR-metadata columns stay as at open. Labels are outcomes and never model inputs; so is near_decided. Bots count for nothing in the state. Since 1.2: outcome_3class, nowhere_reason, ci_fail_flaky_only and author_confirmed_maintainer, optional in the schema for older rows; the miner writes them on every row.",
+  "x-riffle-version": "1.3",
+  "x-riffle-miner-version": "6.0.0",
+  "description": "One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots.py), labelled with how the PR finally ended. Every column of mined_dataset.schema.json, with three groups taken as of snapshot_at instead of the PR's open: the code features of the head commit then (diff sizes, path flags, deterministic, scanner, dependency and API-contract columns), the merge signals (repo_outside_merge_rate and the rest), and the snapshot state columns. Git-history, blame, LLM and PR-metadata columns stay as at open. Labels are outcomes and never model inputs; so is near_decided. Bots count for nothing in the state. Since 1.2: outcome_3class, nowhere_reason, ci_fail_flaky_only and author_confirmed_maintainer, optional in the schema for older rows; the miner writes them on every row. Since 1.3: snapshot_weight and moment_bucket (optional in the schema; snapshots.py writes them).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -1849,6 +1849,23 @@
         "null"
       ],
       "description": "The PR author had merged or closed someone else's PR before this one opened, from the repo's timelines (proposal 2.2). author_association shows today's status and hides private org members, so this is what decides outside contributors. Null when no timelines were read. Computed in `pipelines/ingestion/repo_miner/maintainers.py`."
+    },
+    "snapshot_weight": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1,
+      "description": "1 / the number of kept snapshots of this PR, so each PR adds up to 1 in training and slow PRs with many snapshots don't dominate. Depends on the PR's whole history, so it is a training weight and never a model input."
+    },
+    "moment_bucket": {
+      "enum": [
+        "open",
+        "<1d",
+        "1-3d",
+        "3-7d",
+        "7-30d",
+        ">30d"
+      ],
+      "description": "Time band of the snapshot: open (the open trigger) or time since start, for reporting metrics per moment."
     }
   }
 }

@@ -84,8 +84,22 @@ STATE_COLUMNS = (
 )
 IDENTITY_COLUMNS = ("snapshot_id", "snapshot_at", "snapshot_index", "trigger", "trigger_role",
                     "snapshot_head_sha", "snapshot_base_sha", "head_found", "near_decided")
-# columns that are outcomes or filters, never model inputs (for the leakage test)
-NOT_INPUTS = ("near_decided",)
+# for training and reporting: snapshot_weight = 1 / the PR's snapshot count, so
+# each PR adds up to 1 and slow PRs with many snapshots don't dominate;
+# moment_bucket = the time band of the snapshot, for metrics per moment
+TRAINING_COLUMNS = ("snapshot_weight", "moment_bucket")
+MOMENT_BUCKETS = ("open", "<1d", "1-3d", "3-7d", "7-30d", ">30d")
+# columns that are outcomes, filters or weights, never model inputs
+NOT_INPUTS = ("near_decided", "snapshot_weight")
+
+
+def moment_bucket(trigger: str, hours: float) -> str:
+    if trigger == "open":
+        return "open"
+    for limit, name in ((24, "<1d"), (72, "1-3d"), (168, "3-7d"), (720, "7-30d")):
+        if hours < limit:
+            return name
+    return ">30d"
 
 
 def _ts(s) -> datetime | None:
@@ -381,6 +395,8 @@ def build(record: dict, at_open: dict, history: merge_signals.History,
     prev = None
     for i, r in enumerate(rows):
         r["snapshot_index"] = i
+        r["snapshot_weight"] = round(1 / len(rows), 6)
+        r["moment_bucket"] = moment_bucket(r["trigger"], r["time_since_start_h"])
         if prev is None:
             r.update(new_commits_since_prev=None, new_comments_since_prev=None,
                      diff_size_change_since_prev=None)

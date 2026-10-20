@@ -21,6 +21,7 @@ import urllib.error
 
 import config
 import progress
+import scope
 
 API = "https://api.github.com"
 
@@ -241,6 +242,7 @@ class GitHubAPI:
         mode = getattr(st, "merge_signal", "auto")
         use_landed = resolver is not None and mode == "landed"
         kept: list[dict] = []          # eligible PRs in the window, newest created first
+        counted = 0                    # toward max_prs: every kept PR, or training PRs only
         lead: list[dict] = []
         block_start = None
         lead_days = timedelta(days=max(0, st.lead_in_days))
@@ -297,7 +299,12 @@ class GitHubAPI:
                     cand = None              # outcome too recent to be mature
                 if cand:
                     kept.append(cand)
-                    if st.max_prs and len(kept) >= st.max_prs and block_start is None:
+                    if st.cap_on == "training":
+                        counted += scope.pr_list_is_training(pr, f"{self.owner}/{self.repo}",
+                                                             st.llm_sample_pct)
+                    else:
+                        counted += 1
+                    if st.max_prs and counted >= st.max_prs and block_start is None:
                         block_start = created    # cap reached: the block starts here
             progress.emit("stage", repo=f"{self.owner}/{self.repo}", stage=f"fetching PRs p{page}")
             if page % 10 == 0:
@@ -320,9 +327,11 @@ class GitHubAPI:
         self.use_landed = use_landed
         merged = [p for p in kept if not p.get("_unmerged")]
         merged.sort(key=lambda p: p.get("merged_at") or "", reverse=True)
+        train = sum(scope.pr_list_is_training(p, f"{self.owner}/{self.repo}", st.llm_sample_pct)
+                    for p in kept)
         print(f"[window] {w_from[:10]}..{w_to[:10]}: {len(merged)} merged + {len(self.unmerged)} "
-              f"unmerged PRs (block from {(self.block_start or '-')[:10]}), {len(lead)} lead-in",
-              file=sys.stderr, flush=True)
+              f"unmerged PRs ({train} training PRs; block from {(self.block_start or '-')[:10]}), "
+              f"{len(lead)} lead-in", file=sys.stderr, flush=True)
         return merged
 
     def merged_prs(self, resolver=None) -> list[dict]:

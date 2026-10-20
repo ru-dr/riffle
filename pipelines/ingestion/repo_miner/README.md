@@ -131,6 +131,13 @@ python build_dataset.py --window-from 2023-07-01 --window-to 2026-07-31 \
   their merge-signal history (`repo_outside_merge_rate`, first-response
   times, agent load, similar PRs). The breakage history (`similar_pr_*`,
   `path_failure_mode_*`) needs mined outcomes, so it still starts empty.
+- `--cap-on training` makes `--max-prs` count only **training PRs** (outside
+  contributors who aren't bots, plus the 5% sample; `scope.py`), so
+  `--max-prs 10000 --cap-on training` gives about 10,000 PRs to train on.
+  Maintainer and bot PRs inside the block are still mined (history needs
+  them) but don't count. Maintainers confirmed from history are only known
+  after the timelines are read, so the training count can come out slightly
+  below the cap. The `[window]` line says how many training PRs it kept.
 - Without `--window-from` the older selection applies.
 
 **Domains (ADR 0011):** tag a line in the repos file with `[domain: web-ts]` in its `#` comment (`https://github.com/o/r  # [~9000 commits] [domain: web-ts]`);
@@ -531,7 +538,9 @@ live PR as events arrive gives a better answer. Two steps:
    is the part that can't wait: clones are deleted and force-pushed commits
    expire. The head at a moment uses ADR 0010's rule for the head at open.
    Git-history and blame features are not recomputed per head, and the LLM
-   flags are the at-open ones, so snapshots add no LLM calls.
+   flags are the at-open ones, so snapshots add no LLM calls. Each repo
+   logs what capture cost: `[snapshots] captured N PRs · H heads/PR · capture
+   took S s, P% of PR mining time (~X% slower than without)`.
 2. **Assembly, any time later** (`snapshots.py`), from the stored files and
    the mined rows, with no GitHub calls or clones:
 
@@ -558,6 +567,10 @@ live PR as events arrive gives a better answer. Two steps:
      changes requested, approvals, commits and force-pushes, whether the
      author pushed after the last review, comment counts, outcome label,
      draft, reopens, changes since the previous snapshot).
+   - Training: `snapshot_weight` is 1 / the PR's snapshot count, so each PR
+     adds up to 1 and slow PRs with many snapshots don't dominate (it is a
+     weight, never a model input); `moment_bucket` (open, <1d, 1-3d, 3-7d,
+     7-30d, >30d) is for reporting metrics per moment. Split by repo or PR.
    - Contracts: `contracts/mined_snapshot.schema.json` and
      `contracts/mined_commit_features.schema.json`.
    - `tests/test_snapshots.py` includes the leakage test: every snapshot is
