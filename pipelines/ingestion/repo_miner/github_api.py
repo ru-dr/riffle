@@ -9,6 +9,7 @@ simple pagination. Kept dependency-free (urllib) on purpose.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 from datetime import datetime, timedelta, timezone
@@ -207,7 +208,8 @@ class GitHubAPI:
                 # any other 4xx (401 unauthenticated, 422 ...) is permanent for
                 # this request: report it as unobserved, never kill the run
                 return e.code, None, {}
-            except (urllib.error.URLError, TimeoutError) as e:
+            except (urllib.error.URLError, OSError, http.client.HTTPException,
+                    json.JSONDecodeError) as e:      # incl. IncompleteRead, resets, cut bodies
                 net_fails += 1
                 if net_fails > 8:
                     print(f"[api] network error persisted after {net_fails} retries "
