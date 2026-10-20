@@ -445,19 +445,34 @@ def _write_rows(rows: list[dict], path: str) -> None:
 
 
 def assemble(dataset_rows: list[dict], raw_root: str, st: config.Settings) -> tuple[list, list]:
+    """Snapshots and commit rows for every captured PR that has a mined row.
+    A PR captured more than once (two capture folders for the same repo, e.g.
+    from different machines or runs) is built once, from the capture whose
+    folder sorts last, so the keys stay unique: snapshot_id, and repo +
+    pr_number + head_sha."""
     at_open = {(r.get("repo"), r.get("pr_number")): r for r in dataset_rows}
-    snaps, commits = [], []
+    chosen: dict[tuple, tuple] = {}            # (repo, pr) -> (folder, record)
+    folders: dict[str, tuple] = {}
     for d in sorted(glob.glob(os.path.join(raw_root, "*"))):
         records = cap.read_jsonl(os.path.join(d, cap.CAPTURE_FILE))
         if not records:
             continue
-        history = merge_signals.History(cap.read_jsonl(os.path.join(d, cap.INDEX_FILE)))
-        evidence = maintainers.Evidence.load(d)
+        folders[d] = (merge_signals.History(cap.read_jsonl(os.path.join(d, cap.INDEX_FILE))),
+                      maintainers.Evidence.load(d))
         for rec in records:
-            row = at_open.get((rec.get("repo"), rec.get("pr_number")))
-            commits.extend(commit_feature_rows(rec))
-            if row is not None:
-                snaps.extend(build(rec, row, history, st, evidence))
+            chosen[(rec.get("repo"), rec.get("pr_number"))] = (d, rec)
+    dupes = sum(len(cap.read_jsonl(os.path.join(d, cap.CAPTURE_FILE))) for d in folders) - len(chosen)
+    if dupes:
+        print(f"[snapshots] {dupes} duplicate PR captures across folders; kept one per PR",
+              file=sys.stderr)
+    snaps, commits = [], []
+    for key in sorted(chosen, key=lambda k: (str(k[0]), k[1] or 0)):
+        d, rec = chosen[key]
+        history, evidence = folders[d]
+        commits.extend(commit_feature_rows(rec))
+        row = at_open.get(key)
+        if row is not None:
+            snaps.extend(build(rec, row, history, st, evidence))
     # every commit row carries every feature column (null where not computed)
     cols = sorted({k for r in commits for k in r} - set(_COMMIT_BASE))
     commits = [{**{c: None for c in cols}, **r} for r in commits]

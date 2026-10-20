@@ -299,3 +299,16 @@ def test_weights_add_up_to_one_per_pr_and_buckets(world):
     assert rows[0]["moment_bucket"] == "open"
     assert all(r["moment_bucket"] in S.MOMENT_BUCKETS for r in rows)
     assert S.moment_bucket("clock", 30) == "1-3d" and S.moment_bucket("idle", 800) == ">30d"
+
+
+def test_assembly_keeps_one_capture_per_pr(world, tmp_path):
+    """The same PR captured in two folders (two machines or runs) is built
+    once, so snapshot_id and repo + pr_number + head_sha stay unique."""
+    for name in ("a_run1", "b_run2"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / cap.CAPTURE_FILE).write_text(json.dumps(world["record"]) + "\n")
+        (d / cap.INDEX_FILE).write_text("".join(json.dumps(s) + "\n" for s in world["sidecars"]))
+    snaps, commits = S.assemble([world["at_open"]], str(tmp_path), world["st"])
+    assert len({r["snapshot_id"] for r in snaps}) == len(snaps)
+    assert len({(r["repo"], r["pr_number"], r["head_sha"]) for r in commits}) == len(commits) == 4
