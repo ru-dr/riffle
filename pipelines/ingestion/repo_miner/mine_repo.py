@@ -889,6 +889,58 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
           f"features use the final diff)", file=sys.stderr)
 
 
+# ---- pinned PR selection (resume) -----------------------------------------
+# The first run of a repo saves the PRs it selected; a resumed run loads them
+# instead of asking the API again, so new merges since the stop can't shift
+# what is mined (which would orphan the checkpoint's rows and change the SZZ
+# relevant set). Removed after a clean write and by --remine-repo.
+
+def selection_path(st: config.Settings, owner: str, name: str) -> str:
+    return os.path.join(st.ci_cache_dir, f"{owner}_{name}.selection.json")
+
+
+def _selection_params(st: config.Settings) -> dict:
+    return {"window_from": st.window_from, "window_to": st.window_to, "max_prs": st.max_prs,
+            "min_age_days": st.min_age_days, "lead_in_days": st.lead_in_days,
+            "merge_outcome": st.enable_merge_outcome, "max_unmerged": st.max_unmerged,
+            "merge_signal": st.merge_signal, "abandon_days": st.abandon_days,
+            "miner_major": __version__.split(".")[0]}
+
+
+def load_selection(path: str, st: config.Settings) -> dict | None:
+    """The pinned selection if it was made with these settings, else None."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            sel = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return sel if sel.get("params") == _selection_params(st) else None
+
+
+def save_selection(path: str, st: config.Settings, data: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"params": _selection_params(st), **data}, fh, default=str)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def update_selection(path: str, extra: dict) -> None:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            sel = json.load(fh)
+        sel.update(extra)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(sel, fh, default=str)
+        os.replace(tmp, path)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+
 def _prefetch_timelines(api, prs: list[dict], st: config.Settings) -> None:
     """pr["_events"] for every PR that doesn't have it yet, in parallel."""
     need = [p for p in prs if p.get("_events") is None and p.get("number") is not None]
@@ -1039,12 +1091,29 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                   "provide a token.", file=sys.stderr)
             return rows
         resolver = _landed_resolver(repo, owner, name, default_branch)
-        prs = list(api.window_prs(resolver=resolver) if st.window_from
-                   else api.merged_prs(resolver=resolver))
-        lead_in = _lead_in_sidecars(api, st) if st.window_from else []
+        sel_path = selection_path(st, owner, name)
+        sel = load_selection(sel_path, st)
+        if sel is not None:
+            # a resumed run mines exactly the PRs the first run picked, so the
+            # checkpoint, the SZZ relevant set and the shard split all still fit
+            prs, stale, lead_in = sel["merged"], sel["stale"], sel["lead_sidecars"]
+            api.unmerged, api.lead_in = sel["unmerged"], sel["lead_in"]
+            api.block_start, api.use_landed = sel.get("block_start"), sel.get("use_landed", False)
+            api.incomplete = sel.get("incomplete", False)
+            print(f"[resume] PR selection pinned by the first run ({sel_path})", file=sys.stderr)
+        else:
+            prs = list(api.window_prs(resolver=resolver) if st.window_from
+                       else api.merged_prs(resolver=resolver))
+            lead_in = _lead_in_sidecars(api, st) if st.window_from else []
+            stale = _stale_open_prs(api, prs, st) if st.enable_merge_outcome else []
+            save_selection(sel_path, st, {
+                "merged": prs, "unmerged": getattr(api, "unmerged", []), "stale": stale,
+                "lead_in": getattr(api, "lead_in", None) or [], "lead_sidecars": lead_in,
+                "block_start": getattr(api, "block_start", None),
+                "use_landed": getattr(api, "use_landed", False),
+                "incomplete": getattr(api, "incomplete", False)})
         print(f"[fetch] {len(prs)} merged PRs to process", file=sys.stderr)
         if st.enable_merge_outcome:
-            stale = _stale_open_prs(api, prs, st)
             unmerged = _prepare_unmerged(repo, api.unmerged + stale, default_branch)
             print(f"[merge-outcome] {len(unmerged)} of {len(api.unmerged) + len(stale)} "
                   f"unmerged PRs have fetchable commits ({len(stale)} still open past "
@@ -1073,9 +1142,16 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     # every PR's timeline, read once up front (mine_pr reuses pr["_events"]):
     # maintainers are confirmed from all of them, point-in-time (maintainers.py)
     evidence = maintainers.Evidence()
-    if api is not None and (st.enable_merge_outcome or st.enable_declared_labels):
+    sel_path = selection_path(st, owner, name) if api is not None else None
+    saved = (load_selection(sel_path, st) or {}).get("evidence") if sel_path else None
+    if saved is not None:
+        evidence = maintainers.Evidence({k: _parse_ts(v) for k, v in saved.items()})
+    elif api is not None and (st.enable_merge_outcome or st.enable_declared_labels):
         _prefetch_timelines(api, prs, st)
         evidence = maintainers.Evidence.from_prs(prs + (getattr(api, "lead_in", None) or []))
+        if sel_path:
+            update_selection(sel_path, {"evidence": {k: v.strftime("%Y-%m-%dT%H:%M:%SZ")
+                                                     for k, v in evidence.first.items()}})
     for pr in prs:
         pr["_author_maintainer"] = (evidence.confirmed((pr.get("user") or {}).get("login"),
                                                        _parse_ts(pr["created_at"]) if pr.get("created_at") else None)
@@ -1489,14 +1565,15 @@ def main():
         print(f"[llm] {owner}/{name}: {llm_flags.usage_summary(usage)}", file=sys.stderr, flush=True)
     progress.emit("repo_done", repo=f"{owner}/{name}", rows=len(rows), total=total,
                   status="ok" if ok else "write-failed", llm_usage=usage)
-    # remove the per-repo checkpoint only after a clean, complete write
+    # remove the per-repo checkpoint and pinned selection only after a clean,
+    # complete write
     if ok and out:
-        ckpt = out + ".partial.jsonl"
-        try:
-            if os.path.isfile(ckpt):
-                os.remove(ckpt)
-        except OSError:
-            pass
+        for f in (out + ".partial.jsonl", selection_path(st, owner, name)):
+            try:
+                if os.path.isfile(f):
+                    os.remove(f)
+            except OSError:
+                pass
     if args.append:
         print(f"[done] +{len(rows)} rows this run, {total} total -> {out}")
     else:

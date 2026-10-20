@@ -127,14 +127,33 @@ def test_resume_from_partial_checkpoint(synth_repo, tmp_path):
     # rebuild a checkpoint holding only some fix commits, plus a torn line
     fixes = [c.sha for c, _ in gitio.iter_commits_with_files(synth_repo, "HEAD")
              if c.parents and config.is_fix_text(c.subject)]
-    with open(cache + ".partial.jsonl", "w") as fh:
+    os.remove(cache + labels.BLAME_STORE_SUFFIX)
+    with open(cache + labels.BLAME_STORE_SUFFIX, "w") as fh:
+        fh.write(json.dumps({"fingerprint": dict(labels.szz_fingerprint(synth_repo, None),
+                                                 checkpoint="per-path")}) + "\n")
         for sha in fixes[: len(fixes) // 2]:
-            _sha, bugs, _calls, _fails = labels._szz_fix_bugs(
+            _sha, by_path, _calls, _fails = labels._szz_fix_bugs(
                 synth_repo, sha, gitio._run(synth_repo, "rev-parse", sha + "^").strip(),
                 [p for _, _, p in gitio.numstat(synth_repo, sha)])
-            fh.write(json.dumps({"sha": sha, "bugs": bugs}) + "\n")
+            fh.write(json.dumps({"sha": sha, "paths": by_path}) + "\n")
         fh.write('{"sha": "torn')
     assert labels.build_szz_index(synth_repo, _settings(), cache) == ref
+
+
+def test_blame_store_survives_a_new_window_or_selection(synth_repo, tmp_path, monkeypatch):
+    """A finished run's blame store is reused by a run whose window or relevant
+    set differs: no blame repeats, and the index is still exactly right."""
+    gitio.configure_blame()
+    ref = reference_szz_index(synth_repo)
+    cache = str(tmp_path / "r.szz.json")
+    assert labels.build_szz_index(synth_repo, _settings(), cache) == ref
+    assert os.path.isfile(cache + labels.BLAME_STORE_SUFFIX)
+    calls = []
+    real = labels._szz_fix_bugs
+    monkeypatch.setattr(labels, "_szz_fix_bugs", lambda *a: calls.append(a) or real(*a))
+    os.remove(cache)                              # the index cache no longer fits
+    assert labels.build_szz_index(synth_repo, _settings(), cache) == ref
+    assert calls == []                            # every pair came from the store
 
 
 def test_line_ranges_merge():
