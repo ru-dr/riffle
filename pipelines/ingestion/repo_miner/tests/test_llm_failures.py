@@ -70,7 +70,7 @@ def _mine(repo, bindir, tmp, fail_n):
                         "--out", str(out), "--no-network", "--pr-discovery", "git",
                         "--min-age-days", "0", "--llm", "--llm-scope", "all",
                         "--workers", "1", "--llm-concurrency", "1", "--no-szz",
-                        "--snapshot-dir", str(tmp / "snapshots")],
+                        "--snapshot-dir", str(tmp / "snapshots"), "--health-dir", str(tmp / "health")],
                        cwd=MINER, env=env, capture_output=True, text=True, timeout=600)
     return p, out
 

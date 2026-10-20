@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://riffle.dev/contracts/mined_snapshot.schema.json",
   "title": "Riffle PR snapshot row",
-  "x-riffle-version": "1.0",
-  "x-riffle-miner-version": "3.1.0",
+  "x-riffle-version": "1.1",
+  "x-riffle-miner-version": "4.0.0",
   "description": "One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots.py), labelled with how the PR finally ended. Every column of mined_dataset.schema.json, with three groups taken as of snapshot_at instead of the PR's open: the code features of the head commit then (diff sizes, path flags, deterministic, scanner, dependency and API-contract columns), the merge signals (repo_outside_merge_rate and the rest), and the snapshot state columns. Git-history, blame, LLM and PR-metadata columns stay as at open. Labels are outcomes and never model inputs; so is near_decided. Bots count for nothing in the state.",
   "type": "object",
   "additionalProperties": false,
@@ -1786,6 +1786,35 @@
         "null"
       ],
       "description": "Snapshot state. Change in LA + LD since the previous kept snapshot; null on the first"
+    },
+    "miner_version": {
+      "type": "string",
+      "description": "Repo miner version that wrote the row (version.py). Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "miner_commit": {
+      "type": "string",
+      "description": "The miner's git commit (12 characters), with -dirty when its files had uncommitted changes, or unknown. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "llm_model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "llm_prompt_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Hash of the LLM prompts and schemas (flags and close-reason classifier); null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "domain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Dataset domain of the repository (ADR 0011), from its [domain: NAME] tag in the repos file; null when untagged. Computed in `pipelines/ingestion/repo_miner/build_dataset.py`."
     }
   }
 }

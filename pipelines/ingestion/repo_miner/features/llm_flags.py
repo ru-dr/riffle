@@ -415,6 +415,24 @@ def _redact_secrets(diff: str) -> str:
     )
 
 
+_PROMPT_VERSION: str | None = None
+
+
+def prompt_version() -> str:
+    """Short hash of everything the LLM is asked (the flags' and the close
+    classifier's prompts and schemas), written on every row as
+    llm_prompt_version so rows from different prompts can be told apart."""
+    global _PROMPT_VERSION
+    if _PROMPT_VERSION is None:
+        import hashlib
+        import merge_labels
+        text = "\n".join([_SYSTEM, _schema_prompt(), json.dumps(_json_schema(), sort_keys=True),
+                           merge_labels._CLASSIFIER_SYSTEM,
+                           json.dumps(merge_labels._CLASSIFIER_SCHEMA, sort_keys=True)])
+        _PROMPT_VERSION = hashlib.sha1(text.encode()).hexdigest()[:12]
+    return _PROMPT_VERSION
+
+
 def _validate(raw: dict, diff: str) -> dict:
     """Keep only schema-conformant values; coerce the rest to None."""
     out = dict(_NULL_RESULT)

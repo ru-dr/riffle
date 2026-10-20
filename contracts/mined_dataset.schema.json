@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://riffle.dev/contracts/mined_dataset.schema.json",
   "title": "Riffle repo miner training row",
-  "x-riffle-version": "1.0",
-  "x-riffle-miner-version": "2.2.0",
-  "description": "One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null.",
+  "x-riffle-version": "1.1",
+  "x-riffle-miner-version": "4.0.0",
+  "description": "One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null. Since 1.1 rows also carry provenance (miner_version, miner_commit, llm_model, llm_prompt_version) and domain; these are optional in the schema so rows mined before miner 4.0.0 still validate, and the miner writes them on every row.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -1588,6 +1588,35 @@
         "null"
       ],
       "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "miner_version": {
+      "type": "string",
+      "description": "Repo miner version that wrote the row (version.py). Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "miner_commit": {
+      "type": "string",
+      "description": "The miner's git commit (12 characters), with -dirty when its files had uncommitted changes, or unknown. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "llm_model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "llm_prompt_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Hash of the LLM prompts and schemas (flags and close-reason classifier); null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "domain": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Dataset domain of the repository (ADR 0011), from its [domain: NAME] tag in the repos file; null when untagged. Computed in `pipelines/ingestion/repo_miner/build_dataset.py`."
     }
   }
 }

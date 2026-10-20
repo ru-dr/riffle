@@ -110,6 +110,51 @@ Every stage is on by default; `--no-llm`, `--no-szz`, `--no-ci-history`,
 `--no-declared-labels` and `--no-merge-outcome` turn one off, and its columns
 then come back `null`.
 
+## Selecting PRs: date window (v4.0.0)
+
+For the dataset runs, select by date instead of "the newest N merged PRs":
+
+```bash
+python build_dataset.py --window-from 2023-07-01 --window-to 2026-07-31 \
+    --max-prs 8000 --only-domain web-ts
+```
+
+- Every closed PR **created** in the window, merged and unmerged together, so
+  every repo covers the same span and keeps its real merged / unmerged mix.
+  Drafts are left out, and so are PRs whose outcome is younger than
+  `--min-age-days`.
+- `--max-prs` then keeps the **newest contiguous block** of that many PRs (by
+  creation time).
+- **History lead-in:** PRs created in the `--lead-in-days` (default 180)
+  before the block are read as metadata only (the PR list plus one timeline
+  call each). They are never mined into rows; they give the block's first PRs
+  their merge-signal history (`repo_outside_merge_rate`, first-response
+  times, agent load, similar PRs). The breakage history (`similar_pr_*`,
+  `path_failure_mode_*`) needs mined outcomes, so it still starts empty.
+- Without `--window-from` the older selection applies.
+
+**Domains (ADR 0011):** tag a line in the repos file with `[domain: web-ts]`;
+`--only-domain web-ts` mines just those repos, and every row records its
+`domain`.
+
+**Provenance:** every row records `miner_version`, `miner_commit` (with
+`-dirty` when the miner had uncommitted changes), `llm_model` and
+`llm_prompt_version` (a hash of the prompts and schemas), so rows from
+different miner versions or LLM setups can be told apart.
+
+**Bots and agents:** `author_is_bot` is automation only (Dependabot,
+Renovate, github-actions, other `[bot]` accounts); `ai_agent_authored` is AI
+coding agents only, from the same signals as `agent_name` (account, branch
+prefix, commit trailer, body boilerplate). An agent PR is never a bot PR, so
+agent PRs stay in `--llm-scope training`.
+
+**Health check:** after each repo the miner prints a summary (rows, merged,
+outside and unmerged-outside shares, bots, agents) and flags repos that look
+wrong: under 50 rows, almost no unmerged outside PRs (PRs may land outside the
+merge button), over half bot PRs, LLM columns missing on in-scope rows, or CI
+unobserved on most merged rows. Saved as `health/<owner>_<name>.json`
+(`--health-dir`).
+
 ## Splitting, waiting, and resuming
 
 - `repos.txt` holds the full 100-repo corpus (v1 #1-50, v2 #51-100) from

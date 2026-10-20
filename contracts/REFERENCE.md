@@ -769,9 +769,9 @@ Code features of each head commit a PR had while open, captured during mining (s
 
 ## Riffle repo miner training row (`mined_dataset.schema.json`)
 
-**Version:** 1.0
+**Version:** 1.1
 
-One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null.
+One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null. Since 1.1 rows also carry provenance (miner_version, miner_commit, llm_model, llm_prompt_version) and domain; these are optional in the schema so rows mined before miner 4.0.0 still validate, and the miner writes them on every row.
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
@@ -974,6 +974,11 @@ One row of the training dataset written by the repo miner (pipelines/ingestion/r
 | `unrelated_change_share` | integer or null |  |  | Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
 | `unused_import_or_dead_code_added` | number or null |  |  | Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`. |
 | `vuln_has_fix_available` | boolean or null |  |  | Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. |
+| `miner_version` | string |  |  | Repo miner version that wrote the row (version.py). Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `miner_commit` | string |  |  | The miner's git commit (12 characters), with -dirty when its files had uncommitted changes, or unknown. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `llm_model` | string or null |  |  | LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `llm_prompt_version` | string or null |  |  | Hash of the LLM prompts and schemas (flags and close-reason classifier); null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `domain` | string or null |  |  | Dataset domain of the repository (ADR 0011), from its [domain: NAME] tag in the repos file; null when untagged. Computed in `pipelines/ingestion/repo_miner/build_dataset.py`. |
 
 ## Riffle mined history manifest (`mined_history.schema.json`)
 
@@ -1076,7 +1081,7 @@ Manifest written by the Go history miner (services/miner) for one repository and
 
 ## Riffle PR snapshot row (`mined_snapshot.schema.json`)
 
-**Version:** 1.0
+**Version:** 1.1
 
 One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots.py), labelled with how the PR finally ended. Every column of mined_dataset.schema.json, with three groups taken as of snapshot_at instead of the PR's open: the code features of the head commit then (diff sizes, path flags, deterministic, scanner, dependency and API-contract columns), the merge signals (repo_outside_merge_rate and the rest), and the snapshot state columns. Git-history, blame, LLM and PR-metadata columns stay as at open. Labels are outcomes and never model inputs; so is near_decided. Bots count for nothing in the state.
 
@@ -1310,3 +1315,8 @@ One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots
 | `new_commits_since_prev` | integer or null |  |  | Snapshot state. Commits since the previous kept snapshot; null on the first |
 | `new_comments_since_prev` | integer or null |  |  | Snapshot state. Human comments since the previous kept snapshot; null on the first |
 | `diff_size_change_since_prev` | number or null |  |  | Snapshot state. Change in LA + LD since the previous kept snapshot; null on the first |
+| `miner_version` | string |  |  | Repo miner version that wrote the row (version.py). Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `miner_commit` | string |  |  | The miner's git commit (12 characters), with -dirty when its files had uncommitted changes, or unknown. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `llm_model` | string or null |  |  | LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `llm_prompt_version` | string or null |  |  | Hash of the LLM prompts and schemas (flags and close-reason classifier); null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
+| `domain` | string or null |  |  | Dataset domain of the repository (ADR 0011), from its [domain: NAME] tag in the repos file; null when untagged. Computed in `pipelines/ingestion/repo_miner/build_dataset.py`. |

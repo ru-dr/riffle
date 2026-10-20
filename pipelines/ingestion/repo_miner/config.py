@@ -254,6 +254,17 @@ class Settings:
         os.getenv("RIFFLE_WORKERS") or default_workers()))
     request_timeout: float = 20.0
     max_prs: int | None = None             # cap PRs per repo (None = all)
+    # date-window selection (proposal 1.2): every closed PR created in
+    # [window_from, window_to] (YYYY-MM-DD), merged and unmerged together; with
+    # max_prs, the newest contiguous block of that many. None = the older
+    # "newest max_prs merged PRs" selection.
+    window_from: str | None = None
+    window_to: str | None = None
+    # history lead-in (proposal 1.4): PRs created this many days before the
+    # kept block, as metadata only, so its first PRs have a history
+    lead_in_days: int = 180
+    # dataset domain (ADR 0011), written on every row; from the repos file tag
+    domain: str | None = None
     # skip PRs merged in the last N days, so the cap picks PRs old enough for
     # their outcome labels to be mature (0 = off). 90 covers maturity_days (30)
     # and szz_maturity_days (90).

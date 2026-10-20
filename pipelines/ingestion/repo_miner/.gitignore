@@ -13,3 +13,4 @@ logs/
 snapshots_raw/
 snapshots*.parquet
 commit_features*.parquet
+health/

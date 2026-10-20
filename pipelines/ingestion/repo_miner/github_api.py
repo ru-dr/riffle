@@ -216,6 +216,115 @@ class GitHubAPI:
                 time.sleep(min(60, 2 ** net_fails))
 
     # -- merged PRs ---------------------------------------------------------
+    def window_prs(self, resolver=None) -> list[dict]:
+        """
+        Date-window selection (proposal 1.2): every closed PR CREATED inside
+        [st.window_from, st.window_to], merged and unmerged together, so every
+        repo covers the same span. With st.max_prs, the newest contiguous block
+        of that many PRs is kept (by creation time), not the newest merged ones.
+        Drafts and PRs merged or closed too recently for mature labels
+        (st.min_age_days) are left out and don't count toward the cap.
+
+        Also collects the lead-in (proposal 1.4): closed PRs created in the
+        st.lead_in_days before the kept block, as metadata only. They are not
+        mined; they give the first PRs in the block a history.
+
+        Returns the merged PRs (like merged_prs); the unmerged ones are left in
+        self.unmerged, the lead-in in self.lead_in, and the block's first
+        creation time in self.block_start.
+        """
+        st = self.st
+        w_from = st.window_from + ("T00:00:00Z" if len(st.window_from) == 10 else "")
+        w_to = st.window_to + ("T23:59:59Z" if len(st.window_to) == 10 else "")
+        cutoff = ((datetime.now(timezone.utc) - timedelta(days=st.min_age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                  if st.min_age_days else None)
+        mode = getattr(st, "merge_signal", "auto")
+        use_landed = resolver is not None and mode == "landed"
+        kept: list[dict] = []          # eligible PRs in the window, newest created first
+        lead: list[dict] = []
+        block_start = None
+        lead_days = timedelta(days=max(0, st.lead_in_days))
+        page = 1
+        while True:
+            status, data, _ = self._get(
+                f"/repos/{self.owner}/{self.repo}/pulls",
+                {"state": "closed", "per_page": 100, "page": page,
+                 "sort": "created", "direction": "desc"})
+            if status != 200:
+                self.incomplete = True
+                print(f"[api] PR list fetch failed on page {page} (status {status}); "
+                      f"PR list is TRUNCATED", file=sys.stderr)
+                break
+            if not data:
+                break
+            if page == 1 and mode == "auto" and resolver is not None:
+                share = sum(1 for p in data if p.get("merged_at")) / max(len(data), 1)
+                closed = [p for p in data if not p.get("merged_at")]
+                linked = sum(1 for p in closed if resolver(p)) if share < 0.5 else 0
+                use_landed = share < 0.5 and linked >= 0.5 * max(len(closed), 1)
+                if use_landed:
+                    print(f"[merge] only {share:.0%} of recent PRs merged via GitHub; linking "
+                          f"closed PRs to their landed commits", file=sys.stderr, flush=True)
+            done = False
+            for pr in data:
+                created = pr.get("created_at") or ""
+                if created > w_to:
+                    continue
+                start = block_start or w_from
+                lead_from = (datetime.fromisoformat(start.replace("Z", "+00:00")) - lead_days
+                             ).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if created < start:
+                    if created >= lead_from:
+                        if not pr.get("draft"):
+                            lead.append(pr)
+                        continue
+                    done = True
+                    break
+                if pr.get("draft"):
+                    continue
+                if pr.get("merged_at"):
+                    pr["merge_via"] = "github"
+                    cand = pr
+                elif use_landed:
+                    cand = resolver(pr)
+                elif st.enable_merge_outcome and not (resolver is not None and resolver(pr)):
+                    pr["merge_via"], pr["_unmerged"] = None, True
+                    cand = pr
+                else:
+                    cand = None
+                when = (cand or {}).get("merged_at") or (cand or {}).get("closed_at") or ""
+                if cand and cutoff and when > cutoff:
+                    cand = None              # outcome too recent to be mature
+                if cand:
+                    kept.append(cand)
+                    if st.max_prs and len(kept) >= st.max_prs and block_start is None:
+                        block_start = created    # cap reached: the block starts here
+            progress.emit("stage", repo=f"{self.owner}/{self.repo}", stage=f"fetching PRs p{page}")
+            if page % 10 == 0:
+                print(f"[fetch] page {page}: {len(kept)} PRs in the window, {len(lead)} lead-in",
+                      file=sys.stderr, flush=True)
+            if done or len(data) < 100:
+                break
+            page += 1
+        if block_start:
+            kept = [p for p in kept if (p.get("created_at") or "") >= block_start]
+        self.block_start = block_start or (min((p.get("created_at") or "" for p in kept), default=None))
+        if use_landed and st.enable_merge_outcome:
+            print("[merge-outcome] landed-commit repo: closed-unmerged PRs skipped "
+                  "(not-merged is ambiguous here)", file=sys.stderr)
+        self.unmerged = [p for p in kept if p.get("_unmerged")]
+        if st.max_unmerged is not None and len(self.unmerged) > st.max_unmerged:
+            self.unmerged = sorted(self.unmerged, key=lambda p: p.get("created_at") or "",
+                                   reverse=True)[:st.max_unmerged]
+        self.lead_in = lead
+        self.use_landed = use_landed
+        merged = [p for p in kept if not p.get("_unmerged")]
+        merged.sort(key=lambda p: p.get("merged_at") or "", reverse=True)
+        print(f"[window] {w_from[:10]}..{w_to[:10]}: {len(merged)} merged + {len(self.unmerged)} "
+              f"unmerged PRs (block from {(self.block_start or '-')[:10]}), {len(lead)} lead-in",
+              file=sys.stderr, flush=True)
+        return merged
+
     def merged_prs(self, resolver=None) -> list[dict]:
         """
         Return merged PRs, most-recently-MERGED first, honoring max_prs.

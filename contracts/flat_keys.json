@@ -1485,6 +1485,34 @@
         "boolean",
         "null"
       ]
+    },
+    "/miner_version": {
+      "type": [
+        "string"
+      ]
+    },
+    "/miner_commit": {
+      "type": [
+        "string"
+      ]
+    },
+    "/llm_model": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/llm_prompt_version": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/domain": {
+      "type": [
+        "null",
+        "string"
+      ]
     }
   },
   "mined_features.schema.json": {
@@ -3099,6 +3127,34 @@
       "type": [
         "null",
         "number"
+      ]
+    },
+    "/miner_version": {
+      "type": [
+        "string"
+      ]
+    },
+    "/miner_commit": {
+      "type": [
+        "string"
+      ]
+    },
+    "/llm_model": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/llm_prompt_version": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/domain": {
+      "type": [
+        "null",
+        "string"
       ]
     }
   },

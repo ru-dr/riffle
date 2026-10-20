@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from collections import defaultdict, deque, Counter
@@ -40,7 +41,9 @@ import config
 import gitio
 import aggregate
 import progress
+import health
 import snapshot_capture
+from version import __version__
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
 from labels import (POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
                     szz_window)
@@ -66,8 +69,8 @@ def _pr_author_identity(repo: str, sha: str) -> tuple[str, str]:
 _BOT_MARKERS = ("[bot]", "dependabot", "renovate", "github-actions", "greenkeeper")
 # specific bot identifiers (not bare first names) so a human named e.g. "Devin"
 # isn't flagged as an AI agent; matched against the author EMAIL
-_AGENT_MARKERS = ("copilot", "cursoragent", "devin-ai", "codex-bot", "sweep-ai",
-                  "[bot]")
+_AGENT_MARKERS = ("copilot", "cursoragent", "devin-ai", "codex-bot", "chatgpt-codex",
+                  "sweep-ai", "noreply@anthropic.com", "google-labs-jules")
 
 
 def _is_bot_identity(email: str, name: str) -> bool:
@@ -76,9 +79,10 @@ def _is_bot_identity(email: str, name: str) -> bool:
 
 
 def _is_agent_identity(email: str, name: str) -> bool:
+    # AI coding agents only (proposal 1.3): a plain "[bot]" account (Dependabot,
+    # Renovate, github-actions) is an automation bot, not an agent
     e = (email or "").lower()
-    n = (name or "").lower()
-    return any(a in e for a in _AGENT_MARKERS) or "[bot]" in n
+    return any(a in e for a in _AGENT_MARKERS)
 
 
 def _feat_head(repo: str, pr: dict) -> str | None:
@@ -444,6 +448,34 @@ def _retry_llm(repo: str, row: dict, num, st: config.Settings) -> dict:
     return fetched
 
 
+PROVENANCE_COLUMNS = ("miner_version", "miner_commit", "llm_model", "llm_prompt_version", "domain")
+_MINER_COMMIT: str | None = None
+
+
+def _miner_commit() -> str:
+    """The miner's own git commit (12 chars), "-dirty" when its files have
+    uncommitted changes, or "unknown" outside a git checkout."""
+    global _MINER_COMMIT
+    if _MINER_COMMIT is None:
+        here = os.path.dirname(os.path.abspath(__file__))
+        try:
+            sha = subprocess.run(["git", "-C", here, "rev-parse", "--short=12", "HEAD"],
+                                 capture_output=True, text=True, timeout=10).stdout.strip()
+            dirty = subprocess.run(["git", "-C", here, "status", "--porcelain", "--", here],
+                                   capture_output=True, text=True, timeout=10).stdout.strip()
+            _MINER_COMMIT = (sha + ("-dirty" if dirty else "")) if sha else "unknown"
+        except (OSError, subprocess.SubprocessError):
+            _MINER_COMMIT = "unknown"
+    return _MINER_COMMIT
+
+
+def _provenance(st: config.Settings) -> dict:
+    return {"miner_version": __version__, "miner_commit": _miner_commit(),
+            "llm_model": st.llm_model if st.enable_llm else None,
+            "llm_prompt_version": llm_flags.prompt_version() if st.enable_llm else None,
+            "domain": st.domain}
+
+
 CAPTURE = "__capture__"
 OUTSIDE_ASSOCIATIONS = {"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE"}
 
@@ -456,7 +488,9 @@ def _llm_in_scope(pr: dict, row: dict, st: config.Settings) -> bool:
     as outside, so git-only runs keep their LLM columns."""
     if st.llm_scope == "all":
         return True
-    is_bot = bool(row.get("author_is_bot")) or (pr.get("user") or {}).get("type") == "Bot"
+    # author_is_bot already excludes AI agents, which v0.4 is about
+    is_bot = bool(row.get("author_is_bot")) or (
+        (pr.get("user") or {}).get("type") == "Bot" and not row.get("ai_agent_authored"))
     assoc = pr.get("author_association")
     if not is_bot and (assoc is None or assoc in OUTSIDE_ASSOCIATIONS):
         return True
@@ -610,8 +644,15 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         head_email, pr.get("created_at") or pr.get("merged_at"), author_pr_times)
     # bot / agent flags from the git author of the code being merged (not the
     # maintainer who merged), so they agree with author_email / EXP
-    row["author_is_bot"] = _is_bot_identity(head_email, head_name)
-    row["ai_agent_authored"] = _is_agent_identity(head_email, head_name)
+    # Two independent flags (proposal 1.3). ai_agent_authored uses agent_name's
+    # signals too (account, head-branch prefix, body boilerplate);
+    # author_is_bot is automation only, so an agent PR is never a bot PR.
+    login = (pr.get("user") or {}).get("login")
+    agent = merge_signals.agent_name(login, (pr.get("head") or {}).get("ref"), head_email, pr.get("body"))
+    row["ai_agent_authored"] = _is_agent_identity(head_email, head_name) or agent is not None
+    row["author_is_bot"] = (not row["ai_agent_authored"]) and (
+        _is_bot_identity(head_email, head_name) or (pr.get("user") or {}).get("type") == "Bot"
+        or str(login or "").lower().endswith("[bot]"))
 
     # Kamei author experience (EXP/REXP/SEXP)
     row.update(history.experience_features(row["author_email"], changed, idx))
@@ -714,6 +755,9 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         row.update(build_merge_labels(pr, events, ci_head, st, llm_reason))
     else:
         row.update({c: None for c in MERGE_LABEL_COLUMNS})
+
+    # --- provenance (proposal 1.7, 1.8) and domain (ADR 0011), on every row
+    row.update(_provenance(st))
 
     # --- snapshot capture (snapshot_capture.py): raw timeline and the heads the
     # PR had while open, for the rows the model trains on
@@ -839,6 +883,24 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
           f"features use the final diff)", file=sys.stderr)
 
 
+def _lead_in_sidecars(api, st: config.Settings) -> list[dict]:
+    """Merge-signal inputs for the lead-in PRs (api.lead_in, before the mined
+    block): metadata and first response only, never mined into rows."""
+    lead = getattr(api, "lead_in", None) or []
+    if not lead or not st.lead_in_days:
+        return []
+    with ThreadPoolExecutor(max_workers=max(1, min(8, st.workers))) as pool:
+        timelines = list(pool.map(lambda p: api.pr_timeline(p["number"]), lead))
+    out = []
+    for pr, events in zip(lead, timelines):
+        login = (pr.get("user") or {}).get("login")
+        agent = merge_signals.agent_name(login, (pr.get("head") or {}).get("ref"), None, pr.get("body"))
+        out.append(merge_signals.sidecar(pr, {"agent_name": agent}, events, None))
+    print(f"[lead-in] {len(out)} PRs before the block give its first PRs a history "
+          f"({st.lead_in_days} days, metadata only)", file=sys.stderr)
+    return out
+
+
 def _stale_open_prs(api, merged: list[dict], st: config.Settings) -> list[dict]:
     """PRs still open after st.abandon_days with no human non-author comment
     or review: abandoned, so unmerged rows (ADR 0009). Only from the creation
@@ -846,9 +908,11 @@ def _stale_open_prs(api, merged: list[dict], st: config.Settings) -> list[dict]:
     outcome yet and are left out."""
     if not merged:
         return []
-    oldest = min(p.get("created_at") or "" for p in merged)
+    oldest = getattr(api, "block_start", None) or min(p.get("created_at") or "" for p in merged)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=st.abandon_days)
               ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if st.window_from and st.window_to:
+        cutoff = min(cutoff, st.window_to + ("T23:59:59Z" if len(st.window_to) == 10 else ""))
     if getattr(api, "use_landed", False):
         return []                     # closed PRs skipped there; open ones would skew the mix
     cands = api.open_prs(oldest, cutoff)
@@ -936,6 +1000,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     discovery = getattr(st, "pr_discovery", "api")
 
     progress.emit("stage", repo=f"{owner}/{name}", stage="fetching PRs")
+    lead_in: list[dict] = []          # lead-in merge-signal inputs (window mode)
     if discovery == "git":
         # git-primary: discover merged PRs from the commit log; the API only
         # enriches each one (no closed-PR list pagination, uniform across merge
@@ -954,8 +1019,10 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                   "no labels. Use --pr-discovery git to mine from the clone, or "
                   "provide a token.", file=sys.stderr)
             return rows
-        prs = list(api.merged_prs(
-            resolver=_landed_resolver(repo, owner, name, default_branch)))
+        resolver = _landed_resolver(repo, owner, name, default_branch)
+        prs = list(api.window_prs(resolver=resolver) if st.window_from
+                   else api.merged_prs(resolver=resolver))
+        lead_in = _lead_in_sidecars(api, st) if st.window_from else []
         print(f"[fetch] {len(prs)} merged PRs to process", file=sys.stderr)
         if st.enable_merge_outcome:
             stale = _stale_open_prs(api, prs, st)
@@ -1054,6 +1121,9 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     capture = (snapshot_capture.Writer(st.snapshot_dir or os.path.join("snapshots_raw", f"{owner}_{name}"),
                                        resume=bool(done))
                if st.enable_snapshots else None)
+    if capture and not done:
+        for sc in lead_in:                    # assembly recomputes history from these too
+            capture.write(None, sc)
 
     def _work(pr: dict):
         t0 = time.monotonic()
@@ -1159,7 +1229,8 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     # computed once all rows are in (strictly point-in-time per row)
     if not st.llm_breaker_tripped:
         repo_local.compute_repo(rows, repo_local.release_tags(repo, st), st)
-        merge_signals.compute_repo(rows, st, with_unmerged=st.enable_merge_outcome)
+        merge_signals.compute_repo(rows, st, with_unmerged=st.enable_merge_outcome,
+                                   lead_in=lead_in)
     for r in rows:
         r.pop(repo_local.SIDECAR, None)
         r.pop(merge_signals.SIDECAR, None)
@@ -1262,6 +1333,16 @@ def main():
                          "open and their code features) for rows in --llm-scope (default on)")
     ap.add_argument("--snapshot-dir", default=None,
                     help="where the capture files go (default snapshots_raw/<owner>_<name>)")
+    ap.add_argument("--window-from", default=None,
+                    help="date-window selection: every closed PR created on or after this "
+                         "date (YYYY-MM-DD), merged and unmerged; --max-prs then caps the "
+                         "newest contiguous block")
+    ap.add_argument("--window-to", default=None, help="end of the date window (YYYY-MM-DD)")
+    ap.add_argument("--lead-in-days", type=int, default=None,
+                    help="with a window: days before the block read as metadata only, so "
+                         "its first PRs have a history (default 180; 0 = off)")
+    ap.add_argument("--domain", default=None, help="dataset domain written on every row (ADR 0011)")
+    ap.add_argument("--health-dir", default="health", help="where per-repo health JSON goes")
     ap.add_argument("--snapshot-max-heads", type=int, default=None,
                     help="head commits per PR with code features (default 5)")
     ap.add_argument("--append", action="store_true",
@@ -1328,6 +1409,12 @@ def main():
     if args.llm_concurrency is not None:
         st.llm_concurrency = args.llm_concurrency
     st.enable_snapshots = args.snapshots
+    if bool(args.window_from) != bool(args.window_to):
+        sys.exit("--window-from and --window-to go together")
+    st.window_from, st.window_to = args.window_from, args.window_to
+    if args.lead_in_days is not None:
+        st.lead_in_days = args.lead_in_days
+    st.domain = args.domain
     if args.snapshot_dir:
         st.snapshot_dir = args.snapshot_dir
     for opt in ("llm_scope", "llm_sample_pct", "close_reason_llm", "llm_max_diff_chars",
@@ -1350,6 +1437,11 @@ def main():
         progress.emit("repo_done", repo=f"{owner}/{name}", rows=len(rows), status="breaker")
         sys.exit(3)
     total, ok = _write(rows, out, append=args.append)
+    # per-repo health check (proposal Part 3): summary + flags, saved as JSON
+    in_scope = (lambda r: st.enable_llm and _llm_skip_reason(
+        {"author_association": r.get("author_association"), "number": r.get("pr_number"), "user": {}},
+        r, [], st) is None)
+    health.report(rows, f"{owner}/{name}", args.health_dir, in_llm_scope=in_scope)
     reuse_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.llm_reuse.json")
     if ok and os.path.isfile(reuse_path):
         os.remove(reuse_path)                       # one-shot: the re-mine is done
