@@ -1,5 +1,7 @@
 # Riffle — repo data extractor
 
+> Full reference (architecture, how a run works, every column, every flag, why each choice): [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 Extracts the **v1** Riffle inference features from a **cloned GitHub repo**, one
 row per merged PR, computed **as of each PR's base commit** (point-in-time, no
 leakage). Excludes Source 1 (`riffle.yml`) by design — those are team-config

@@ -11,7 +11,10 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const root = join(import.meta.dirname, "..");
-const SOURCES = { "../contracts/REFERENCE.md": join(root, "..", "contracts", "REFERENCE.md") };
+const SOURCES = {
+  "../contracts/REFERENCE.md": join(root, "..", "contracts", "REFERENCE.md"),
+  "../pipelines/ingestion/repo_miner/ARCHITECTURE.md": join(root, "..", "pipelines", "ingestion", "repo_miner", "ARCHITECTURE.md"),
+};
 
 const out = {};
 for (const f of (await readdir(join(root, "content", "docs"))).filter((f) => f.endsWith(".md")).sort()) {
