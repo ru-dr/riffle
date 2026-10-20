@@ -318,6 +318,20 @@ def _skip_requested(repo: str) -> bool:
         return False
 
 
+def _stop_child(proc, signal) -> None:
+    """SIGINT the miner so it keeps its checkpoint; kill it after 30 s."""
+    if proc.poll() is not None:
+        return
+    try:
+        proc.send_signal(signal.SIGINT if os.name != "nt" else signal.SIGTERM)
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    except KeyboardInterrupt:          # a second Stop: don't wait
+        proc.kill()
+
+
 def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
     """Run cmd, stopping it if a skip is requested for repo meanwhile.
     Returns (exit code, skipped). The miner gets SIGINT first so it stops
@@ -329,14 +343,14 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
             return proc.wait(timeout=1), False
         except subprocess.TimeoutExpired:
             pass
+        except KeyboardInterrupt:
+            # Stop: make sure the miner stops too (it may not share our
+            # process group), then let main() end the batch quietly
+            _stop_child(proc, signal)
+            raise
         if _skip_requested(repo):
             print(f"[skip] {repo}: skip requested; stopping it", flush=True)
-            try:
-                proc.send_signal(signal.SIGINT if os.name != "nt" else signal.SIGTERM)
-                proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
+            _stop_child(proc, signal)
             return proc.returncode, True
 
 
@@ -371,6 +385,19 @@ def main():
                     help="PRs mined in parallel per repo (passed through)")
     ap.add_argument("--llm-concurrency", type=int, default=None,
                     help="max concurrent LLM calls (passed through)")
+    ap.add_argument("--llm-scope", choices=["training", "all"], default=None,
+                    help="rows that get LLM calls: training = outside contributors (not bots) "
+                         "plus a 5%% sample of the rest (default); all = every row (passed through)")
+    ap.add_argument("--llm-sample-pct", type=int, default=None,
+                    help="with --llm-scope training, %% of other rows still sent (default 5) (passed through)")
+    ap.add_argument("--close-reason-llm", choices=["other_only", "always"], default=None,
+                    help="other_only: ask the LLM only when the rules find no close reason "
+                         "(default); always: every unmerged PR with human activity (passed through)")
+    ap.add_argument("--llm-max-diff-chars", type=int, default=None,
+                    help="cap on the diff sent to the LLM after lockfiles and generated "
+                         "files are cut (default 25000) (passed through)")
+    ap.add_argument("--llm-quota-wait", action=argparse.BooleanOptionalAction, default=None,
+                    help="wait for the Claude plan to reset instead of failing calls (default on) (passed through)")
     ap.add_argument("--skip-existing", action="store_true",
                     help="reuse an existing clone instead of re-cloning")
     ap.add_argument("--keep-clones", action="store_true",
@@ -589,6 +616,11 @@ def main():
             cmd += ["--workers", str(args.workers)]
         if args.llm_concurrency is not None:
             cmd += ["--llm-concurrency", str(args.llm_concurrency)]
+        for opt in ("llm_scope", "llm_sample_pct", "close_reason_llm", "llm_max_diff_chars"):
+            if getattr(args, opt) is not None:
+                cmd += ["--" + opt.replace("_", "-"), str(getattr(args, opt))]
+        if args.llm_quota_wait is not None:
+            cmd.append("--llm-quota-wait" if args.llm_quota_wait else "--no-llm-quota-wait")
 
         mined = False
         progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="mine")
@@ -657,5 +689,17 @@ def main():
             print("  -", f)
 
 
+def run():
+    """Entry point: main(), with a Stop ending the batch quietly."""
+    try:
+        main()
+    except KeyboardInterrupt:
+        # Stop from the TUI or ctrl+c: finished repos are in --out and finished
+        # PRs in each repo's checkpoint, so this is not an error
+        print("[stop] batch interrupted; finished repos and PRs are kept, so a rerun "
+              "resumes", file=sys.stderr, flush=True)
+        sys.exit(130)
+
+
 if __name__ == "__main__":
-    main()
+    run()

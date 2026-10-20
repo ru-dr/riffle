@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import hashlib
 import json
 import os
 import re
@@ -42,7 +43,8 @@ import progress
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
 from labels import (POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
                     szz_window)
-from merge_labels import COLUMNS as MERGE_LABEL_COLUMNS, at_open, build_merge_labels, classify_close
+from merge_labels import (COLUMNS as MERGE_LABEL_COLUMNS, at_open, build_merge_labels,
+                          classify_close, close_transcript)
 from github_api import GitHubAPI
 
 
@@ -425,6 +427,77 @@ def _pr_metadata(pr: dict) -> dict:
     }
 
 
+def _retry_llm(repo: str, row: dict, num, st: config.Settings) -> dict:
+    """Ask the LLM again for a PR whose call failed, waiting longer each time
+    (plan limits are waited out inside fetch). Returns the last fetch result."""
+    fetched = {"status": "fail"}
+    for attempt in range(1, st.llm_row_retries + 1):
+        wait = st.llm_retry_backoff_s * attempt
+        print(f"[llm] PR #{num}: LLM call failed; retry {attempt}/{st.llm_row_retries} in "
+              f"{wait:.0f}s (the miner waits, nothing is written without it)",
+              file=sys.stderr, flush=True)
+        time.sleep(wait)
+        fetched = llm_flags.fetch(repo, row["base_sha"], row["head_sha"], st)
+        if fetched.get("status") != "fail":
+            return fetched
+    return fetched
+
+
+OUTSIDE_ASSOCIATIONS = {"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE"}
+
+
+def _llm_in_scope(pr: dict, row: dict, st: config.Settings) -> bool:
+    """Whether this row gets LLM calls under st.llm_scope. "training" keeps the
+    rows the merge model trains on: outside contributors who are not bots,
+    plus a fixed llm_sample_pct sample of the rest (the same PRs on every run,
+    from a hash of repo and PR number). An unknown association (no API) counts
+    as outside, so git-only runs keep their LLM columns."""
+    if st.llm_scope == "all":
+        return True
+    is_bot = bool(row.get("author_is_bot")) or (pr.get("user") or {}).get("type") == "Bot"
+    assoc = pr.get("author_association")
+    if not is_bot and (assoc is None or assoc in OUTSIDE_ASSOCIATIONS):
+        return True
+    key = f"{row.get('repo')}#{pr.get('number')}".encode()
+    return int(hashlib.sha1(key).hexdigest(), 16) % 100 < st.llm_sample_pct
+
+
+def _llm_skip_reason(pr: dict, row: dict, changed: list[str], st: config.Settings) -> str | None:
+    """Why this row's diff gets no LLM call, or None to call it."""
+    if not _llm_in_scope(pr, row, st):
+        return "scope"
+    if st.llm_skip_trivial:
+        if row.get("docs_only") or row.get("test_only"):
+            return "trivial"
+        if changed and all(config.path_flags(p)["touches_lockfile"] or config.path_flags(p)["is_generated"]
+                           for p in changed):
+            return "trivial"
+    return None
+
+
+def _close_reason_from_llm(pr: dict, row: dict, events: list[dict], ci_head: str | None,
+                           st: config.Settings) -> str | None:
+    """The classifier's close_reason for an unmerged PR, or None. Rules come
+    first: with close_reason_llm "other_only" the LLM is asked only when they
+    find no reason. Rows outside llm_scope never ask."""
+    if not st.enable_llm or st.close_reason_classifier != "llm" or not _llm_in_scope(pr, row, st):
+        return None
+    if st.close_reason_llm != "always":
+        if build_merge_labels(pr, events, ci_head, st, None).get("close_reason") != "other":
+            return None
+    if close_transcript(pr, events) is None:
+        return None                      # nothing human to read: the rules decide
+    for attempt in range(st.llm_row_retries + 1):
+        reason = classify_close(pr, events, st)
+        if reason is not None:
+            return reason
+        if attempt < st.llm_row_retries:
+            time.sleep(st.llm_retry_backoff_s * (attempt + 1))
+    # no answer: stop the repo rather than label this PR by the rules alone
+    raise llm_flags.LLMUnavailable(f"close-reason classifier gave no answer for PR "
+                                   f"#{pr.get('number')} after {st.llm_row_retries} retries")
+
+
 def mine_pr(repo: str, pr: dict, api, default_branch: str,
             snapshot: datetime, st: config.Settings,
             author_pr_times: dict | None = None,
@@ -579,7 +652,8 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     row[repo_local.SIDECAR] = repo_local.sidecar(pr, numstat, reviews, final_numstat)
 
     # fetched here (worker thread); resolved in PR order by mine_repo()
-    row["__llm__"] = llm_flags.fetch(repo, base_sha, head_sha, st)
+    llm_skip = _llm_skip_reason(pr, row, changed, st)
+    row["__llm__"] = llm_flags.fetch(repo, base_sha, head_sha, st, skip=llm_skip)
 
     # --- Source 4c: PR metadata (needs the API PR object)
     md = _pr_metadata(pr)
@@ -634,7 +708,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
             if pr.get("_unmerged") and not pr.get("_stale_open"):
                 ci_head = api.check_conclusion(final_head).get("required")
                 if events is not None:
-                    llm_reason = classify_close(pr, events, st)
+                    llm_reason = _close_reason_from_llm(pr, row, events, ci_head, st)
         row.update(build_merge_labels(pr, events, ci_head, st, llm_reason))
     else:
         row.update({c: None for c in MERGE_LABEL_COLUMNS})
@@ -969,7 +1043,6 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     skipped: Counter = Counter()
     ckpt_fh = open(ckpt, "a", encoding="utf-8") if ckpt else None
-    llm_pending: list[dict] = []
 
     def _work(pr: dict):
         t0 = time.monotonic()
@@ -1023,6 +1096,13 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                 progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="skip",
                               reason="git-error")
                 continue
+            if kind == "exc" and isinstance(err, llm_flags.LLMUnavailable):
+                print(f"[llm] PR #{num}: {err}. Stopping this repo so no row is written without "
+                      f"its LLM answer; {len(rows)} rows kept in the checkpoint, and a rerun "
+                      f"resumes from PR #{num}.", file=sys.stderr, flush=True)
+                progress.emit("breaker", repo=repo_key, num=num, msg=str(err), kept=len(rows), dropped=0)
+                st.llm_breaker_tripped = True
+                break
             if kind == "exc":
                 skipped[f"exc:{type(err).__name__}"] += 1
                 print(f"[skip] PR #{num}: {err}", file=sys.stderr)
@@ -1035,31 +1115,25 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                               reason="no-rows")
                 continue
             fetched = r.pop("__llm__", None) or {"status": "off"}
-            try:
-                r.update(llm_flags.resolve(fetched, st))
-            except llm_flags.LLMUnavailable as e:
-                print(f"[llm-breaker] TRIPPED at PR #{num}: {e}. Stopping this repo; "
-                      f"{len(llm_pending)} held rows dropped, {len(rows)} clean rows "
-                      f"kept in the checkpoint.", file=sys.stderr, flush=True)
-                progress.emit("breaker", repo=repo_key, num=num, msg=str(e),
-                              kept=len(rows), dropped=len(llm_pending))
+            if fetched.get("status") == "fail":
+                # the miner waits here (later PRs queue behind this one), so a
+                # row is never written with LLM columns left empty by a failure
+                fetched = _retry_llm(repo, r, num, st)
+            if fetched.get("status") == "fail":
+                print(f"[llm] PR #{num}: no LLM answer after {st.llm_row_retries} retries. "
+                      f"Stopping this repo so no row is written without it; {len(rows)} rows "
+                      f"kept in the checkpoint, and a rerun resumes from PR #{num}.",
+                      file=sys.stderr, flush=True)
+                progress.emit("breaker", repo=repo_key, num=num, msg="LLM retries exhausted",
+                              kept=len(rows), dropped=0)
                 st.llm_breaker_tripped = True
                 break
+            r.update(llm_flags.resolve(fetched, st))
             progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="ok",
                           llm="reused" if fetched.get("reused") else fetched.get("status"),
                           llm_secs=fetched.get("secs"),
                           llm_usage=llm_flags.usage_snapshot() if st.enable_llm else None)
-            if fetched.get("status") == "fail":
-                # LLM failed for this PR: hold the row until the next success
-                # proves the failure was transient (then keep it with null
-                # flags). If the breaker trips first, it's dropped.
-                llm_pending.append(r)
-            else:
-                _commit(llm_pending + [r])
-                llm_pending.clear()
-        if not st.llm_breaker_tripped:
-            # trailing LLM failures that never reached the breaker: keep them
-            _commit(llm_pending)
+            _commit([r])
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
         if ckpt_fh:
@@ -1154,6 +1228,19 @@ def main():
                     help="PRs mined in parallel (default: RIFFLE_WORKERS or min(6, CPUs))")
     ap.add_argument("--llm-concurrency", type=int, default=None,
                     help="max concurrent LLM calls (default: LLM_CONCURRENCY or 4)")
+    ap.add_argument("--llm-scope", choices=["training", "all"], default=None,
+                    help="rows that get LLM calls: training = outside contributors (not bots) "
+                         "plus a 5%% sample of the rest (default); all = every row")
+    ap.add_argument("--llm-sample-pct", type=int, default=None,
+                    help="with --llm-scope training, %% of other rows still sent (default 5)")
+    ap.add_argument("--close-reason-llm", choices=["other_only", "always"], default=None,
+                    help="other_only: ask the LLM only when the rules find no close reason "
+                         "(default); always: every unmerged PR with human activity")
+    ap.add_argument("--llm-max-diff-chars", type=int, default=None,
+                    help="cap on the diff sent to the LLM after lockfiles and generated "
+                         "files are cut (default 25000)")
+    ap.add_argument("--llm-quota-wait", action=argparse.BooleanOptionalAction, default=None,
+                    help="wait for the Claude plan to reset instead of failing calls (default on)")
     ap.add_argument("--append", action="store_true",
                     help="append rows to --out (one growing dataset); dedups by "
                          "(repo, pr_number), keeping the newest extraction")
@@ -1209,8 +1296,18 @@ def main():
         st.enable_review_history = False
     if args.workers is not None:
         st.workers = args.workers
+    elif not os.getenv("RIFFLE_WORKERS"):
+        full = min(6, os.cpu_count() or 2)
+        if st.workers < full:
+            print(f"[workers] {st.workers} instead of {full}: {config.available_ram_gb():.1f} GB "
+                  f"RAM free, ~{config.WORKER_RAM_GB} GB per worker (--workers overrides)",
+                  file=sys.stderr)
     if args.llm_concurrency is not None:
         st.llm_concurrency = args.llm_concurrency
+    for opt in ("llm_scope", "llm_sample_pct", "close_reason_llm", "llm_max_diff_chars",
+                "llm_quota_wait"):
+        if getattr(args, opt) is not None:
+            setattr(st, opt, getattr(args, opt))
     if args.no_network:
         st.enable_github_api = False
         st.enable_deps_cve = False
