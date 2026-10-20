@@ -125,3 +125,38 @@ def test_snapshot_roles_use_the_evidence():
     roles = [r for _w, _k, r, _e in snapshots.Timeline(record, ev).items]
     assert roles == ["other", "maintainer"]                 # only after he first merged
     assert [r for _w, _k, r, _e in snapshots.Timeline(record).items] == ["other", "other"]
+
+
+def test_get_retries_a_cut_off_response(monkeypatch):
+    import http.client
+    import io
+    import github_api
+
+    calls = []
+
+    class Resp:
+        status = 200
+        headers = {}
+
+        def __init__(self, cut):
+            self.cut = cut
+
+        def read(self):
+            if self.cut:
+                raise http.client.IncompleteRead(b"x", 5)
+            return b'{"ok": true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_open(req, timeout=None):
+        calls.append(1)
+        return Resp(cut=len(calls) == 1)
+
+    monkeypatch.setattr(github_api.urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(github_api.time, "sleep", lambda s: None)
+    status, data, _ = GitHubAPI("o", "r", config.Settings())._get("/x")
+    assert (status, data) == (200, {"ok": True}) and len(calls) == 2
