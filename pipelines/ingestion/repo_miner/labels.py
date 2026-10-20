@@ -181,7 +181,9 @@ def ci_fail_labels(api, pr: dict) -> tuple[str | None, str | None, list[dict]]:
     merge_sha = pr.get("merge_commit_sha")
     if not merge_sha:
         return (None, None, [])
-    c = api.check_conclusion(merge_sha)
+    # the merge commit's CI is its push-triggered workflows; issue/schedule/comment workflows
+    # that happened to run against it are not (see GitHubAPI.check_conclusion)
+    c = api.check_conclusion(merge_sha, events=("push",))
     return (c.get("required"), c.get("optional"), c.get("checks") or [])
 
 

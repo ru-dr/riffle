@@ -448,6 +448,11 @@ Six label columns, filled from outcomes after merge (not inference inputs):
   quick fix, or urgent / emergency / critical followed by fix, patch, bug, issue,
   regression or security (`config.py`). Cherry-picks and backports are not
   hotfixes. A repo that never words its fixes that way (vite) has no positives.
+  `label_ci_fail` counts only the merge commit's **push-triggered** workflow runs
+  (plus other CI apps' checks): issue, schedule and comment workflows leave check
+  runs on whatever commit was the default branch's head, and are not CI. A commit
+  left with no such run has no verdict (`ci_observed` false), not a pass. It costs
+  one extra API call per merged PR.
 - `label_bad` — the v1 training target: `revert OR ci_fail OR hotfix`. **SZZ is
   not included.**
 - `label_szz_bug` — SZZ fix-tracing (`--szz`): this PR introduced a line a later

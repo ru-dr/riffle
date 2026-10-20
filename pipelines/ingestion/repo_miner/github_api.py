@@ -57,6 +57,8 @@ _OPTIONAL_CHECK_MARKERS = (
     "dco", "commitlint", "semantic-pull-request", "semantic pull request",
     "semantic pr", "pr title", "pr-title", "conventional", "lint-pr", "pr-lint",
     "title-check",
+    # preview / pre-release publishing jobs (a failed preview publish is not a broken build)
+    "preview",
     # docs / changelog builders
     "readthedocs", "read the docs", "changelog", "docs preview", "netlify/docs",
 )
@@ -701,7 +703,26 @@ class GitHubAPI:
                               if e]
         return out
 
-    def check_conclusion(self, sha: str) -> dict:
+    def _suites_for_events(self, sha: str, events: tuple[str, ...]) -> set[int] | None:
+        """Check-suite ids of the GitHub Actions workflow runs on `sha` that were started
+        by one of `events`, or None when the runs can't be read (callers then filter nothing).
+        A check run lands on whichever commit was the default branch's head when an
+        unrelated event fired (an issue labelled, a schedule, a /command comment), so the
+        commit's check list mixes real CI with automation; the run's event tells them apart."""
+        suites: set[int] = set()
+        for page in range(1, 4):                              # up to 300 workflow runs on one commit
+            status, data, _ = self._get(f"/repos/{self.owner}/{self.repo}/actions/runs",
+                                        {"head_sha": sha, "per_page": 100, "page": page})
+            if status != 200 or not isinstance(data, dict):
+                return None
+            runs = data.get("workflow_runs") or []
+            suites.update(r["check_suite_id"] for r in runs
+                          if r.get("event") in events and r.get("check_suite_id") is not None)
+            if len(runs) < 100:
+                break
+        return suites
+
+    def check_conclusion(self, sha: str, events: tuple[str, ...] | None = None) -> dict:
         """
         CI conclusion on a commit, split into gating ('required') vs auxiliary
         ('optional') checks. Returns {"required": c, "optional": c} where each c
@@ -713,6 +734,11 @@ class GitHubAPI:
         Reads BOTH the Checks API (GitHub Actions etc., paginated) AND the legacy
         commit-status API (Jenkins/Buildkite/CircleCI/Travis), merging them — a
         repo can gate on either, and reading only one would miss failures.
+
+        events: count a GitHub Actions check run only when its workflow was started by
+        one of these events (the merge commit's real CI is its `push` runs; issue,
+        schedule and comment workflows are not). Check runs from other apps (CircleCI,
+        Buildkite) have no workflow event and are always counted. None counts everything.
         """
         req: list = []
         opt: list = []
@@ -724,6 +750,7 @@ class GitHubAPI:
         # a check whose earlier run failed but latest passed is a rerun-pass,
         # which flaky detection counts (flaky.py).
         by_name: dict[str, list] = {}
+        suites = self._suites_for_events(sha, events) if events else None
         page = 1
         while page <= 20:                       # up to 2000 check-runs
             status, data, _ = self._get(
@@ -734,10 +761,13 @@ class GitHubAPI:
             runs = data.get("check_runs", [])
             if not runs:
                 break
-            saw_any = True
             for r in runs:
                 if not r.get("conclusion"):
                     continue
+                if (suites is not None and (r.get("app") or {}).get("slug") == "github-actions"
+                        and (r.get("check_suite") or {}).get("id") not in suites):
+                    continue                    # automation on this commit, not its CI
+                saw_any = True
                 name = (r.get("name") or "").lower()
                 by_name.setdefault(name, []).append(
                     (r.get("completed_at") or r.get("started_at") or "", r.get("id") or 0,
