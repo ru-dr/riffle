@@ -441,6 +441,31 @@ before v2.0.0 need a re-mine to get merge labels.
   `label_merged` away). LLM spend grows with the row count.
 
 
+## Training targets, flaky checks, maintainers (v5.0.0)
+
+- **Targets (proposal Part 4)**, on every row so everyone trains on the same
+  definitions: `outcome_3class` is `lands_clean` (merged, no rework),
+  `lands_after_rework` or `goes_nowhere` (closed unmerged or abandoned);
+  `nowhere_reason` is `abandoned`, `duplicate`, `unwanted`, `ci_technical` or
+  `unknown` (read, no reason found), null when the timeline was unreadable.
+- **Flaky checks** (`flaky.py`, `rules.mining.flaky_detection`): check runs
+  are read with reruns (`filter=all`); each check's verdict is its latest
+  run, and a check that failed then passed on rerun is a rerun-pass. After the
+  repo is mined, a check with 3+ rerun-passes in the 90 days before a merge is
+  flaky at that merge; a CI failure only from flaky checks is not counted in
+  `label_ci_fail` / `label_bad`, and `ci_fail_flaky_only` says so.
+  Point-in-time: only rerun-passes before the merge count.
+- **Maintainers from history** (`maintainers.py`, proposal 2.2): every PR's
+  timeline is read up front, and anyone who merged or closed someone else's
+  PR is a maintainer from that moment. `author_confirmed_maintainer` records it
+  for the PR author (point-in-time), and it decides "outside contributor" for
+  `--llm-scope`, snapshot capture, the merge-signal outsider rates and the
+  health check, because `author_association` shows today's status and reports
+  private org members as `CONTRIBUTOR`. Snapshot actor roles use it too
+  (saved as `snapshots_raw/<repo>/maintainers.json`). It catches people who
+  triage; an employee who never merges or closes others' PRs still counts as
+  outside.
+
 ## Merge-model signals (`features/merge_signals.py`)
 
 The AIDev catalog's merge-model features the miner's own data can supply:

@@ -38,6 +38,7 @@ def sample(rows: list[dict], clone_dir: str, n: int, seed: int) -> list[dict]:
     for r in rows:
         clone = os.path.join(clone_dir, str(r.get("repo", "")).replace("/", "_"))
         if (r.get("author_association") in OUTSIDE and not r.get("author_is_bot")
+                and not r.get("author_confirmed_maintainer")
                 and not r.get("docs_only") and not r.get("test_only")
                 and r.get("base_sha") and r.get("head_sha") and os.path.isdir(clone)):
             ok.append(dict(r, _clone=clone))

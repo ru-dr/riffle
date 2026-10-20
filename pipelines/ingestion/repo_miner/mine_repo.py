@@ -45,7 +45,9 @@ import health
 import snapshot_capture
 from version import __version__
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
-from labels import (POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
+import flaky
+import maintainers
+from labels import (CI_SIDECAR, POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
                     szz_window)
 from merge_labels import (COLUMNS as MERGE_LABEL_COLUMNS, at_open, build_merge_labels,
                           classify_close, close_transcript)
@@ -492,7 +494,8 @@ def _llm_in_scope(pr: dict, row: dict, st: config.Settings) -> bool:
     is_bot = bool(row.get("author_is_bot")) or (
         (pr.get("user") or {}).get("type") == "Bot" and not row.get("ai_agent_authored"))
     assoc = pr.get("author_association")
-    if not is_bot and (assoc is None or assoc in OUTSIDE_ASSOCIATIONS):
+    outside = (assoc is None or assoc in OUTSIDE_ASSOCIATIONS) and not row.get("author_confirmed_maintainer")
+    if not is_bot and outside:
         return True
     key = f"{row.get('repo')}#{pr.get('number')}".encode()
     return int(hashlib.sha1(key).hexdigest(), 16) % 100 < st.llm_sample_pct
@@ -599,6 +602,9 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         "author_email": head_email,
         # exact | recovered | approx | final: how the at-open diff was found
         "open_snapshot": snapshot_kind,
+        # the author had merged or closed someone else's PR before this one
+        # opened (maintainers.py); null when no timelines were read
+        "author_confirmed_maintainer": pr.get("_author_maintainer"),
     }
     # with merge-outcome mining off these stay null, like every other stage's
     # columns, so each row keeps contracts/mined_dataset.schema.json's columns
@@ -883,6 +889,18 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
           f"features use the final diff)", file=sys.stderr)
 
 
+def _prefetch_timelines(api, prs: list[dict], st: config.Settings) -> None:
+    """pr["_events"] for every PR that doesn't have it yet, in parallel."""
+    need = [p for p in prs if p.get("_events") is None and p.get("number") is not None]
+    if not need:
+        return
+    progress.emit("stage", repo=f"{api.owner}/{api.repo}", stage="timelines")
+    with ThreadPoolExecutor(max_workers=max(1, min(8, st.workers))) as pool:
+        for pr, events in zip(need, pool.map(lambda p: api.pr_timeline(p["number"]), need)):
+            pr["_events"] = events
+    print(f"[timeline] read {len(need)} PR timelines", file=sys.stderr)
+
+
 def _lead_in_sidecars(api, st: config.Settings) -> list[dict]:
     """Merge-signal inputs for the lead-in PRs (api.lead_in, before the mined
     block): metadata and first response only, never mined into rows."""
@@ -893,6 +911,7 @@ def _lead_in_sidecars(api, st: config.Settings) -> list[dict]:
         timelines = list(pool.map(lambda p: api.pr_timeline(p["number"]), lead))
     out = []
     for pr, events in zip(lead, timelines):
+        pr["_events"] = events                # also maintainer evidence
         login = (pr.get("user") or {}).get("login")
         agent = merge_signals.agent_name(login, (pr.get("head") or {}).get("ref"), None, pr.get("body"))
         out.append(merge_signals.sidecar(pr, {"agent_name": agent}, events, None))
@@ -1051,6 +1070,20 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     base_resolver = _make_base_resolver(repo, api, prs, st)
     if unmerged:
         prs = prs + unmerged
+    # every PR's timeline, read once up front (mine_pr reuses pr["_events"]):
+    # maintainers are confirmed from all of them, point-in-time (maintainers.py)
+    evidence = maintainers.Evidence()
+    if api is not None and (st.enable_merge_outcome or st.enable_declared_labels):
+        _prefetch_timelines(api, prs, st)
+        evidence = maintainers.Evidence.from_prs(prs + (getattr(api, "lead_in", None) or []))
+    for pr in prs:
+        pr["_author_maintainer"] = (evidence.confirmed((pr.get("user") or {}).get("login"),
+                                                       _parse_ts(pr["created_at"]) if pr.get("created_at") else None)
+                                    if evidence.first or api is not None else None)
+    for pr, sc in zip(getattr(api, "lead_in", None) or [], lead_in):
+        if evidence.confirmed((pr.get("user") or {}).get("login"),
+                              _parse_ts(pr["created_at"]) if pr.get("created_at") else None):
+            sc["outsider"] = False
     author_pr_times = _build_author_pr_times(repo, prs)
     if api is not None:
         progress.emit("stage", repo=f"{owner}/{name}", stage="open snapshots")
@@ -1224,16 +1257,22 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
             ckpt_fh.close()
         if capture:
             capture.close()
+            evidence.save(capture.dir)        # snapshot roles use it too
 
     # repo-local PR-history features need every PR's outcome, so they're
     # computed once all rows are in (strictly point-in-time per row)
     if not st.llm_breaker_tripped:
+        n_flaky = flaky.apply(rows, st)
+        if n_flaky:
+            print(f"[ci] {n_flaky} CI failures came only from flaky checks; not counted "
+                  f"as label_ci_fail", file=sys.stderr)
         repo_local.compute_repo(rows, repo_local.release_tags(repo, st), st)
         merge_signals.compute_repo(rows, st, with_unmerged=st.enable_merge_outcome,
                                    lead_in=lead_in)
     for r in rows:
         r.pop(repo_local.SIDECAR, None)
         r.pop(merge_signals.SIDECAR, None)
+        r.pop(CI_SIDECAR, None)
         for col in merge_signals.COLUMNS:
             r.setdefault(col, None)
         for col in repo_local.COLUMNS:

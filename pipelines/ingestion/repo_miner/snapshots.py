@@ -51,6 +51,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 import config
+import maintainers
 import snapshot_capture as cap
 from features import merge_signals
 from merge_labels import MAINTAINER_ASSOCIATIONS, _event_time, _event_user, _is_bot, _login
@@ -100,19 +101,20 @@ def _iso(t: datetime) -> str:
 class Timeline:
     """A PR's events with roles (author / maintainer / other / bot)."""
 
-    def __init__(self, record: dict):
+    def __init__(self, record: dict, evidence: maintainers.Evidence | None = None):
         pr = record["pr"]
         self.pr = pr
+        self.evidence = evidence or maintainers.Evidence()
         self.author = _login(pr.get("user"))
         self.items = []
         for ev in record.get("events") or []:
             when = _event_time(ev)
             if when is None:
                 continue
-            self.items.append((when, ev.get("event"), self._role(ev), ev))
+            self.items.append((when, ev.get("event"), self._role(ev, when), ev))
         self.items.sort(key=lambda x: x[0])
 
-    def _role(self, ev: dict) -> str:
+    def _role(self, ev: dict, when: datetime) -> str:
         if ev.get("event") == "committed":
             return "author"                   # commits on the PR branch
         user = _event_user(ev)
@@ -122,6 +124,8 @@ class Timeline:
             return "author"
         if str(ev.get("author_association", "")).upper() in MAINTAINER_ASSOCIATIONS:
             return "maintainer"
+        if self.evidence.confirmed(_login(user), when):
+            return "maintainer"               # had merged or closed others' PRs before
         return "other"
 
     def until(self, t: datetime):
@@ -246,9 +250,9 @@ class Context:
     test does exactly that)."""
 
     def __init__(self, record: dict, at_open: dict, history: merge_signals.History,
-                 st: config.Settings):
+                 st: config.Settings, evidence: maintainers.Evidence | None = None):
         self.record, self.at_open, self.history, self.st = record, at_open, history, st
-        self.tl = Timeline(record)
+        self.tl = Timeline(record, evidence)
         self.grace = timedelta(seconds=max(0, st.rework_grace_s))
         self.segs = open_segments(record, self.tl, self.grace)
         self.head_line = [(_ts(w), s) for w, s in record.get("head_line") or []]
@@ -352,9 +356,9 @@ _KEY_STATE = ("snapshot_head_sha", "review_rounds", "changes_requested_count", "
 
 
 def build(record: dict, at_open: dict, history: merge_signals.History,
-          st: config.Settings) -> list[dict]:
+          st: config.Settings, evidence: maintainers.Evidence | None = None) -> list[dict]:
     """The kept snapshots of one PR, in time order."""
-    ctx = Context(record, at_open, history, st)
+    ctx = Context(record, at_open, history, st, evidence)
     if not ctx.segs:
         return []
     cands = [c for c in debounce(candidates(record, ctx.tl, ctx.segs, st))
@@ -432,11 +436,12 @@ def assemble(dataset_rows: list[dict], raw_root: str, st: config.Settings) -> tu
         if not records:
             continue
         history = merge_signals.History(cap.read_jsonl(os.path.join(d, cap.INDEX_FILE)))
+        evidence = maintainers.Evidence.load(d)
         for rec in records:
             row = at_open.get((rec.get("repo"), rec.get("pr_number")))
             commits.extend(commit_feature_rows(rec))
             if row is not None:
-                snaps.extend(build(rec, row, history, st))
+                snaps.extend(build(rec, row, history, st, evidence))
     # every commit row carries every feature column (null where not computed)
     cols = sorted({k for r in commits for k in r} - set(_COMMIT_BASE))
     commits = [{**{c: None for c in cols}, **r} for r in commits]

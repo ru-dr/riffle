@@ -129,7 +129,20 @@ def test_events_after_close_are_ignored():
 def test_unreadable_timeline_keeps_only_merged():
     out = build_merge_labels(_pr(False), None, "failure", ST)
     assert out["label_merged"] is False
-    assert all(out[k] is None for k in out if k != "label_merged")
+    # it went nowhere, which is known; why is not
+    assert out["outcome_3class"] == "goes_nowhere" and out["nowhere_reason"] is None
+    assert all(out[k] is None for k in out if k not in ("label_merged", "outcome_3class"))
+
+
+def test_targets():
+    from merge_labels import targets
+    assert targets({"label_merged": True, "label_rework": False})["outcome_3class"] == "lands_clean"
+    assert targets({"label_merged": True, "label_rework": True})["outcome_3class"] == "lands_after_rework"
+    assert targets({"label_merged": True, "label_rework": None})["outcome_3class"] is None
+    t = targets({"label_merged": False, "close_reason": "duplicate"})
+    assert t == {"outcome_3class": "goes_nowhere", "nowhere_reason": "duplicate"}
+    assert targets({"label_merged": False, "close_reason": "other"})["nowhere_reason"] == "unknown"
+    assert targets({})["outcome_3class"] is None
 
 
 def test_repo_local_fills_unmerged_rows_without_using_them_as_history():
