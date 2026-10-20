@@ -10,15 +10,25 @@
 
 name: riffle-airflow
 
+# The image is built here and never pulled: the name is local-only and
+# pull_policy stops Compose from looking for it on Docker Hub. The Airflow
+# version lives in one place, AIRFLOW_VERSION (default below), and feeds both the
+# build and the tag.
 x-airflow-common: &airflow-common
-  image: riffle/airflow:3.3.2
+  image: riffle-airflow:${AIRFLOW_VERSION:-3.3.2}-local
+  pull_policy: never
   restart: unless-stopped
   user: "${AIRFLOW_UID:-50000}:0"
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW_LOAD_EXAMPLES:-false}
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env}
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres/airflow
+    # The URL is built by a script that percent-encodes the password, so any
+    # POSTGRES_PASSWORD works and no user:password@host string sits in this file.
+    # A key with no value passes the variable through from .env. It is written this
+    # way, not as ${VAR:?message}, so secret scanners do not read the message as a password.
+    POSTGRES_PASSWORD:
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: python /opt/airflow/scripts/db_url.py
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:?set AIRFLOW_API_SECRET_KEY in .env}
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
     # Tasks reach the API server over the Compose network.
@@ -46,7 +56,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD:       # from .env; the container refuses to start without it
       POSTGRES_DB: airflow
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -63,13 +73,16 @@ services:
     <<: *airflow-common
     build:
       context: .
+      args:
+        AIRFLOW_VERSION: ${AIRFLOW_VERSION:-3.3.2}
+    pull_policy: build
     restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       <<: *airflow-env
-      AIRFLOW_PASSWORDS: ${AIRFLOW_PASSWORDS:?set AIRFLOW_PASSWORDS in .env}
+      AIRFLOW_PASSWORDS:       # from .env; scripts/init_auth.py stops with a message if it is wrong
     # Runs as root so it can chown the named volumes to AIRFLOW_UID.
     user: "0:0"
     entrypoint: ["/bin/bash", "-c"]
@@ -77,20 +90,7 @@ services:
       - |
         set -euo pipefail
         mkdir -p /opt/airflow/logs /opt/airflow/auth
-        python - <<'PY'
-        import json, os, sys
-        ROLES = {"admin", "op", "user", "viewer"}
-        users = dict(p.split(":", 1) for p in os.environ["AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS"].split(","))
-        passwords = dict(p.split(":", 1) for p in os.environ["AIRFLOW_PASSWORDS"].split(","))
-        if set(users) != set(passwords):
-            sys.exit("AIRFLOW_USERS and AIRFLOW_PASSWORDS must list the same users")
-        if not set(users.values()) <= ROLES:
-            sys.exit("roles must be one of " + ", ".join(sorted(ROLES)))
-        if any(len(p) < 12 for p in passwords.values()):
-            sys.exit("every password needs at least 12 characters")
-        with open("/opt/airflow/auth/passwords.json", "w") as f:
-            json.dump(passwords, f)
-        PY
+        python /opt/airflow/scripts/init_auth.py
         chmod 600 /opt/airflow/auth/passwords.json
         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/auth
         exec env HOME=/home/airflow setpriv --reuid="${AIRFLOW_UID:-50000}" --regid=0 --clear-groups airflow db migrate

@@ -1,6 +1,11 @@
 # Airflow with the extra Python packages Riffle's DAGs need. The base image is
 # pinned so local and the GCP VM run the same Airflow; bump it deliberately.
-FROM apache/airflow:3.3.2-python3.12
+ARG AIRFLOW_VERSION=3.3.2
+FROM apache/airflow:${AIRFLOW_VERSION}-python3.12
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Start-up helpers the Compose file calls: login-file validation and the
+# database URL. They are files, not inline YAML, so they can be linted and tested.
+COPY scripts/ /opt/airflow/scripts/

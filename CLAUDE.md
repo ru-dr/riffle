@@ -14,7 +14,9 @@ Riffle is a self-hosted GitHub App that ranks pull requests by learned risk. The
 - `docs/adr/`: numbered decision records. `docs/contracts.md` holds the schema version history.
 - `fixtures/config/`: example `riffle.yml` files that must validate against the schemas.
 - `site/`: the marketing page and `/docs` (Next.js 16, React 19, Tailwind 4, Bun). This is the only part that builds, and the only part CI checks.
-- `services/*`, `pipelines/*`, `infra/*`: these contain only a `README.md` each. Each one says what belongs in the directory and which invariants it owns, so read it before adding code there.
+- `pipelines/ingestion/repo_miner/`: the repo miner, the primary source of training data (one dataset row per closed PR, plus the snapshot tables). Its `README.md` is the reference. `pipelines/ingestion/README.md` holds the directory's rule that normalisation lives there.
+- `pipelines/dags/`: Airflow DAGs (scheduling only; today a smoke DAG). `infra/docker/airflow/`: the Docker Compose stack that runs Airflow locally and on one VM, with its own README (ADR 0013).
+- `pipelines/training/`, `services/*`, `infra/k8s`, `infra/terraform`: not built yet. Each directory has a `README.md` that says what belongs there and which invariants it owns, so read it before adding code there.
 
 `make bootstrap/up/seed/test/lint` and `make replay`/`make train` are documented but not implemented. Don't assume they work.
 
@@ -30,13 +32,20 @@ bun run docs                    # regenerate components/docs/content.generated.t
 bun run brand                   # regenerate brand icons from source SVGs
 ```
 
-There are no tests or linter yet. `bun run build` is the verification step.
+The site has no tests or linter. `bun run build` is its verification step.
 
 Contracts (run from the repo root):
 
 ```bash
 python contracts/gen_reference.py           # regenerate contracts/REFERENCE.md after any schema change
 python contracts/gen_reference.py --check   # fails if REFERENCE.md is stale
+```
+
+Python tests (repo root; what CI runs, so keep it passing):
+
+```bash
+python -m pytest contracts/tests pipelines/ingestion/repo_miner/tests -q
+python -m pytest infra/docker/airflow/tests -q   # the Airflow start-up scripts; not in CI yet
 ```
 
 ## Site architecture

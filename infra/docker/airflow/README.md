@@ -32,6 +32,9 @@ python -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decod
 python -c "import secrets;print(secrets.token_urlsafe(32))"
 ```
 
+`POSTGRES_PASSWORD` may contain any character: the database URL is built by
+`scripts/db_url.py`, which percent-encodes it.
+
 ```bash
 docker compose up -d --build
 docker compose ps          # wait for the apiserver and scheduler to be healthy (~1 min)
@@ -56,9 +59,16 @@ only). Give most teammates `op` or `viewer`. Every name needs a password, each a
 least 12 characters and without `,` or `:`; the init step refuses to start
 otherwise.
 
-To add or remove someone, edit both lines in `.env` and run
-`docker compose up -d`. The init step rewrites the password file and the
-services pick up the change. Existing sessions end when the API secret changes.
+Entries are `name:value`, separated by commas; spaces around commas are
+ignored and a trailing comma is fine. The init step checks every rule above and
+stops with a message that names the entry (never the password).
+
+To **add** someone, edit both lines in `.env` and run
+`docker compose up -d --force-recreate`. To **remove** someone, also replace
+`AIRFLOW_API_SECRET_KEY` and `AIRFLOW_JWT_SECRET` with new values first. Changing
+only `AIRFLOW_PASSWORDS` recreates just the init service; the API server keeps
+running with its old login file, and existing sessions stay valid until the API
+secret changes, so without both steps a removed person may still be signed in.
 
 Keep `AIRFLOW_FERNET_KEY` safe: it encrypts connections and variables in the
 database, and losing it makes them unreadable.
@@ -72,7 +82,7 @@ plugin, then:
 ```bash
 git clone git@github.com:ru-dr/riffle.git && cd riffle/infra/docker/airflow
 cp .env.example .env     # same steps as above
-echo "AIRFLOW_UID=$(id -u)" >> .env   # edit the existing line instead if it is already there
+sed -i "s/^AIRFLOW_UID=.*/AIRFLOW_UID=$(id -u)/" .env   # .env.example already has this line
 docker compose up -d --build
 ```
 
@@ -87,7 +97,9 @@ docker compose up -d --build
   Default Credentials. Do not put key files in `.env` or the repo.
 - **State.** The metadata database is the `postgres-data` Docker volume; logs
   are `airflow-logs`. Back up the volume, or move to Cloud SQL later by changing
-  `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN`.
+  the URL that `scripts/db_url.py` prints.
+- **Why a VM.** See [ADR 0013](../../../docs/adr/0013-airflow-on-a-compose-vm.md):
+  what this is for, what moves to GKE later, and how secrets and backups work.
 
 ## Operate
 
@@ -101,8 +113,14 @@ docker compose down -v         # stop and delete the database and logs
 After changing `requirements.txt` or the `Dockerfile`, run
 `docker compose up -d --build`. DAG file changes need no restart.
 
-To upgrade Airflow, change the tag in `Dockerfile` and `image:` in
-`compose.yaml` together, read the release notes, and back up the database first.
+To upgrade Airflow, set `AIRFLOW_VERSION` in `.env` (it feeds the image build and
+its tag; the default is in `compose.yaml` and `Dockerfile`), read the release
+notes, back up the database, then run `docker compose up -d --build`. The image
+is built locally and never pulled; its name, `riffle-airflow:<version>-local`,
+exists on no registry.
+
+The helper scripts in `scripts/` have tests:
+`python -m pytest infra/docker/airflow/tests`.
 
 ## Not done yet
 
