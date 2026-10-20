@@ -4,7 +4,7 @@ How Riffle runs, per environment.
 
 | Directory | Responsibility |
 | --- | --- |
-| [`docker`](docker) | Service images and the local Compose stack |
+| [`docker`](docker) | Service images and the local Compose stacks (today: Airflow) |
 | [`k8s`](k8s) | Manifests for staging and prod |
 | [`terraform`](terraform) | Postgres, Redis, Pub/Sub, buckets, GKE, IAM |
 
