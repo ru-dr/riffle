@@ -8,6 +8,8 @@ Suggested shape:
 | --- | --- |
 | `adr/` | One file per architectural decision, dated, with the option not taken |
 | `contracts.md` | Schema version history and migration notes |
+| `project-proposal-v0.4.md` | The project proposal |
+| `data-management-plan.md` | The data management plan |
 | `runbooks/` | On-call: queue backing up, explainer down, training stuck |
 | `observability.md` | What each `riffle_` metric means and when to page |
 | `onboarding.md` | Getting a local stack scoring a fixture PR |
