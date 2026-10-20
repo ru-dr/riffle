@@ -5,8 +5,9 @@ import json
 import os
 import sys
 
-import pandas as pd
 import pytest
+
+pd = pytest.importorskip("pandas")          # optional dependency; CI installs only the core test set
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
