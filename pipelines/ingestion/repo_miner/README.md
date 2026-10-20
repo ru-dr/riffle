@@ -396,6 +396,59 @@ call per 25 PRs) and a fetch of that commit. Labels still use what landed.
 (force-push history unreadable) or `final` (not recoverable: diff features
 use the final diff; drop or mask them when training).
 
+## PR snapshots
+
+A snapshot is a training row describing a PR at a later moment while it was
+open, labelled with how the PR finally ended. The at-open row only shows PRs
+as they opened; snapshots teach the model what "changes requested, author
+pushed a fix" or "7 days without a maintainer reply" mean, so re-scoring a
+live PR as events arrive gives a better answer. Two steps:
+
+1. **Capture, while mining** (`snapshot_capture.py`, on by default,
+   `--no-snapshots` turns it off). For rows in `--llm-scope` (outside
+   contributors plus the 5% sample) the miner stores, under
+   `snapshots_raw/<owner>_<name>/` (`--snapshot-dir`; `build_dataset.py
+   --snapshot-root`): the PR object and timeline (trimmed), the force-pushes,
+   every moment the PR's head changed while open, and for up to 5 of those
+   heads (`--snapshot-max-heads`) the code features of fork point...head:
+   diff sizes, path flags, deterministic, scanner, dependency and API-contract
+   columns. Also each mined PR's merge-signal inputs (`pr_index.jsonl`). This
+   is the part that can't wait: clones are deleted and force-pushed commits
+   expire. The head at a moment uses ADR 0010's rule for the head at open.
+   Git-history and blame features are not recomputed per head, and the LLM
+   flags are the at-open ones, so snapshots add no LLM calls.
+2. **Assembly, any time later** (`snapshots.py`), from the stored files and
+   the mined rows, with no GitHub calls or clones:
+
+   ```bash
+   python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw \
+       --out snapshots.parquet --commit-features-out commit_features.parquet
+   ```
+
+   - Moments: open (or ready-for-review for a draft, restarted at a reopen);
+     first maintainer reply; each changes request (up to 3); first approval;
+     the author's first push after a changes request; an outcome label or
+     "marked as duplicate"; back to draft; 1, 3, 7, 14, 30 days in; 7 and 14
+     days without human activity; 7 days without a maintainer reply after
+     the author's last push or comment.
+   - Clean-up: events within 30 min make one snapshot; unchanged states are
+     dropped unless a clock; snapshots within 6 h with the same state keep
+     the higher-priority one; nothing at or after close; at most 6 per PR.
+     Bots count for nothing. `near_decided` marks the last hour before close
+     and anything after a merge queue or auto-merge, for filtering in
+     training; it is never a model input.
+   - Each row: every mined column, with the head's code features, the merge
+     signals as of the moment, and the state so far (time since start and
+     since the last human activity, first maintainer reply, review rounds,
+     changes requested, approvals, commits and force-pushes, whether the
+     author pushed after the last review, comment counts, outcome label,
+     draft, reopens, changes since the previous snapshot).
+   - Contracts: `contracts/mined_snapshot.schema.json` and
+     `contracts/mined_commit_features.schema.json`.
+   - `tests/test_snapshots.py` includes the leakage test: every snapshot is
+     recomputed from data cut at its moment (later events, head changes,
+     closes and first responses removed) and nothing may change.
+
 ## SZZ window
 
 `--szz` blames only fix commits dated between the oldest mined merge and the

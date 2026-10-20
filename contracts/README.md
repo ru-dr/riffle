@@ -19,6 +19,8 @@ Every rule kind, value, setting and default is listed in
 | `outcome_import.schema.json` | Organisation systems (`POST /v1/outcomes`) | `pipelines` (label mining) | #5 Ingestion |
 | `mined_history.schema.json` | `miner` (Go, ADR 0004) | `pipelines`, `scorer` | #5 Ingestion |
 | `mined_dataset.schema.json` | `pipelines/ingestion` (repo miner), one training row per closed PR | `pipelines/training` | #5 Ingestion |
+| `mined_snapshot.schema.json` | `pipelines/ingestion` (repo miner `snapshots.py`), one row per PR snapshot | `pipelines/training` | #5 Ingestion |
+| `mined_commit_features.schema.json` | `pipelines/ingestion` (repo miner), code features per head commit | `pipelines/training` | #5 Ingestion |
 
 Shapes are specified in the root `README.md` under **Contracts**; write the
 schema files to match.

@@ -10,3 +10,6 @@ test_output/
 logs/
 .tui_settings.json
 .venv/
+snapshots_raw/
+snapshots*.parquet
+commit_features*.parquet

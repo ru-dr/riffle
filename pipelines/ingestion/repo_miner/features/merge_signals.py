@@ -160,6 +160,7 @@ def tokens(title: str | None, body: str | None) -> list[str]:
 def sidecar(pr: dict, row: dict, events: list[dict] | None, title_open: str | None) -> dict:
     """What compute_repo needs about this PR (kept in the checkpoint)."""
     return {
+        "number": pr.get("number"),
         "opened": pr.get("created_at"),
         "closed": pr.get("merged_at") or pr.get("closed_at"),
         "merged": bool(pr.get("merged_at")),
@@ -188,36 +189,39 @@ def _jaccard(a: frozenset, b: frozenset) -> float:
 SIDECAR = "__merge_signals__"
 
 
-def compute_repo(rows: list[dict], st: config.Settings, with_unmerged: bool) -> None:
-    """Fill COLUMNS on every row that carries a sidecar, from the other rows,
-    strictly prior to each row's open. Merge rates need the unmerged rows: when
-    merge-outcome mining is off every mined PR merged, so they stay null."""
-    key = SIDECAR
-    far = datetime.max.replace(tzinfo=timezone.utc)
-    prs = []
-    for r in rows:
-        sc = r.get(key)
-        if not sc or not _ts(sc.get("opened")):
-            continue
-        prs.append({"row": r, "opened": _ts(sc["opened"]),
-                    "closed": _ts(sc.get("closed")) or far, "merged": sc.get("merged"),
-                    "outsider": sc.get("outsider"), "agent": sc.get("agent"),
-                    "first_hours": ((_ts(sc["first_response"]) - _ts(sc["opened"]))
-                                    .total_seconds() / 3600 if sc.get("first_response") else None),
-                    "first_at": _ts(sc.get("first_response")),
-                    "tokens": frozenset(sc.get("tokens") or ())})
-    by_close = sorted((p for p in prs if p["closed"] < far), key=lambda p: p["closed"])
-    close_times = [p["closed"] for p in by_close]
-    by_open = sorted(prs, key=lambda p: p["opened"])
-    open_times = [p["opened"] for p in by_open]
-    lookback = timedelta(days=st.merge_signal_lookback_days)
-    sim_merged = timedelta(days=90)
-    for p in prs:
-        row, t = p["row"], p["opened"]
+class History:
+    """The repo's PRs as merge-signal inputs (one sidecar each), indexed so the
+    COLUMNS can be computed as of any moment: at a PR's open for the mined
+    rows, or at a snapshot time (snapshots.py). Strictly prior-only: a PR
+    counts once it closed before the moment, and a first response once it
+    happened before it."""
+
+    def __init__(self, sidecars: list[dict]):
+        far = datetime.max.replace(tzinfo=timezone.utc)
+        self.far = far
+        self.prs = []
+        for sc in sidecars:
+            if not sc or not _ts(sc.get("opened")):
+                continue
+            self.prs.append({
+                "sc": sc, "number": sc.get("number"), "opened": _ts(sc["opened"]),
+                "closed": _ts(sc.get("closed")) or far, "merged": sc.get("merged"),
+                "outsider": sc.get("outsider"), "agent": sc.get("agent"),
+                "first_hours": ((_ts(sc["first_response"]) - _ts(sc["opened"]))
+                                .total_seconds() / 3600 if sc.get("first_response") else None),
+                "first_at": _ts(sc.get("first_response")),
+                "tokens": frozenset(sc.get("tokens") or ())})
+        self.by_close = sorted((p for p in self.prs if p["closed"] < far), key=lambda p: p["closed"])
+        self.close_times = [p["closed"] for p in self.by_close]
+        self.by_open = sorted(self.prs, key=lambda p: p["opened"])
+        self.open_times = [p["opened"] for p in self.by_open]
+
+    def at(self, p: dict, t: datetime, st: config.Settings, with_unmerged: bool) -> dict:
+        """COLUMNS for PR p (an entry of self.prs) as of moment t."""
         out = {c: None for c in COLUMNS}
-        lo = bisect.bisect_left(close_times, t - lookback)
-        hi = bisect.bisect_left(close_times, t)           # closed strictly before t
-        prior = by_close[lo:hi]
+        lo = bisect.bisect_left(self.close_times, t - timedelta(days=st.merge_signal_lookback_days))
+        hi = bisect.bisect_left(self.close_times, t)           # closed strictly before t
+        prior = [q for q in self.by_close[lo:hi] if q is not p]
         outs = [q for q in prior if q["outsider"]]
         out["repo_outside_closed_count"] = len(outs)
         if with_unmerged and len(outs) >= st.merge_signal_min_prs:
@@ -231,15 +235,28 @@ def compute_repo(rows: list[dict], st: config.Settings, with_unmerged: bool) -> 
                 if q["first_hours"] is not None and q["first_at"] < t]
         if len(resp) >= st.merge_signal_min_prs:
             out["repo_median_first_response_hours"] = round(statistics.median(resp), 2)
-        a = bisect.bisect_left(open_times, t - timedelta(days=30))
-        b = bisect.bisect_left(open_times, t)
-        out["repo_agent_pr_load_30d"] = sum(1 for q in by_open[a:b] if q["agent"])
+        a = bisect.bisect_left(self.open_times, t - timedelta(days=30))
+        b = bisect.bisect_left(self.open_times, t)
+        out["repo_agent_pr_load_30d"] = sum(1 for q in self.by_open[a:b] if q["agent"] and q is not p)
         # open at t: opened before t and not yet closed
-        open_now = [q for q in by_open[:b] if q["closed"] > t and q is not p]
+        open_now = [q for q in self.by_open[:b] if q["closed"] > t and q is not p]
         out["max_sim_open_prs"] = round(max((_jaccard(p["tokens"], q["tokens"])
                                              for q in open_now), default=0.0), 4)
-        m = bisect.bisect_left(close_times, t - sim_merged)
-        recent = [q for q in by_close[m:hi] if q["merged"]]
+        m = bisect.bisect_left(self.close_times, t - timedelta(days=90))
+        recent = [q for q in self.by_close[m:hi] if q["merged"] and q is not p]
         out["max_sim_recent_merged"] = (round(max(_jaccard(p["tokens"], q["tokens"])
                                                   for q in recent), 4) if recent else None)
-        row.update(out)
+        return out
+
+
+def compute_repo(rows: list[dict], st: config.Settings, with_unmerged: bool) -> None:
+    """Fill COLUMNS on every row that carries a sidecar, from the other rows,
+    strictly prior to each row's open. Merge rates need the unmerged rows: when
+    merge-outcome mining is off every mined PR merged, so they stay null."""
+    carriers = [r for r in rows if r.get(SIDECAR)]
+    hist = History([r[SIDECAR] for r in carriers])
+    by_sc = {id(p["sc"]): p for p in hist.prs}
+    for r in carriers:
+        p = by_sc.get(id(r[SIDECAR]))
+        if p is not None:
+            r.update(hist.at(p, p["opened"], st, with_unmerged))

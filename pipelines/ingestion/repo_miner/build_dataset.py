@@ -398,6 +398,10 @@ def main():
                          "files are cut (default 25000) (passed through)")
     ap.add_argument("--llm-quota-wait", action=argparse.BooleanOptionalAction, default=None,
                     help="wait for the Claude plan to reset instead of failing calls (default on) (passed through)")
+    ap.add_argument("--snapshots", action=argparse.BooleanOptionalAction, default=True,
+                    help="capture what PR snapshots need (passed through; default on)")
+    ap.add_argument("--snapshot-root", default="snapshots_raw",
+                    help="capture files go to <root>/<owner>_<name>/ (default snapshots_raw)")
     ap.add_argument("--skip-existing", action="store_true",
                     help="reuse an existing clone instead of re-cloning")
     ap.add_argument("--keep-clones", action="store_true",
@@ -619,6 +623,9 @@ def main():
         for opt in ("llm_scope", "llm_sample_pct", "close_reason_llm", "llm_max_diff_chars"):
             if getattr(args, opt) is not None:
                 cmd += ["--" + opt.replace("_", "-"), str(getattr(args, opt))]
+        cmd.append("--snapshots" if args.snapshots else "--no-snapshots")
+        if args.snapshots:
+            cmd += ["--snapshot-dir", os.path.join(args.snapshot_root, f"{owner}_{name}")]
         if args.llm_quota_wait is not None:
             cmd.append("--llm-quota-wait" if args.llm_quota_wait else "--no-llm-quota-wait")
 

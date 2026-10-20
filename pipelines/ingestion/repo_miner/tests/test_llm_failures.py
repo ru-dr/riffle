@@ -69,7 +69,8 @@ def _mine(repo, bindir, tmp, fail_n):
     p = subprocess.run([sys.executable, str(MINER / "mine_repo.py"), "--repo", str(repo),
                         "--out", str(out), "--no-network", "--pr-discovery", "git",
                         "--min-age-days", "0", "--llm", "--llm-scope", "all",
-                        "--workers", "1", "--llm-concurrency", "1", "--no-szz"],
+                        "--workers", "1", "--llm-concurrency", "1", "--no-szz",
+                        "--snapshot-dir", str(tmp / "snapshots")],
                        cwd=MINER, env=env, capture_output=True, text=True, timeout=600)
     return p, out
 
