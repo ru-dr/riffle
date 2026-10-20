@@ -45,7 +45,7 @@ Python tests (repo root; what CI runs, so keep it passing):
 
 ```bash
 python -m pytest contracts/tests pipelines/ingestion/repo_miner/tests -q
-python -m pytest infra/docker/airflow/tests -q   # the Airflow start-up scripts; not in CI yet
+python -m pytest pipelines/training/tests infra/docker/airflow/tests -q   # loader and Airflow scripts (the `pipelines` CI job runs these too)
 ```
 
 ## Site architecture

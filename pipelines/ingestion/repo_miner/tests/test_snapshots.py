@@ -286,6 +286,25 @@ def test_commit_rows_match_their_contract(world, tmp_path):
         assert [e.message for e in v.iter_errors(r)] == []
 
 
+def test_snapshot_and_commit_rows_flatten_losslessly(world, tmp_path):
+    """ADR 0012: the flat form rebuilds each row exactly, so no value is lost or renamed."""
+    sys.path.insert(0, str(CONTRACTS))
+    import flatten
+    d = tmp_path / "o_syn"
+    d.mkdir()
+    (d / cap.CAPTURE_FILE).write_text(json.dumps(world["record"]) + "\n")
+    (d / cap.INDEX_FILE).write_text("".join(json.dumps(s) + "\n" for s in world["sidecars"]))
+    snaps, commits = S.assemble([world["at_open"]], str(tmp_path), world["st"])
+    assert snaps and commits
+    for name, rows in (("mined_snapshot.schema.json", snaps), ("mined_commit_features.schema.json", commits)):
+        schema = _schema(name)
+        for r in rows:
+            row = json.loads(json.dumps(r, default=str))
+            flat = flatten.flatten(row)
+            assert len(flat) == len(row)                      # every column is a scalar: one key each
+            assert flatten.unflatten(flat, schema) == row
+
+
 def test_snapshot_contract_keeps_every_dataset_column():
     d, s = _schema("mined_dataset.schema.json"), _schema("mined_snapshot.schema.json")
     assert all(s["properties"][k] == v for k, v in d["properties"].items())

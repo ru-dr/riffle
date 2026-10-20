@@ -54,3 +54,29 @@ jobs:
       - run: python contracts/gen_reference.py --check
 
       - run: python -m pytest contracts/tests pipelines/ingestion/repo_miner/tests -q
+
+  # The pipelines with pandas and pyarrow installed, so the parquet paths, merge_shards and the
+  # training loader run too (the contracts job above runs the miner with only the core
+  # dependencies). The miner's tests include the contract-sync checks: its three tables
+  # (dataset, snapshots, commit features) must match their schemas column for column, validate,
+  # and flatten losslessly (ADR 0012). No network, no semgrep, no LLM.
+  pipelines:
+    name: pipelines
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install pytest jsonschema pyyaml pandas pyarrow
+
+      - name: Repo miner (tables match their contracts)
+        run: python -m pytest pipelines/ingestion/repo_miner/tests -q
+
+      - name: Training loader
+        run: python -m pytest pipelines/training/tests -q
+
+      - name: Airflow start-up scripts
+        run: python -m pytest infra/docker/airflow/tests -q
