@@ -224,9 +224,35 @@ again with "Reuse clones" on resumes.
   LLM failures the miner stops, drops the rows from the failing streak, leaves
   `--out` untouched, and exits 3; `build_dataset.py` aborts the batch. Rerun
   to resume from the checkpoint.
-- **Parallel PRs:** `--workers N` (default `min(6, CPUs)`) mines PRs in worker
-  threads, consumed in PR order (output identical to a sequential run).
+- **Plan limits (v3.0.0):** with headless Claude Code the miner reads the
+  plan's usage (`claude -p /usage`, no model call) at most every 5 minutes.
+  At 95% of a limit, or when a call is refused for one, LLM calls pause until
+  the reset and then continue; mining keeps going meanwhile. A limit that
+  resets more than 12 h away (a weekly cap) is not waited for: calls fail and
+  the breaker stops the run. `--no-llm-quota-wait` turns this off.
+- **Fewer, smaller calls (v3.0.0).** The flags are features, so only the rows
+  the model trains on need them:
+  - `--llm-scope training` (default): outside contributors (`CONTRIBUTOR`,
+    `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `NONE`) who are not bots, plus a
+    fixed 5% sample of the rest (`--llm-sample-pct`, the same PRs on every
+    run). Other rows keep null LLM columns. `--llm-scope all` sends every row.
+  - Docs-only, tests-only and lockfile/generated-only diffs are not sent;
+    their flags would all be the neutral value.
+  - The diff sent has 1 line of context. Lockfiles and generated, vendored,
+    minified and snapshot files are cut to one line each, and the rest is
+    capped at `--llm-max-diff-chars` (25000), dropping whole files and naming
+    them.
+  - The close-reason classifier is asked only when the rules find no reason
+    (`--close-reason-llm other_only`, default); `always` asks for every
+    unmerged PR with human activity.
+- **Parallel PRs:** `--workers N` mines PRs in worker threads, consumed in PR
+  order (output identical to a sequential run). The default is `min(6, CPUs)`,
+  lowered to fit free RAM at about 0.8 GB per worker plus 1.5 GB (one run
+  peaked at 5.5 GB with 6 workers); the miner says when it lowered it.
   `--llm-concurrency N` (default 4) caps simultaneous LLM calls.
+- **Stop:** ctrl+c or the TUI's Stop ends the batch with one `[stop]` line,
+  stops the running miner with its checkpoint kept, and exits 130. SZZ blame
+  workers ignore the signal, so they no longer print tracebacks.
 - The repo's `git log --numstat` is parsed once and reused per PR, hotspot
   complexity is cached per blob, and path classification is memoized.
 

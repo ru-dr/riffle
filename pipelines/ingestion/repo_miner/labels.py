@@ -264,6 +264,15 @@ def szz_cache_covers(cache_path: str, window, repo: str | None = None,
     return _usable_cache(cache_path, window, fp) is not None
 
 
+def _szz_worker_init(flags, ignore_revs) -> None:
+    """SZZ blame worker setup. Workers ignore SIGINT: a Stop reaches the main
+    process, which shuts the pool down, so workers don't each print a
+    KeyboardInterrupt traceback."""
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    gitio.set_blame_settings(flags, ignore_revs)
+
+
 def build_szz_index(repo: str, st: config.Settings,
                     cache_path: str | None = None,
                     on_progress=None,
@@ -374,7 +383,7 @@ def build_szz_index(repo: str, st: config.Settings,
         try:
             workers = max(1, min(st.workers, len(todo)))
             with ProcessPoolExecutor(
-                    max_workers=workers, initializer=gitio.set_blame_settings,
+                    max_workers=workers, initializer=_szz_worker_init,
                     initargs=gitio.blame_settings()) as pool:
                 # a bounded number of tasks in flight, topped up as they finish,
                 # instead of one future per fix commit up front

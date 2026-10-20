@@ -98,6 +98,39 @@ EXT_LANG = {
     ".cs": "csharp", ".php": "php", ".kt": "kotlin", ".scala": "scala",
 }
 
+# Memory per mining worker and for the rest of the process. One Oct 2026 run
+# peaked at 5.5 GB with 6 workers on a large repo.
+WORKER_RAM_GB = 0.8
+BASE_RAM_GB = 1.5
+
+
+def available_ram_gb() -> float | None:
+    """Memory free for new work (MemAvailable on Linux, psutil elsewhere),
+    or None when it can't be read."""
+    try:
+        import psutil
+        return psutil.virtual_memory().available / 1024 ** 3
+    except Exception:
+        pass
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024 ** 2
+    except OSError:
+        pass
+    return None
+
+
+def default_workers(ram_gb: float | None = None, cpus: int | None = None) -> int:
+    """min(6, CPUs), lowered so the workers fit in the free RAM."""
+    n = min(6, cpus or os.cpu_count() or 2)
+    ram = available_ram_gb() if ram_gb is None else ram_gb
+    if ram is not None:
+        n = min(n, int((ram - BASE_RAM_GB) // WORKER_RAM_GB))
+    return max(1, n)
+
+
 # ---- Tunables --------------------------------------------------------------
 @dataclass
 class Settings:
@@ -179,10 +212,33 @@ class Settings:
         default_factory=lambda: int(os.getenv("LLM_BREAKER_THRESHOLD", "5")))
     llm_breaker_tripped: bool = False      # set by the miner when the breaker trips
     llm_concurrency: int = field(default_factory=lambda: int(os.getenv("LLM_CONCURRENCY", "4")))
+    # Which rows get LLM calls. "training": outside-contributor PRs (not bots)
+    # plus a fixed llm_sample_pct sample of the rest, the rows the merge model
+    # trains on; "all": every row. Rows left out keep null LLM columns.
+    llm_scope: str = field(default_factory=lambda: os.getenv("LLM_SCOPE", "training"))
+    llm_sample_pct: int = 5
+    # skip the LLM for diffs with nothing to judge: docs-only, tests-only,
+    # lockfile/generated-only (their flags would all be the neutral value)
+    llm_skip_trivial: bool = True
+    # diff sent to the LLM: context lines, and a size cap after lockfiles and
+    # generated/minified/vendored/snapshot files are cut out
+    llm_diff_context: int = 1
+    llm_max_diff_chars: int = 25000
+    # close-reason classifier: "other_only" asks the LLM only when the rules
+    # find no reason (duplicate/unwanted/ci_technical/abandoned); "always"
+    # asks for every unmerged PR with human activity
+    close_reason_llm: str = "other_only"
+    # headless Claude plan limits: when a limit is near (or a call fails on
+    # one), wait for the reset instead of failing calls into the breaker
+    llm_quota_wait: bool = True
+    llm_quota_pause_pct: float = 95.0      # pause at this % used
+    llm_quota_poll_s: int = 300            # re-read the plan usage at most this often
+    llm_quota_max_wait_h: float = 12.0     # give up (fail calls) after waiting this long
     # PRs mined in parallel (threads; the work is mostly git subprocesses).
-    # Each worker may run lizard/semgrep, so keep this modest on small-RAM boxes.
+    # Each worker may run lizard/semgrep, so the default is capped by free RAM
+    # (default_workers); RIFFLE_WORKERS or --workers overrides it.
     workers: int = field(default_factory=lambda: int(
-        os.getenv("RIFFLE_WORKERS", str(min(6, os.cpu_count() or 2)))))
+        os.getenv("RIFFLE_WORKERS") or default_workers()))
     request_timeout: float = 20.0
     max_prs: int | None = None             # cap PRs per repo (None = all)
     # skip PRs merged in the last N days, so the cap picks PRs old enough for

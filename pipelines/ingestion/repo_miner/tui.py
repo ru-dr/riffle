@@ -423,7 +423,7 @@ class RiffleTUI(App):
                 yield Label("Skip PRs merged in last N days (mature labels)")
                 yield Input("90", id="min_age", type="integer", compact=True)
                 yield Label("PR workers")
-                yield Input(str(min(6, os.cpu_count() or 2)), id="workers", type="integer", compact=True)
+                yield Input(str(config.default_workers()), id="workers", type="integer", compact=True)
                 yield Label("LLM concurrency")
                 yield Input("4", id="llm_conc", type="integer", compact=True)
                 yield Label("Re-mine repos (owner/name, comma-separated)")

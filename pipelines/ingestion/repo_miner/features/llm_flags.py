@@ -21,6 +21,7 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -99,33 +100,180 @@ def load_reuse(path: str) -> int:
     return len(_REUSE)
 
 
-def fetch(repo: str, base: str, head: str, st: config.Settings) -> dict:
+def fetch(repo: str, base: str, head: str, st: config.Settings,
+          skip: str | None = None) -> dict:
     """
     Thread-safe half: build the diff and call the LLM. Touches no shared state
-    besides the concurrency limiter, so the miner can run it in worker threads.
-    Returns {"status": "off"|"empty"|"ok"|"fail", "raw": dict|None}; pass the
-    result to resolve() in PR order.
+    besides the concurrency limiter and the quota gate, so the miner can run it
+    in worker threads. Returns {"status": "off"|"skipped"|"empty"|"ok"|"fail",
+    "raw": dict|None}; pass the result to resolve() in PR order. `skip` is the
+    reason the caller left this row out of the LLM (scope, trivial diff).
     """
     if not st.enable_llm or (st.llm_backend == "api" and not st.llm_api_key):
         return {"status": "off", "raw": None, "secs": 0.0}
+    if skip:
+        return {"status": "skipped", "raw": None, "secs": 0.0, "reason": skip}
     if (base, head) in _REUSE:
         return {"status": "ok", "raw": dict(_REUSE[(base, head)]), "secs": 0.0, "reused": True}
-    diff = gitio._run(repo, "diff", "-M", f"{base}...{head}", check=False)
+    diff = llm_diff(repo, base, head, st)
     if not diff.strip():
         return {"status": "empty", "raw": None, "secs": 0.0}  # nothing to judge, not a failure
-    diff = _redact_secrets(diff)
-    if len(diff) > 60000:                       # crude token guard
-        diff = diff[:60000]
     t0 = time.monotonic()
-    with _limiter(st):
-        if st.llm_backend == "claude_cli":
-            raw = _call_claude_cli(diff, st)
-        else:
-            raw = _call_llm(diff, st)
+    raw = _call_with_quota(lambda: _call_claude_cli(diff, st) if st.llm_backend == "claude_cli"
+                           else _call_llm(diff, st), st)
     secs = time.monotonic() - t0
     if raw is None:
         return {"status": "fail", "raw": None, "secs": secs}
     return {"status": "ok", "raw": _validate(raw, diff), "secs": secs}
+
+
+# ---- the diff the LLM reads ------------------------------------------------
+
+# files whose diff says nothing the flags ask about; they are replaced by a
+# one-line note so the model still knows they changed
+_OMIT_EXTRA_RE = re.compile(r"\.map$|\.svg$")
+_FILE_SPLIT_RE = re.compile(r"(?m)^(?=diff --git )")
+_FILE_PATH_RE = re.compile(r"^diff --git a/(.*?) b/(.*)$", re.M)
+
+
+def _omit_reason(path: str) -> str | None:
+    f = config.path_flags(path)
+    if f.get("touches_lockfile"):
+        return "lockfile"
+    if f.get("is_generated") or _OMIT_EXTRA_RE.search(path):
+        return "generated, vendored, minified or snapshot file"
+    return None
+
+
+def slim_diff(diff: str, max_chars: int) -> str:
+    """Cut lockfiles and generated / vendored / minified / snapshot files down
+    to one line each, then cap the size. The cap keeps whole files where it
+    can and says what it dropped."""
+    kept, notes = [], []
+    for part in _FILE_SPLIT_RE.split(diff):
+        if not part:
+            continue
+        m = _FILE_PATH_RE.match(part)
+        path = m.group(2) if m else ""
+        why = _omit_reason(path) if path else None
+        if why:
+            added = sum(1 for l in part.splitlines() if l.startswith("+") and not l.startswith("+++"))
+            removed = sum(1 for l in part.splitlines() if l.startswith("-") and not l.startswith("---"))
+            notes.append(f"# {path}: {why}, +{added} -{removed} lines (diff omitted)")
+        else:
+            kept.append(part)
+    head = ("\n".join(notes) + "\n\n") if notes else ""
+    out, size, dropped = [], len(head), []
+    for part in kept:
+        if size + len(part) <= max_chars:
+            out.append(part)
+            size += len(part)
+        elif not out and not dropped:
+            out.append(part[: max(0, max_chars - size)] + "\n# (file truncated)\n")
+            size = max_chars
+        else:
+            m = _FILE_PATH_RE.match(part)
+            dropped.append(m.group(2) if m else "?")
+    tail = (f"\n# {len(dropped)} more changed file(s) not shown (size cap): "
+            + ", ".join(dropped[:20]) + ("" if len(dropped) <= 20 else ", ...") + "\n") if dropped else ""
+    return head + "".join(out) + tail
+
+
+def llm_diff(repo: str, base: str, head: str, st: config.Settings) -> str:
+    """The redacted, slimmed diff the LLM reads for base...head."""
+    diff = gitio._run(repo, "diff", "-M", f"-U{max(0, st.llm_diff_context)}",
+                      f"{base}...{head}", check=False)
+    if not diff.strip():
+        return ""
+    return slim_diff(_redact_secrets(diff), st.llm_max_diff_chars)
+
+
+# ---- plan quota (headless Claude Code) --------------------------------------
+
+class QuotaHit(RuntimeError):
+    """A claude -p call failed because a plan limit was reached."""
+
+    def __init__(self, msg: str, resets_at: float | None = None):
+        super().__init__(msg)
+        self.resets_at = resets_at
+
+
+_QUOTA_RE = re.compile(r"(usage|rate|session|weekly|credit|spend)[^\n]{0,40}limit|limit (reached|exceeded)"
+                       r"|out of (credits|usage)|resets? (at|in|on)", re.I)
+_QUOTA_LOCK = threading.Lock()
+_QUOTA = {"checked": 0.0, "lines": None, "paused_until": 0.0}
+
+
+def _plan_lines(st: config.Settings, force: bool = False):
+    """Plan usage lines from claude_plan_usage(), re-read at most every
+    llm_quota_poll_s seconds (it runs `claude -p /usage`, no model call)."""
+    with _QUOTA_LOCK:
+        now = time.time()
+        if force or now - _QUOTA["checked"] >= st.llm_quota_poll_s:
+            _QUOTA["lines"] = claude_plan_usage()
+            _QUOTA["checked"] = now
+        return _QUOTA["lines"]
+
+
+def _pause_until(when: float, why: str, st: config.Settings) -> None:
+    """Hold every LLM caller until `when` (all threads share one deadline).
+    A reset further away than llm_quota_max_wait_h (a weekly limit) is not
+    waited for: QuotaHit makes the calls fail, so the breaker stops the run."""
+    if when - time.time() > st.llm_quota_max_wait_h * 3600:
+        raise QuotaHit(f"{why}; resets in {(when - time.time()) / 3600:.0f} h, "
+                       f"more than llm_quota_max_wait_h ({st.llm_quota_max_wait_h} h)")
+    with _QUOTA_LOCK:
+        if when <= _QUOTA["paused_until"]:
+            return
+        _QUOTA["paused_until"] = when
+    at = time.strftime("%H:%M", time.localtime(when))
+    print(f"[llm-quota] {why}; pausing LLM calls until {at} "
+          f"({(when - time.time()) / 60:.0f} min). Mining continues.", file=sys.stderr, flush=True)
+
+
+def _wait_paused(st: config.Settings) -> None:
+    while True:
+        with _QUOTA_LOCK:
+            left = _QUOTA["paused_until"] - time.time()
+        if left <= 0:
+            return
+        time.sleep(min(left, 60))
+
+
+def _quota_gate(st: config.Settings) -> None:
+    """Before a call: if the plan is at llm_quota_pause_pct or more, wait for
+    its reset. Unreadable usage (no subscription, API backend) never blocks."""
+    if st.llm_backend != "claude_cli" or not st.llm_quota_wait:
+        return
+    for line in _plan_lines(st) or []:
+        if line.get("pct") is not None and line["pct"] >= st.llm_quota_pause_pct and line.get("resets_at"):
+            _pause_until(line["resets_at"] + 60, f"plan {line['label']} at {line['pct']:.0f}%", st)
+    _wait_paused(st)
+
+
+def _call_with_quota(call, st: config.Settings):
+    """Run one LLM call under the concurrency limiter, waiting out plan limits:
+    a call refused for a limit is retried after the reset instead of failing
+    into the circuit breaker."""
+    while True:
+        try:
+            _quota_gate(st)
+            try:
+                with _limiter(st):
+                    return call()
+            except QuotaHit as e:
+                if not st.llm_quota_wait:
+                    return None
+                resets = e.resets_at
+                if resets is None:
+                    for line in _plan_lines(st, force=True) or []:
+                        if line.get("resets_at"):
+                            resets = max(resets or 0, line["resets_at"])
+                _pause_until((resets or time.time() + st.llm_quota_poll_s) + 60,
+                             f"plan limit hit ({e})", st)
+        except QuotaHit as e:          # the limit resets too far away to wait for
+            print(f"[llm-quota] {e}", file=sys.stderr, flush=True)
+            return None
 
 
 def resolve(fetched: dict, st: config.Settings) -> dict:
@@ -475,6 +623,11 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
                 _add_usage(u.get("input_tokens"), u.get("output_tokens"),
                            u.get("cache_creation_input_tokens"), u.get("cache_read_input_tokens"),
                            out.get("total_cost_usd"))
+            if p.returncode != 0 or out.get("is_error"):
+                said = f"{out.get('result') or ''} {p.stderr or ''}"
+                if _QUOTA_RE.search(said):
+                    m = re.search(r"resets?\s+(?:at\s+|on\s+)?([^\n.]+)", said, re.I)
+                    raise QuotaHit(" ".join(said.split())[:160], _parse_reset(m.group(1)) if m else None)
             if p.returncode == 0:
                 if not out.get("is_error"):
                     obj = out.get("structured_output")
@@ -507,11 +660,11 @@ def ask_json(system: str, schema: dict, text: str, st: config.Settings) -> dict 
     concurrency limiter and usage counters. None when the LLM is off or fails."""
     if not st.enable_llm or (st.llm_backend == "api" and not st.llm_api_key):
         return None
-    with _limiter(st):
-        if st.llm_backend == "claude_cli":
-            return _call_claude_cli(text, st, system=system, schema=schema, prefix="")
-        return _call_llm(text, st, system=system + "\nSchema: " + json.dumps(schema),
-                         prefix="")
+    if st.llm_backend == "claude_cli":
+        return _call_with_quota(
+            lambda: _call_claude_cli(text, st, system=system, schema=schema, prefix=""), st)
+    return _call_with_quota(
+        lambda: _call_llm(text, st, system=system + "\nSchema: " + json.dumps(schema), prefix=""), st)
 
 
 def _extract_json(text: str):
@@ -551,8 +704,11 @@ def self_test(st: config.Settings) -> tuple[bool, str]:
     """One LLM call on a known-risky sample diff (auth check removed, exception
     swallowed). Returns (ok, message) — checks login, model, and headless mode."""
     t0 = time.monotonic()
-    raw = _call_claude_cli(_TEST_DIFF, st, retries=0) if st.llm_backend == "claude_cli" \
-        else _call_llm(_TEST_DIFF, st)
+    try:
+        raw = _call_claude_cli(_TEST_DIFF, st, retries=0) if st.llm_backend == "claude_cli" \
+            else _call_llm(_TEST_DIFF, st)
+    except QuotaHit as e:
+        return False, f"FAIL: plan limit reached ({e})"
     secs = time.monotonic() - t0
     if raw is None:
         return False, (f"FAIL: no valid response from backend={st.llm_backend} "
