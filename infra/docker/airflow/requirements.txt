@@ -1,0 +1,5 @@
+# Extra packages for DAGs, installed on top of the Airflow image.
+# Keep this to what scheduling needs. The work itself lives in pipelines/ingestion
+# and pipelines/training, and runs without Airflow.
+# Pin Airflow providers here when a DAG needs one, for example:
+# apache-airflow-providers-google
