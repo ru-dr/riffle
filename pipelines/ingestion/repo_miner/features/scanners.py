@@ -13,12 +13,13 @@ come back as None so the model treats them as missing rather than zero.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
-import os
 
 import config
 import gitio
+import runlog
 
 
 def compute(repo: str, base: str, head: str, changed: list[str],
@@ -84,11 +85,14 @@ _TOP25_CWE = {
 
 
 def _semgrep_scan(repo: str, sha: str, changed: list[str]) -> list[dict]:
-    """Run semgrep on the checked-out `sha` for the changed files."""
+    """Findings for the `changed` files as they are at `sha`. Each finding's path is
+    relative to the exported tree, so base and head findings compare equal; the
+    temporary directories differ, and an absolute path would never match."""
     if not _have("semgrep"):
         return []
     with tempfile.TemporaryDirectory() as work:
         # export the tree at sha for just the changed files
+        written = 0
         for path in changed:
             content = gitio.file_content_at(repo, sha, path)
             if content is None:
@@ -97,17 +101,24 @@ def _semgrep_scan(repo: str, sha: str, changed: list[str]) -> list[dict]:
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             with open(dest, "w", encoding="utf-8", errors="replace") as fh:
                 fh.write(content)
-        proc = subprocess.run(
-            ["semgrep", "scan", "--config", "auto", "--json", "--quiet", work],
-            capture_output=True, text=True,
-        )
+            written += 1
+        if not written:
+            return []          # nothing at this sha (files deleted or added on the other side): nothing to scan
+        # one semgrep start costs about 4 s (rules fetched and loaded for `auto`), so it is the PR's
+        # biggest cost; the span shows up in the trace as "semgrep". Batching several PRs into one
+        # process was tried and measured no faster: starts already run in parallel across cores.
+        with runlog.span("semgrep", "scan", files=written, slow_s=runlog.SLOW_CALL_S):
+            proc = subprocess.run(
+                ["semgrep", "scan", "--config", "auto", "--json", "--quiet", work],
+                capture_output=True, text=True,
+            )
         if proc.returncode not in (0, 1):  # 1 = findings present
             return []
         try:
             data = json.loads(proc.stdout or "{}")
         except json.JSONDecodeError:
             return []
-        return data.get("results", [])
+        return [{**f, "path": os.path.relpath(f.get("path", ""), work)} for f in data.get("results", [])]
 
 
 def _finding_key(f: dict) -> tuple:
@@ -117,9 +128,14 @@ def _finding_key(f: dict) -> tuple:
 
 def _semgrep_new(repo: str, base: str, head: str, changed: list[str],
                  st: config.Settings) -> dict:
-    base_f = {_finding_key(f) for f in _semgrep_scan(repo, base, changed)}
+    # new = head findings that the base did not have, so a head with none needs no base scan.
+    # Most PRs have none (80% of the vite pilot), which halves the semgrep starts.
     head_r = _semgrep_scan(repo, head, changed)
-    new = [f for f in head_r if _finding_key(f) not in base_f]
+    if head_r:
+        base_f = {_finding_key(f) for f in _semgrep_scan(repo, base, changed)}
+        new = [f for f in head_r if _finding_key(f) not in base_f]
+    else:
+        new = []
     high_sec = 0
     cwe25 = False
     for f in new:

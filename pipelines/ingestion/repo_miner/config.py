@@ -286,7 +286,7 @@ class Settings:
     revert_prefixes: tuple[str, ...] = ('revert "', "revert:")
     # hotfix label == urgent fix; cherry-pick / backport are a DIFFERENT concept
     # (porting a change to another branch) and are deliberately excluded here
-    hotfix_keywords: tuple[str, ...] = ("hotfix", "rollback")
+    hotfix_keywords: tuple[str, ...] = ("hotfix", "rollback", "quick fix", "urgent/emergency/critical fix")
 
 
 DEFAULT = Settings()
@@ -341,10 +341,20 @@ _FIX_RE = re.compile(
     re.IGNORECASE,
 )
 _HOTFIX_RE = re.compile(
-    r"(?<![A-Za-z0-9])(?:hotfix(?:e[sd])?|rollback)(?![A-Za-z0-9])",
+    r"(?<![A-Za-z0-9])(?:"
+    r"hot[\s-]?fix(?:e[sd]|ing)?|"                       # hotfix, hot-fix, hot fix
+    r"roll(?:ed|ing)?[\s-]?back|"                         # rollback, roll back, rolled back
+    r"quick[\s-]?fix(?:e[sd])?|"                          # quickfix, quick fix
+    r"(?:urgent|emergency|critical)[\s-]+(?:fix|patch|bug|issue|regression|security)"
+    r")(?![A-Za-z0-9])",
     re.IGNORECASE,
 )
 _REVERT_RE = re.compile(r'^\s*revert[\s:"]', re.IGNORECASE)
+# a revert subject behind a conventional-commit prefix: `fix: revert "x"`,
+# `revert(server): x`, `fix(deps): revert x`. Squash-merge repos title reverts
+# this way, so the bare start-of-line rule above misses them.
+_PREFIXED_REVERT_RE = re.compile(
+    r"^\s*(?:[a-z]+(?:\([^)]*\))?!?:\s*)?revert(?![A-Za-z0-9])", re.IGNORECASE)
 
 
 def is_fix_text(s: str | None) -> bool:
@@ -360,7 +370,9 @@ def is_hotfix_text(s: str | None) -> bool:
 def is_revert_text(s: str | None) -> bool:
     """True for a git revert commit subject/body."""
     s = (s or "").lstrip()
-    return _REVERT_RE.match(s) is not None or "this reverts commit" in s.lower()
+    return (_REVERT_RE.match(s) is not None
+            or _PREFIXED_REVERT_RE.match(s.split("\n", 1)[0]) is not None
+            or "this reverts commit" in s.lower())
 
 
 # ---- Subsystem resolution --------------------------------------------------

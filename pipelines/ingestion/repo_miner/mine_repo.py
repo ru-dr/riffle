@@ -41,6 +41,7 @@ import config
 import gitio
 import aggregate
 import progress
+import runlog
 import health
 import scope
 import snapshot_capture
@@ -562,6 +563,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     else:
         base_sha, head_sha, snapshot_kind = final_base, final_head, "final"
 
+    runlog.step("diff")
     numstat = gitio.diff_numstat(repo, base_sha, head_sha)
     changed = [p for _, _, p in numstat]
     if not changed and snapshot_kind != "final":
@@ -609,10 +611,13 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     row["closed_at"] = pr.get("closed_at") if st.enable_merge_outcome else None
 
     # --- Source 4a/4b: diff stats + high-risk paths
+    runlog.step("diff_stats")
     row.update(diff_stats.compute(repo, base_sha, head_sha, st))
 
     # --- Source 2: repo history (build index once, per-file, author, coupling)
+    runlog.step("history_index")
     idx = history.build_repo_index(repo, base_sha, st, ci_map, paths=changed)
+    runlog.step("per_file")
     per_file: dict[str, dict] = {}
     for path in changed:
         pf = history.per_file_features(repo, base_sha, path, idx, st)
@@ -631,6 +636,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
             if f.get("_last_change_days") is not None]
     row["AGE"] = round(sum(ages) / len(ages), 2) if ages else None
 
+    runlog.step("aggregate")
     row.update(aggregate.aggregate_per_file(per_file))
     row.update(history.cochange_features(changed, idx))
     row.update(history.test_expectation_features(changed, per_file, st))
@@ -677,27 +683,33 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     row.update(_hotspot_touch(per_file, idx, st))
 
     # --- Source 5: deterministic checks
+    runlog.step("deterministic")
     row.update(deterministic.compute(repo, base_sha, head_sha, st))
 
     # --- Source 4d: scanners (optional)
+    runlog.step("scanners")
     row.update(scanners.compute(repo, base_sha, head_sha, changed, st))
 
     # --- Source 4e: deps/CVE (optional/network)
+    runlog.step("deps_cve")
     row.update(deps_cve.compute(repo, base_sha, head_sha, changed, st))
 
     # --- Source 5: API contract diff (oasdiff/buf/graphql-inspector, optional)
+    runlog.step("api_contract")
     row.update(api_contract.compute(repo, base_sha, head_sha, changed, st))
 
     # --- Source 6: LLM flags (optional)
     # --- repo-local mined features (contracts/mined_features.schema.json):
     # path size here; the PR-history columns are filled per repo afterwards
     row["path_size_pctile"] = repo_local.path_size_pctile(repo, base_sha, numstat, st)
+    runlog.step("reviews")
     reviews = None
     if api is not None and st.enable_review_history and pr.get("number") is not None:
         reviews = api.review_events(pr["number"], st.scrutiny_exclude_bot_reviews)
     row[repo_local.SIDECAR] = repo_local.sidecar(pr, numstat, reviews, final_numstat)
 
     # fetched here (worker thread); resolved in PR order by mine_repo()
+    runlog.step("llm")
     llm_skip = _llm_skip_reason(pr, row, changed, st)
     row["__llm__"] = llm_flags.fetch(repo, base_sha, head_sha, st, skip=llm_skip)
 
@@ -710,6 +722,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     # --- merge-model signals from the AIDev catalog (features/merge_signals.py)
     login = (pr.get("user") or {}).get("login")
     head_ref = (pr.get("head") or {}).get("ref")
+    runlog.step("merge_signals")
     md.update(merge_signals.body_features(pr.get("body")))
     md["agent_name"] = merge_signals.agent_name(login, head_ref, head_email, pr.get("body"))
     md["head_branch_agent_prefix"] = (None if head_ref is None else
@@ -744,6 +757,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         row["mined_at"] = snapshot.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         row["observed_through"] = None
     else:
+        runlog.step("labels")
         row.update(build_labels(repo, pr, final_changed, api, snapshot, st, szz_shas,
                                 obs_cutoff=obs_cutoff, pr_base=final_base, pr_head=final_head))
 
@@ -760,11 +774,13 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         row.update({c: None for c in MERGE_LABEL_COLUMNS})
 
     # --- provenance (proposal 1.7, 1.8) and domain (ADR 0011), on every row
+    runlog.step("labels_done")
     row.update(_provenance(st))
 
     # --- snapshot capture (snapshot_capture.py): raw timeline and the heads the
     # PR had while open, for the rows the model trains on
     if st.enable_snapshots and _llm_in_scope(pr, row, st):
+        runlog.step("capture")
         t_cap = time.monotonic()
         row[CAPTURE] = snapshot_capture.capture_pr(repo, pr, row, events, st)
         snapshot_capture.note(row[CAPTURE], time.monotonic() - t_cap)
@@ -885,7 +901,8 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
             pr["_open"] = snap
         kinds[snap["kind"] if snap else "final"] += 1
     print(f"[open-snapshot] {dict(kinds)} (final = at-open diff not recoverable; "
-          f"features use the final diff)", file=sys.stderr)
+          f"features use the final diff; PRs whose at-open diff turns out empty "
+          f"are downgraded to final later, see open_snapshot in health)", file=sys.stderr)
 
 
 # ---- pinned PR selection (resume) -----------------------------------------
@@ -1069,6 +1086,12 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     unmerged: list[dict] = []
     discovery = getattr(st, "pr_discovery", "api")
 
+    runlog.set_repo(f"{owner}/{name}")
+    runlog.start_heartbeat()
+    runlog.info("repo", "start", repo_path=repo, default_branch=default_branch,
+                workers=st.workers, llm=st.enable_llm, szz=st.enable_szz,
+                snapshots=st.enable_snapshots, max_prs=st.max_prs)
+    runlog.stage("fetching PRs")
     progress.emit("stage", repo=f"{owner}/{name}", stage="fetching PRs")
     lead_in: list[dict] = []          # lead-in merge-signal inputs (window mode)
     if discovery == "git":
@@ -1124,6 +1147,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     # required-status-check list (precise CI gating) — needs the API.
     # 403/None on public repos you don't own -> fall back to the name denylist.
+    runlog.stage("required checks")
     if api is not None:
         api.load_required_contexts(default_branch)
         if api.required_contexts:
@@ -1135,11 +1159,13 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     # the rebase sniff reads merge commits, so it sees merged PRs only; the
     # unmerged PRs join after it (author counts skip them: never merged)
+    runlog.stage("merge style")
     base_resolver = _make_base_resolver(repo, api, prs, st)
     if unmerged:
         prs = prs + unmerged
     # every PR's timeline, read once up front (mine_pr reuses pr["_events"]):
     # maintainers are confirmed from all of them, point-in-time (maintainers.py)
+    runlog.stage("timelines")
     evidence = maintainers.Evidence()
     sel_path = selection_path(st, owner, name) if api is not None else None
     saved = (load_selection(sel_path, st) or {}).get("evidence") if sel_path else None
@@ -1159,16 +1185,20 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         if evidence.confirmed((pr.get("user") or {}).get("login"),
                               _parse_ts(pr["created_at"]) if pr.get("created_at") else None):
             sc["outsider"] = False
+    runlog.stage("author index")
     author_pr_times = _build_author_pr_times(repo, prs)
     if api is not None:
+        runlog.stage("open snapshots")
         progress.emit("stage", repo=f"{owner}/{name}", stage="open snapshots")
         _resolve_open_snapshots(repo, prs, api, default_branch, st)
+    runlog.stage("concurrency")
     concurrency = _build_concurrency(repo, prs, base_resolver, st.workers)
     ci_map = {}
     if st.enable_ci_history and api is not None:
         cache_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.json")
         print("[ci-history] building historical CI-fail store (cached after first run)...",
               file=sys.stderr, flush=True)
+        runlog.stage("ci history")
         progress.emit("stage", repo=f"{owner}/{name}", stage="ci history")
         ci_map = api.build_ci_conclusion_map(cache_path)
         print(f"[ci-history] {len(ci_map)} commits with a CI verdict", file=sys.stderr)
@@ -1180,11 +1210,13 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     # Load the repo-wide commit history now, under a visible stage, instead of
     # silently inside the first PR (~1.5 min on a Kubernetes-sized repo). SZZ
     # reads HEAD's commits from it too, rather than running its own full log.
+    runlog.stage("loading history")
     progress.emit("stage", repo=f"{owner}/{name}", stage="loading history")
     gitio._numstat_cache(repo)
 
     szz_shas = None
     if st.enable_szz:
+        runlog.stage("szz")
         szz_cache = os.path.join(st.ci_cache_dir, f"{owner}_{name}.szz.json")
         print("[szz] tracing fix-forward defects (slow; cached after first run)...",
               file=sys.stderr, flush=True)
@@ -1237,16 +1269,25 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
             capture.write(None, sc)
 
     def _work(pr: dict):
-        t0 = time.monotonic()
-        try:
-            r = mine_pr(repo, pr, api, default_branch, snapshot, st,
-                        author_pr_times, concurrency, ci_map, szz_shas,
-                        obs_cutoff=obs_cutoff, base_resolver=base_resolver)
-            return "ok", r, None, time.monotonic() - t0
-        except gitio.GitError as e:
-            return "git", None, e, time.monotonic() - t0
-        except Exception as e:                          # noqa: BLE001
-            return "exc", None, e, time.monotonic() - t0
+        t0, w0 = time.monotonic(), llm_flags.quota_wait_s()
+
+        def took():
+            # worker time without any plan-quota pause, which is waiting, not mining
+            waited = llm_flags.quota_wait_s() - w0
+            return time.monotonic() - t0 - waited, waited
+        with runlog.pr_scope(pr.get("number"), waited=llm_flags.quota_wait_s):
+            try:
+                r = mine_pr(repo, pr, api, default_branch, snapshot, st,
+                            author_pr_times, concurrency, ci_map, szz_shas,
+                            obs_cutoff=obs_cutoff, base_resolver=base_resolver)
+                return ("ok", r, None, *took())
+            except gitio.GitError as e:
+                runlog.set_status("git-error")
+                return ("git", None, e, *took())
+            except Exception as e:                          # noqa: BLE001
+                runlog.set_status("exc:" + type(e).__name__)
+                runlog.warn("pr", "mining failed", exc=type(e).__name__, err=str(e)[:200])
+                return ("exc", None, e, *took())
 
     def _commit(pr_rows: list[dict]):
         for pr_row in pr_rows:
@@ -1262,6 +1303,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     # consumed strictly in PR order, so row order, the checkpoint, and the LLM
     # circuit breaker behave exactly as in a sequential run.
     todo = [(i, pr) for i, pr in enumerate(prs, 1) if pr.get("number") not in done]
+    runlog.stage("mining PRs", total=len(prs), todo=len(todo), resumed=len(done))
     workers = max(1, st.workers)
     window = max(2 * workers, 2 * st.llm_concurrency if st.enable_llm else 0)
     progress.emit("repo_start", repo=repo_key, total=len(prs), resumed=len(done),
@@ -1281,10 +1323,12 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         _fill()
         while inflight:
             i, pr, fut = inflight.popleft()
-            kind, r, err, secs = fut.result()
+            kind, r, err, secs, waited = fut.result()
             _fill()
             num = pr.get("number")
-            print(f"[pr {i}/{len(prs)}] #{num} ({secs:.1f}s)", file=sys.stderr, flush=True)
+            print(f"[pr {i}/{len(prs)}] #{num} ({secs:.1f}s"
+                  f"{f', +{waited:.0f}s quota wait' if waited >= 1 else ''})",
+                  file=sys.stderr, flush=True)
             if kind == "git":
                 skipped["git-error"] += 1
                 print(f"[skip] PR #{num}: git: {err}", file=sys.stderr)
@@ -1349,6 +1393,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     # repo-local PR-history features need every PR's outcome, so they're
     # computed once all rows are in (strictly point-in-time per row)
+    runlog.stage("repo-wide labels")
     if not st.llm_breaker_tripped:
         n_flaky = flaky.apply(rows, st)
         if n_flaky:
@@ -1371,6 +1416,8 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         detail = ", ".join(f"{k}={v}" for k, v in skipped.most_common())
         print(f"[skips] {total}/{len(prs)} PRs produced no row — {detail}",
               file=sys.stderr)
+    runlog.stage(None)
+    runlog.info("repo", "done", rows=len(rows), skipped=dict(skipped))
     return rows
 
 
