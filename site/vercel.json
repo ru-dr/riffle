@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "ignoreCommand": "bash \"$(git rev-parse --show-toplevel)/site/scripts/vercel-ignore.sh\"",
   "headers": [
     {
       "source": "/art/(.*)",
