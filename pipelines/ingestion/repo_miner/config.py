@@ -234,6 +234,13 @@ class Settings:
     llm_quota_pause_pct: float = 95.0      # pause at this % used
     llm_quota_poll_s: int = 300            # re-read the plan usage at most this often
     llm_quota_max_wait_h: float = 12.0     # give up (fail calls) after waiting this long
+    # a PR whose LLM call fails is retried this many times (waits grow by
+    # llm_retry_backoff_s) before the repo stops; no row is written without
+    # the LLM columns it is in scope for
+    llm_row_retries: int = 3
+    llm_retry_backoff_s: float = field(default_factory=lambda: float(os.getenv("LLM_RETRY_BACKOFF_S", "60")))
+    # wait between the quick retries inside one claude -p call (x attempt)
+    llm_call_retry_s: float = field(default_factory=lambda: float(os.getenv("LLM_CALL_RETRY_S", "10")))
     # PRs mined in parallel (threads; the work is mostly git subprocesses).
     # Each worker may run lizard/semgrep, so the default is capped by free RAM
     # (default_workers); RIFFLE_WORKERS or --workers overrides it.

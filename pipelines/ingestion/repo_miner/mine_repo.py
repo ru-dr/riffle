@@ -43,7 +43,8 @@ import progress
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
 from labels import (POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
                     szz_window)
-from merge_labels import COLUMNS as MERGE_LABEL_COLUMNS, at_open, build_merge_labels, classify_close
+from merge_labels import (COLUMNS as MERGE_LABEL_COLUMNS, at_open, build_merge_labels,
+                          classify_close, close_transcript)
 from github_api import GitHubAPI
 
 
@@ -426,6 +427,22 @@ def _pr_metadata(pr: dict) -> dict:
     }
 
 
+def _retry_llm(repo: str, row: dict, num, st: config.Settings) -> dict:
+    """Ask the LLM again for a PR whose call failed, waiting longer each time
+    (plan limits are waited out inside fetch). Returns the last fetch result."""
+    fetched = {"status": "fail"}
+    for attempt in range(1, st.llm_row_retries + 1):
+        wait = st.llm_retry_backoff_s * attempt
+        print(f"[llm] PR #{num}: LLM call failed; retry {attempt}/{st.llm_row_retries} in "
+              f"{wait:.0f}s (the miner waits, nothing is written without it)",
+              file=sys.stderr, flush=True)
+        time.sleep(wait)
+        fetched = llm_flags.fetch(repo, row["base_sha"], row["head_sha"], st)
+        if fetched.get("status") != "fail":
+            return fetched
+    return fetched
+
+
 OUTSIDE_ASSOCIATIONS = {"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE"}
 
 
@@ -463,12 +480,22 @@ def _close_reason_from_llm(pr: dict, row: dict, events: list[dict], ci_head: str
     """The classifier's close_reason for an unmerged PR, or None. Rules come
     first: with close_reason_llm "other_only" the LLM is asked only when they
     find no reason. Rows outside llm_scope never ask."""
-    if not _llm_in_scope(pr, row, st):
+    if not st.enable_llm or st.close_reason_classifier != "llm" or not _llm_in_scope(pr, row, st):
         return None
     if st.close_reason_llm != "always":
         if build_merge_labels(pr, events, ci_head, st, None).get("close_reason") != "other":
             return None
-    return classify_close(pr, events, st)
+    if close_transcript(pr, events) is None:
+        return None                      # nothing human to read: the rules decide
+    for attempt in range(st.llm_row_retries + 1):
+        reason = classify_close(pr, events, st)
+        if reason is not None:
+            return reason
+        if attempt < st.llm_row_retries:
+            time.sleep(st.llm_retry_backoff_s * (attempt + 1))
+    # no answer: stop the repo rather than label this PR by the rules alone
+    raise llm_flags.LLMUnavailable(f"close-reason classifier gave no answer for PR "
+                                   f"#{pr.get('number')} after {st.llm_row_retries} retries")
 
 
 def mine_pr(repo: str, pr: dict, api, default_branch: str,
@@ -1016,7 +1043,6 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     skipped: Counter = Counter()
     ckpt_fh = open(ckpt, "a", encoding="utf-8") if ckpt else None
-    llm_pending: list[dict] = []
 
     def _work(pr: dict):
         t0 = time.monotonic()
@@ -1070,6 +1096,13 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                 progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="skip",
                               reason="git-error")
                 continue
+            if kind == "exc" and isinstance(err, llm_flags.LLMUnavailable):
+                print(f"[llm] PR #{num}: {err}. Stopping this repo so no row is written without "
+                      f"its LLM answer; {len(rows)} rows kept in the checkpoint, and a rerun "
+                      f"resumes from PR #{num}.", file=sys.stderr, flush=True)
+                progress.emit("breaker", repo=repo_key, num=num, msg=str(err), kept=len(rows), dropped=0)
+                st.llm_breaker_tripped = True
+                break
             if kind == "exc":
                 skipped[f"exc:{type(err).__name__}"] += 1
                 print(f"[skip] PR #{num}: {err}", file=sys.stderr)
@@ -1082,31 +1115,25 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                               reason="no-rows")
                 continue
             fetched = r.pop("__llm__", None) or {"status": "off"}
-            try:
-                r.update(llm_flags.resolve(fetched, st))
-            except llm_flags.LLMUnavailable as e:
-                print(f"[llm-breaker] TRIPPED at PR #{num}: {e}. Stopping this repo; "
-                      f"{len(llm_pending)} held rows dropped, {len(rows)} clean rows "
-                      f"kept in the checkpoint.", file=sys.stderr, flush=True)
-                progress.emit("breaker", repo=repo_key, num=num, msg=str(e),
-                              kept=len(rows), dropped=len(llm_pending))
+            if fetched.get("status") == "fail":
+                # the miner waits here (later PRs queue behind this one), so a
+                # row is never written with LLM columns left empty by a failure
+                fetched = _retry_llm(repo, r, num, st)
+            if fetched.get("status") == "fail":
+                print(f"[llm] PR #{num}: no LLM answer after {st.llm_row_retries} retries. "
+                      f"Stopping this repo so no row is written without it; {len(rows)} rows "
+                      f"kept in the checkpoint, and a rerun resumes from PR #{num}.",
+                      file=sys.stderr, flush=True)
+                progress.emit("breaker", repo=repo_key, num=num, msg="LLM retries exhausted",
+                              kept=len(rows), dropped=0)
                 st.llm_breaker_tripped = True
                 break
+            r.update(llm_flags.resolve(fetched, st))
             progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="ok",
                           llm="reused" if fetched.get("reused") else fetched.get("status"),
                           llm_secs=fetched.get("secs"),
                           llm_usage=llm_flags.usage_snapshot() if st.enable_llm else None)
-            if fetched.get("status") == "fail":
-                # LLM failed for this PR: hold the row until the next success
-                # proves the failure was transient (then keep it with null
-                # flags). If the breaker trips first, it's dropped.
-                llm_pending.append(r)
-            else:
-                _commit(llm_pending + [r])
-                llm_pending.clear()
-        if not st.llm_breaker_tripped:
-            # trailing LLM failures that never reached the breaker: keep them
-            _commit(llm_pending)
+            _commit([r])
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
         if ckpt_fh:

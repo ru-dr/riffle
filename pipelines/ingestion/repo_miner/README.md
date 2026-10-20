@@ -220,14 +220,19 @@ again with "Reuse clones" on resumes.
 - `--llm` defaults to **headless Claude Code** (`claude -p`, your Claude Code
   login, no API key; model `sonnet`, override with `LLM_MODEL`).
   `LLM_BACKEND=api` uses the OpenAI-compatible endpoint + `LLM_API_KEY`.
-- **Circuit breaker:** after `LLM_BREAKER_THRESHOLD` (default 5) consecutive
-  LLM failures the miner stops, drops the rows from the failing streak, leaves
-  `--out` untouched, and exits 3; `build_dataset.py` aborts the batch. Rerun
-  to resume from the checkpoint.
+- **No row without its LLM answer (v3.0.0):** when a PR's LLM call fails, the
+  miner retries that PR in place, up to 3 times with waits of 60, 120 and
+  180 s (`LLM_RETRY_BACKOFF_S`), and later PRs queue behind it, so the whole
+  miner pauses. The close-reason classifier is retried the same way instead
+  of falling back to the rules. If a PR still has no answer, the repo stops:
+  rows already done stay in the checkpoint, `--out` is not written, and the
+  miner exits 3; `build_dataset.py` aborts the batch. Rerun to resume from
+  that PR. A row in LLM scope is never written with empty LLM columns.
 - **Plan limits (v3.0.0):** with headless Claude Code the miner reads the
   plan's usage (`claude -p /usage`, no model call) at most every 5 minutes.
   At 95% of a limit, or when a call is refused for one, LLM calls pause until
-  the reset and then continue; mining keeps going meanwhile. A limit that
+  the reset and then continue; PRs wait for their answers, so the miner
+  pauses with them. A limit that
   resets more than 12 h away (a weekly cap) is not waited for: calls fail and
   the breaker stops the run. `--no-llm-quota-wait` turns this off.
 - **Fewer, smaller calls (v3.0.0).** The flags are features, so only the rows

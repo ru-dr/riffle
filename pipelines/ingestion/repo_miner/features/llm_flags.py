@@ -228,7 +228,8 @@ def _pause_until(when: float, why: str, st: config.Settings) -> None:
         _QUOTA["paused_until"] = when
     at = time.strftime("%H:%M", time.localtime(when))
     print(f"[llm-quota] {why}; pausing LLM calls until {at} "
-          f"({(when - time.time()) / 60:.0f} min). Mining continues.", file=sys.stderr, flush=True)
+          f"({(when - time.time()) / 60:.0f} min). PRs wait for their LLM answers, so "
+          f"no row is written without them.", file=sys.stderr, flush=True)
 
 
 def _wait_paused(st: config.Settings) -> None:
@@ -639,7 +640,7 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
             pass
         if attempt < retries:
-            time.sleep(10 * (attempt + 1))
+            time.sleep(st.llm_call_retry_s * (attempt + 1))
     return None
 
 

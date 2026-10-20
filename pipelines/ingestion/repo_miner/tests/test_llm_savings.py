@@ -111,6 +111,7 @@ def test_skipped_rows_resolve_to_null_without_touching_the_breaker():
 def test_close_reason_asks_llm_only_when_rules_say_other(monkeypatch):
     calls = []
     monkeypatch.setattr(mine_repo, "classify_close", lambda pr, ev, st: calls.append(1) or "unwanted")
+    monkeypatch.setattr(mine_repo, "close_transcript", lambda pr, ev: "maintainer: not planned")
     row = {"repo": "o/r", "author_is_bot": False}
     for reason, asks in (("duplicate", False), ("other", True)):
         monkeypatch.setattr(mine_repo, "build_merge_labels",
@@ -233,3 +234,19 @@ def test_batch_stop_prints_one_line_not_a_traceback():
     _, err = child.communicate(timeout=30)
     assert child.returncode == 130
     assert "Traceback" not in err and "[stop] batch interrupted" in err
+
+
+def test_close_reason_without_human_activity_never_asks(monkeypatch):
+    monkeypatch.setattr(mine_repo, "classify_close", lambda *a: pytest.fail("asked the LLM"))
+    monkeypatch.setattr(mine_repo, "build_merge_labels", lambda *a: {"close_reason": "other"})
+    monkeypatch.setattr(mine_repo, "close_transcript", lambda pr, ev: None)
+    assert mine_repo._close_reason_from_llm(_pr(), {"repo": "o/r"}, [], None, _st()) is None
+
+
+def test_close_reason_that_stays_unanswered_stops_the_repo(monkeypatch):
+    monkeypatch.setattr(mine_repo, "classify_close", lambda *a: None)
+    monkeypatch.setattr(mine_repo, "build_merge_labels", lambda *a: {"close_reason": "other"})
+    monkeypatch.setattr(mine_repo, "close_transcript", lambda pr, ev: "text")
+    with pytest.raises(L.LLMUnavailable):
+        mine_repo._close_reason_from_llm(_pr(), {"repo": "o/r"}, [], None, _st(llm_retry_backoff_s=0))
+
