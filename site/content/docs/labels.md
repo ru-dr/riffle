@@ -25,8 +25,8 @@ label_bad = revert OR ci_fail OR hotfix
 | Signal | Fires when | Window |
 | --- | --- | --- |
 | `revert` | A later commit reverts the pull request | 30 days |
-| `ci_fail` | Required checks on the merge commit fail; auxiliary and flaky checks excluded | at merge |
-| `hotfix` | A hotfix-labelled pull request touches the same lines | 7 days |
+| `ci_fail` | Required checks fail in the merge commit's push-triggered workflows; auxiliary and flaky checks, and issue or schedule workflows, excluded | at merge |
+| `hotfix` | A later commit worded as a hotfix, rollback, quick fix or urgent fix touches the same files | 7 days |
 
 SZZ bug-inducing links and follow-up fixes are mined as well, but are not part
 of the target; both are reported as ablations.

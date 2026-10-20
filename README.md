@@ -235,7 +235,7 @@ all four services.
 
 | Dataset | Use |
 | --- | --- |
-| Repo miner (`pipelines/ingestion/repo_miner`) | Primary training data, mined from scratch from the corpus repositories: features plus both targets, `label_bad` ([ADR 0002](docs/adr/0002-label-target.md)) and `label_merged` ([ADR 0009](docs/adr/0009-merge-outcome-target.md)) |
+| Repo miner (`pipelines/ingestion/repo_miner`) | Primary training data, mined from scratch from the corpus repositories: three tables (a dataset row per closed PR, its snapshots while open, and per-commit code features) with both targets, `label_bad` ([ADR 0002](docs/adr/0002-label-target.md)) and `label_merged` ([ADR 0009](docs/adr/0009-merge-outcome-target.md)) |
 | [AIDev](https://arxiv.org/html/2601.15195) | Reference only, not ingested. Its feature catalog defined the merge-outcome labels the miner now produces |
 | On the Shoulders of Giants | Engineered feature set for PR outcome prediction (MSR 2020) |
 | ApacheJIT | 106,674 commits, 28,239 labelled bug-inducing. Bootstraps the defect signal and supplies the backtest repositories |

@@ -12,6 +12,9 @@ format. **Any change to a schema is a breaking change.**
 | `mined_features` | `scorer` (extractor) | the model, the narrator, training |
 | `outcome_import` | your systems (`POST /v1/outcomes`) | label mining |
 | `mined_history` | `miner` | pipelines, `scorer` |
+| `mined_dataset` | the repo miner (one row per closed PR) | training |
+| `mined_snapshot` | the repo miner (one row per PR moment while open) | training |
+| `mined_commit_features` | the repo miner (one row per head commit) | training |
 
 ## PrEvent
 

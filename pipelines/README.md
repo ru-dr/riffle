@@ -6,8 +6,8 @@ model is allowed to serve. Nothing here is on the request path.
 | Directory | Responsibility |
 | --- | --- |
 | [`ingestion`](ingestion) | Dataset download and normalisation |
-| [`training`](training) | Per-tenant training, evaluation, promotion |
-| [`dags`](dags) | Airflow DAGs that schedule the above |
+| [`training`](training) | Per-tenant training, evaluation, promotion (so far only `frames.py`, the loader for the miner's tables) |
+| [`dags`](dags) | Airflow DAGs that schedule the above (so far a smoke DAG; the stack is [`infra/docker/airflow`](../infra/docker/airflow)) |
 
 Constraints that live here: **training backpressure** — the job pool is
 bounded, and excess requests queue or defer, never run. **Promotion** — a new
