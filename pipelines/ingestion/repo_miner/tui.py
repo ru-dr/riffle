@@ -111,7 +111,9 @@ class _LevelHighlighter(Highlighter):
         if ("breaker" in line or "FAILED" in line or "[error" in line or "WARNING" in line
                 or "killed" in line or "out of memory" in line):
             text.stylize("bold red")
-        elif line.startswith(("[warn", "[skip", "[api] rate limit", "[stop]", "[blame] warning")):
+        elif (line.startswith(("[warn", "[skip", "[api] rate limit", "[stop]", "[blame] warning",
+                               "[llm-quota]"))
+              or (line.startswith("[health]") and " FLAG " in line)):
             text.stylize("yellow")
         elif line.startswith(("[web]", "[tui] saving", "[tui] log file", "[tui] saved", "[tui] peak")):
             text.stylize("cyan")
@@ -175,6 +177,7 @@ class RepoStat:
     skips: int = 0
     llm_ok: int = 0
     llm_fail: int = 0
+    llm_skip: int = 0                    # out of --llm-scope or a trivial diff
     started: float | None = None
     ended: float | None = None
     szz_t0: float | None = None          # first SZZ progress event (time, done)
@@ -194,6 +197,8 @@ class RunStats:
     pr_times: deque = field(default_factory=lambda: deque(maxlen=200))  # wall-clock stamps
     llm_secs: deque = field(default_factory=lambda: deque(maxlen=200))
     breaker: str | None = None
+    llm_paused_until: float | None = None   # Claude plan limit: LLM calls wait until then
+    llm_paused_why: str | None = None
     batch_ok: int | None = None
     rss: int = 0                         # miner process tree, bytes
     rss_peak: int = 0
@@ -422,6 +427,16 @@ class RiffleTUI(App):
                 yield Input("100", id="max_prs", type="integer", compact=True)
                 yield Label("Skip PRs merged in last N days (mature labels)")
                 yield Input("90", id="min_age", type="integer", compact=True)
+                yield Label("Date window from (YYYY-MM-DD; blank = newest-N mode)")
+                yield Input("", id="window_from", placeholder="2023-07-01", compact=True)
+                yield Label("Date window to (YYYY-MM-DD)")
+                yield Input("", id="window_to", placeholder="2026-07-31", compact=True)
+                yield Checkbox("Max PRs counts training PRs only (window)", False, id="cap_training",
+                               compact=True)
+                yield Label("History lead-in days (window; 0 = off)")
+                yield Input("180", id="lead_in", type="integer", compact=True)
+                yield Label("Only repos tagged [domain: NAME] (blank = all)")
+                yield Input("", id="only_domain", placeholder="web-ts", compact=True)
                 yield Label("PR workers")
                 yield Input(str(config.default_workers()), id="workers", type="integer", compact=True)
                 yield Label("LLM concurrency")
@@ -435,6 +450,13 @@ class RiffleTUI(App):
                 yield Label("LLM model")
                 yield Select(MODELS, value="sonnet", allow_blank=False, id="llm_model", compact=True)
                 yield Checkbox("LLM flags (claude -p)", True, id="llm", compact=True)
+                yield Checkbox("LLM on training PRs only", True, id="llm_training", compact=True)
+                yield Checkbox("Close reason: LLM only when rules are unsure", True,
+                               id="close_other_only", compact=True)
+                yield Checkbox("Wait for Claude plan reset (don't fail calls)", True,
+                               id="quota_wait", compact=True)
+                yield Checkbox("PR snapshots (capture while mining)", True, id="snapshots",
+                               compact=True)
                 yield Checkbox("SZZ label", True, id="szz", compact=True)
                 yield Checkbox("CI history", True, id="ci_history", compact=True)
                 yield Checkbox("Merge outcome (+ unmerged PRs)", True, id="merge_outcome",
@@ -683,6 +705,18 @@ class RiffleTUI(App):
             cmd += ["--max-prs", self._val("max_prs")]
         if self._val("min_age"):
             cmd += ["--min-age-days", self._val("min_age")]
+        if self._val("window_from") and self._val("window_to"):
+            cmd += ["--window-from", self._val("window_from"), "--window-to", self._val("window_to")]
+            if self._on("cap_training"):
+                cmd += ["--cap-on", "training"]
+            if self._val("lead_in"):
+                cmd += ["--lead-in-days", self._val("lead_in")]
+        if self._val("only_domain"):
+            cmd += ["--only-domain", self._val("only_domain")]
+        cmd += ["--llm-scope", "training" if self._on("llm_training") else "all",
+                "--close-reason-llm", "other_only" if self._on("close_other_only") else "always"]
+        cmd.append("--llm-quota-wait" if self._on("quota_wait") else "--no-llm-quota-wait")
+        cmd.append("--snapshots" if self._on("snapshots") else "--no-snapshots")
         shard = self._shard()
         if shard:
             cmd += ["--shard", shard]
@@ -729,6 +763,23 @@ class RiffleTUI(App):
         n = int(pcs) if pcs.isdigit() else 1
         i = int(k) if k.isdigit() else 1
         return f"{i}/{n}" if n > 1 else None
+
+    def _window_ok(self) -> bool:
+        """Both window dates or neither, as YYYY-MM-DD, from before to; the
+        training cap and the lead-in need a window."""
+        import re as _re
+        a, b = self._val("window_from"), self._val("window_to")
+        if bool(a) != bool(b):
+            self.notify("Set both window dates, or leave both blank.", severity="error")
+            return False
+        if a and not (_re.fullmatch(r"\d{4}-\d{2}-\d{2}", a) and _re.fullmatch(r"\d{4}-\d{2}-\d{2}", b)
+                      and a <= b):
+            self.notify("Window dates must be YYYY-MM-DD, from on or before to.", severity="error")
+            return False
+        if not a and self._on("cap_training"):
+            self.notify("'Max PRs counts training PRs only' needs a date window.", severity="error")
+            return False
+        return True
 
     def _shard_ok(self) -> bool:
         pcs, k = self._val("pcs"), self._val("pc_index")
@@ -852,6 +903,8 @@ class RiffleTUI(App):
             return
         if not test and not self._shard_ok():
             return
+        if not test and not self._window_ok():
+            return
         repos_file = self._val("repos_file") or "repos.txt"
         if not test and not os.path.isfile(os.path.join(HERE, repos_file)) and not os.path.isfile(repos_file):
             self.notify(f"Repos file not found: {repos_file}", severity="error")
@@ -944,7 +997,9 @@ class RiffleTUI(App):
                     self.log_fh.write(time.strftime("%H:%M:%S ") + text + "\n")
                 continue
             style = ("bold red" if "breaker" in text or "FAILED" in text or "[error" in text
-                     else "yellow" if text.startswith(("[warn", "[skip")) else None)
+                     else "yellow" if (text.startswith(("[warn", "[skip", "[llm-quota]"))
+                                       or (text.startswith("[health]") and " FLAG " in text))
+                     else None)
             self._log(text, style=style)
         rc = await self.proc.wait()
         self.proc = None
@@ -1100,6 +1155,11 @@ class RiffleTUI(App):
                         self.stats.llm_secs.append(e["llm_secs"])
                 elif e.get("llm") == "fail":
                     r.llm_fail += 1
+                elif e.get("llm") == "skipped":
+                    r.llm_skip += 1
+        elif ev == "llm_quota":
+            self.stats.llm_paused_until = e.get("until")
+            self.stats.llm_paused_why = e.get("why")
         elif ev == "breaker":
             r = self._repo(e["repo"])
             r.stage = "BREAKER"
@@ -1231,6 +1291,13 @@ class RiffleTUI(App):
         eta = (total - done) / rate if rate and total and not unknown else None
         llm_ok = sum(r.llm_ok for r in self.repos.values())
         llm_fail = sum(r.llm_fail for r in self.repos.values())
+        llm_skip = sum(r.llm_skip for r in self.repos.values())
+        until = getattr(self.stats, "llm_paused_until", None)
+        paused = None
+        if until and until > time.time() and self.proc:
+            paused = (f"LLM paused for plan reset until "
+                      f"{time.strftime('%H:%M', time.localtime(until))} "
+                      f"({_fmt_secs(until - time.time())})")
         lat = (sum(self.stats.llm_secs) / len(self.stats.llm_secs)) if self.stats.llm_secs else None
         repos_done = sum(1 for r in self.repos.values() if r.ended)
         state = "running" if self.proc else "finished"
@@ -1251,9 +1318,11 @@ class RiffleTUI(App):
             utxt = (f"  ·  tokens in {_fmt_tokens(usage['tokens_in'])} "
                     f"(cache {_fmt_tokens(usage['cache_read'])}) / out {_fmt_tokens(usage['output'])}"
                     + (f"  ·  ${usage['cost_usd']:.2f} at API prices" if usage["cost_known"] else ""))
-        line2 = (f"LLM ok {llm_ok}  fail {llm_fail}  ·  avg latency "
+        line2 = (f"LLM ok {llm_ok}  fail {llm_fail}  skipped {llm_skip}  ·  avg latency "
                  f"{f'{lat:.1f}s' if lat else '—'}{utxt}  ·  breaker "
                  + (f"[bold red]{self.stats.breaker}[/]" if self.stats.breaker else "[green]armed[/]"))
+        if paused:
+            line2 += f"\n[bold yellow]{paused}[/]"
         plan = self._plan_text()
         if plan:
             line2 += "\n" + plan
@@ -1278,6 +1347,7 @@ class RiffleTUI(App):
             "eta": _fmt_secs(eta) if self.proc and eta else None,
             "progress": (done / total) if total and not unknown else 0,
             "llm": f"{llm_ok} / {llm_fail}", "llm_latency": f"{lat:.1f}s" if lat else None,
+            "llm_skipped": llm_skip, "llm_paused": paused,
             "llm_usage": usage,
             "breaker": self.stats.breaker,
         })

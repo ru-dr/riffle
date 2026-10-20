@@ -227,6 +227,8 @@ def _pause_until(when: float, why: str, st: config.Settings) -> None:
             return
         _QUOTA["paused_until"] = when
     at = time.strftime("%H:%M", time.localtime(when))
+    import progress
+    progress.emit("llm_quota", until=when, why=why)
     print(f"[llm-quota] {why}; pausing LLM calls until {at} "
           f"({(when - time.time()) / 60:.0f} min). PRs wait for their LLM answers, so "
           f"no row is written without them.", file=sys.stderr, flush=True)
