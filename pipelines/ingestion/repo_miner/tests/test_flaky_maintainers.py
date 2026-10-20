@@ -76,6 +76,62 @@ def test_check_runs_mark_rerun_passes():
     assert by["lint"]["rerun_pass"] is False and "codeql" not in by     # optional check
 
 
+def test_only_push_workflows_count_as_the_merge_commits_ci():
+    """Issue, schedule and comment workflows land check runs on whatever commit was main's head."""
+    def run(i, name, suite, conclusion, app="github-actions"):
+        return {"id": i, "name": name, "conclusion": conclusion, "check_suite": {"id": suite},
+                "app": {"slug": app}, "completed_at": "2025-01-01T00:00:00Z"}
+
+    class Fake(GitHubAPI):
+        def _get(self, path, params=None, body=None):
+            if path.endswith("/actions/runs"):
+                return 200, {"workflow_runs": [
+                    {"event": "push", "check_suite_id": 10}, {"event": "issues", "check_suite_id": 20},
+                    {"event": "schedule", "check_suite_id": 30}]}, {}
+            if path.endswith("/check-runs"):
+                return 200, {"check_runs": [
+                    run(1, "Build&Test: node-22", 10, "success"),
+                    run(2, "evaluate-issue", 20, "failure"),          # an issue workflow failed
+                    run(3, "nightly-audit", 30, "failure"),           # a scheduled one failed
+                    run(4, "circleci", 99, "failure", app="circleci"),  # other app: no workflow event
+                ]}, {}
+            return 200, {"statuses": []}, {}
+
+    api = Fake("o", "r", config.Settings())
+    every = api.check_conclusion("abc")
+    push = api.check_conclusion("abc", events=("push",))
+    assert every["required"] == "failure" and {c["name"] for c in every["checks"]} >= {"evaluate-issue", "nightly-audit"}
+    assert {c["name"] for c in push["checks"]} == {"build&test: node-22", "circleci"}
+    assert push["required"] == "failure"                              # the circleci failure still counts
+
+
+def test_commit_with_only_automation_runs_has_no_verdict():
+    class Fake(GitHubAPI):
+        def _get(self, path, params=None, body=None):
+            if path.endswith("/actions/runs"):
+                return 200, {"workflow_runs": [{"event": "issues", "check_suite_id": 20}]}, {}
+            if path.endswith("/check-runs"):
+                return 200, {"check_runs": [{"id": 1, "name": "evaluate-issue", "conclusion": "failure",
+                                              "check_suite": {"id": 20}, "app": {"slug": "github-actions"}}]}, {}
+            return 200, {"statuses": []}, {}
+
+    c = Fake("o", "r", config.Settings()).check_conclusion("abc", events=("push",))
+    assert c == {"required": None, "optional": None, "checks": []}     # unobserved, not a pass and not a failure
+
+
+def test_unreadable_workflow_runs_fall_back_to_counting_everything():
+    class Fake(GitHubAPI):
+        def _get(self, path, params=None, body=None):
+            if path.endswith("/actions/runs"):
+                return 403, None, {}
+            if path.endswith("/check-runs"):
+                return 200, {"check_runs": [{"id": 1, "name": "build", "conclusion": "failure",
+                                              "check_suite": {"id": 5}, "app": {"slug": "github-actions"}}]}, {}
+            return 200, {"statuses": []}, {}
+
+    assert Fake("o", "r", config.Settings()).check_conclusion("abc", events=("push",))["required"] == "failure"
+
+
 # ---- maintainers from history ------------------------------------------------------
 
 def _pr(author, events):
@@ -160,3 +216,9 @@ def test_get_retries_a_cut_off_response(monkeypatch):
     monkeypatch.setattr(github_api.time, "sleep", lambda s: None)
     status, data, _ = GitHubAPI("o", "r", config.Settings())._get("/x")
     assert (status, data) == (200, {"ok": True}) and len(calls) == 2
+
+
+def test_preview_publish_jobs_are_not_build_checks():
+    from github_api import _is_optional_check
+    assert _is_optional_check("preview") and _is_optional_check("preview release")
+    assert not _is_optional_check("build&test: node-22, ubuntu-latest")
