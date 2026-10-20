@@ -373,7 +373,7 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
     "now   now   now   repos"
     "alert alert alert alert"
     "log   log   log   log"
-    "seen  seen  seen  hint";
+    "brand seen  seen  hint";
   overflow:hidden}
 #big.on{display:grid}
 #big.dim{filter:brightness(.55)}
@@ -392,6 +392,10 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
 #big .alert{grid-area:alert;margin-top:var(--bp-break)}
 #big .log{grid-area:log;margin-top:var(--bp-step)}
 #big .seen{grid-area:seen;align-self:last baseline;margin-top:var(--bp-step)}
+#big .bp-brand{grid-area:brand;align-self:last baseline;margin-top:var(--bp-step);display:flex;align-items:center;
+  gap:1.2vh;color:var(--bp-dim);min-width:0}
+#big .bp-brand .lockup{height:clamp(12px,2.2vh,28px);color:var(--bp-dim)}
+#big .bp-brand .bpver{font-family:var(--mono);font-size:var(--bp-label);line-height:1.1;white-space:nowrap}
 #big .hint{grid-area:hint;align-self:last baseline;margin-top:var(--bp-step)}
 
 #big .word.run{color:#3ddc84}#big .word.warn{color:#f0b443}#big .word.bad{color:#ff6b6b}#big .word.done{color:#7aa7ff}
@@ -421,7 +425,32 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
 #big .clock,#big .sys,#big .sys .fact,#big .f-rate,#big .f-repos{align-items:flex-end;text-align:right}
 #big .hint{text-align:right}
 #big .seen.off{color:#ff6b6b;font-weight:600}
-@media (max-width:899px),(hover:none) and (pointer:coarse){#b_big{display:none}}
+#big .bpbtn{font:inherit;color:var(--bp-soft);background:transparent;border:1px solid var(--bp-rule);
+  border-radius:6px;padding:0 14px;min-height:40px;margin-left:8px}
+/* phones, portrait: one column of the same things, big status word and percent first, two facts per row,
+   facts in the right column flush right like the desktop's fourth column; Dim and Exit are buttons
+   because there is no keyboard and an accidental tap must not leave the page */
+@media (max-width:899px){
+  #big{--bp-tight:.6vh;--bp-step:1.4vh;--bp-break:2.2vh;
+    --bp-label:clamp(11px,3.1vw,15px);--bp-value:clamp(18px,6.2vw,30px);
+    --bp-head:clamp(24px,8vw,44px);--bp-log:clamp(10px,2.9vw,13px);
+    padding:max(2.5vh,env(safe-area-inset-top,0px)) max(5vw,env(safe-area-inset-right,0px))
+      max(2vh,env(safe-area-inset-bottom,0px)) max(5vw,env(safe-area-inset-left,0px));
+    grid-template-columns:repeat(2,minmax(0,1fr));column-gap:4vw;
+    grid-template-rows:auto auto auto auto auto auto auto auto minmax(0,1fr) auto auto;
+    grid-template-areas:"word word" "pct pct" "bar bar" "prs eta" "ela rate" "now now" "repos sys"
+      "alert alert" "log log" "seen seen" "brand hint"}
+  #big .clock{display:none}
+  #big .f-now .val{font-size:clamp(14px,4.6vw,22px)}
+  #big .alert{font-size:clamp(15px,4.6vw,22px);white-space:normal;line-height:1.2}
+  #big .pct{font-size:clamp(64px,27vw,150px);line-height:.85}
+  #big .bar{height:1.6vh;min-height:10px}
+  #big .f-eta{align-items:flex-end;text-align:right}
+  #big .f-repos{align-items:flex-start;text-align:left}
+  #big .sys{flex-direction:row;justify-content:flex-end;gap:4vw}
+  #big .bp-brand .lockup{height:clamp(12px,2.6vh,20px)}
+  #big .hint{display:flex;align-items:center;justify-content:flex-end}
+}
 </style></head><body>
 <div class="wrap">
 <header>
@@ -506,12 +535,13 @@ footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;paddin
   <div class="fact f-eta"><span class="lbl">Time left</span><span class="val" id="bg_eta">—</span></div>
   <div class="fact f-ela"><span class="lbl">Elapsed</span><span class="val" id="bg_elapsed">—</span></div>
   <div class="fact f-rate"><span class="lbl">PRs per minute</span><span class="val" id="bg_rate">—</span></div>
-  <div class="fact f-now"><span class="lbl">Now mining</span><span class="val" id="bg_repo">—</span></div>
+  <div class="fact f-now"><span class="lbl" id="bg_now_lbl">Now mining</span><span class="val" id="bg_repo">—</span></div>
   <div class="fact f-repos"><span class="lbl">Repositories</span><span class="val" id="bg_repos">—</span></div>
   <div class="alert" id="bg_alert"></div>
   <div class="log" id="bg_log"></div>
+  <div class="bp-brand">@@LOCKUP@@<span class="bpver" id="bg_ver">v—</span></div>
   <div class="seen" id="bg_seen">—</div>
-  <div class="hint">b or click to exit · d dim</div>
+  <div class="hint" id="bg_hint">b or click to exit · d dim</div>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="help" role="dialog" aria-modal="true" aria-labelledby="help_t"><div class="box">
@@ -631,7 +661,7 @@ function render(s){
   if (!s) return;
   last = s;
   const v = s.version ? "v" + s.version : "";
-  setText("ver", v); $("foot_ver").textContent = v;
+  setText("ver", v); $("foot_ver").textContent = v; $("bg_ver").textContent = v ? "miner " + v : "";
   const state = s.state || "idle";
   $("state").className = "chip " + (state === "running" ? "live" : /killed|exit|breaker/.test(state) ? "dead" : state === "stopped" ? "stopped" : "");
   setText("state_t", ui.paused ? state + " · paused" : state);
@@ -772,10 +802,7 @@ async function wake(on){
   } catch (e) { big.lock = null; }
 }
 document.addEventListener("visibilitychange", () => { if (big.on) wake(true); });
-const bigAllowed = () => window.matchMedia("(min-width: 900px)").matches &&
-  !window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 function bigToggle(on){
-  if (!bigAllowed()) on = false;
   big.on = on === undefined ? !big.on : on;
   $("big").classList.toggle("on", big.on); $("big").classList.toggle("dim", big.dim);
   document.body.style.overflow = big.on ? "hidden" : "";
@@ -813,6 +840,7 @@ function renderBig(){
   const rows = s.rows || [];
   const cur = rows.find(r => r.status === "active" || r.status === "warn");
   const asmOn = s.assembly && s.assembly.state === "running";
+  $("bg_now_lbl").textContent = asmOn ? "Now building" : "Now mining";
   $("bg_repo").textContent = asmOn ? "snapshot tables" : cur ? cur.name + (cur.total ? " · " + Number(cur.done).toLocaleString() + "/" + Number(cur.total).toLocaleString() : "") : "—";
   $("bg_repos").textContent = s.repos || "—";
   const res = s.resources || {};
@@ -838,7 +866,11 @@ function renderBig(){
   seen.classList.toggle("off", Boolean(stale && lastOk));
 }
 $("b_big").onclick = () => bigToggle(true);
-$("big").onclick = () => bigToggle(false);
+if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) {
+  const btn = (text, fn) => { const b = el("button", "bpbtn", text); b.type = "button";
+    b.onclick = e => { e.stopPropagation(); fn(); }; return b; };
+  $("bg_hint").replaceChildren(btn("Dim", bigDim), btn("Exit", () => bigToggle(false)));
+} else $("big").onclick = () => bigToggle(false);
 setInterval(renderBig, 1000);
 if (location.hash === "#big") bigToggle(true);
 tick(); setInterval(tick, 2000); setInterval(ago, 1000);
