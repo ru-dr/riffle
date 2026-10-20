@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 
 import config
@@ -217,6 +218,28 @@ def capture_pr(repo: str, pr: dict, row: dict, events: list[dict] | None,
         "head_line": [[_iso(w), s] for w, s in line], "heads": heads,
         "open_head": row.get("head_sha"), "open_snapshot": row.get("open_snapshot"),
     }
+
+
+# ---- what capture cost (logged per repo) -----------------------------------------
+
+_STATS_LOCK = threading.Lock()
+STATS = {"prs": 0, "heads": 0, "secs": 0.0}
+
+
+def note(record: dict | None, secs: float) -> None:
+    with _STATS_LOCK:
+        STATS["secs"] += secs
+        if record:
+            STATS["prs"] += 1
+            STATS["heads"] += len(record.get("heads") or [])
+
+
+def take_stats() -> dict:
+    """The counters since the last call, then reset (one repo per miner run)."""
+    with _STATS_LOCK:
+        out = dict(STATS)
+        STATS.update(prs=0, heads=0, secs=0.0)
+    return out
 
 
 # ---- files -------------------------------------------------------------------

@@ -3204,6 +3204,16 @@
         "boolean",
         "null"
       ]
+    },
+    "/snapshot_weight": {
+      "type": [
+        "number"
+      ]
+    },
+    "/moment_bucket": {
+      "type": [
+        "string"
+      ]
     }
   },
   "org_config.schema.json": {

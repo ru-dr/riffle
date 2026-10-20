@@ -42,6 +42,7 @@ import gitio
 import aggregate
 import progress
 import health
+import scope
 import snapshot_capture
 from version import __version__
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
@@ -479,7 +480,7 @@ def _provenance(st: config.Settings) -> dict:
 
 
 CAPTURE = "__capture__"
-OUTSIDE_ASSOCIATIONS = {"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE"}
+OUTSIDE_ASSOCIATIONS = scope.OUTSIDE_ASSOCIATIONS
 
 
 def _llm_in_scope(pr: dict, row: dict, st: config.Settings) -> bool:
@@ -493,12 +494,8 @@ def _llm_in_scope(pr: dict, row: dict, st: config.Settings) -> bool:
     # author_is_bot already excludes AI agents, which v0.4 is about
     is_bot = bool(row.get("author_is_bot")) or (
         (pr.get("user") or {}).get("type") == "Bot" and not row.get("ai_agent_authored"))
-    assoc = pr.get("author_association")
-    outside = (assoc is None or assoc in OUTSIDE_ASSOCIATIONS) and not row.get("author_confirmed_maintainer")
-    if not is_bot and outside:
-        return True
-    key = f"{row.get('repo')}#{pr.get('number')}".encode()
-    return int(hashlib.sha1(key).hexdigest(), 16) % 100 < st.llm_sample_pct
+    return scope.is_training(row.get("repo"), pr.get("number"), pr.get("author_association"),
+                             is_bot, row.get("author_confirmed_maintainer"), st.llm_sample_pct)
 
 
 def _llm_skip_reason(pr: dict, row: dict, changed: list[str], st: config.Settings) -> str | None:
@@ -768,7 +765,9 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     # --- snapshot capture (snapshot_capture.py): raw timeline and the heads the
     # PR had while open, for the rows the model trains on
     if st.enable_snapshots and _llm_in_scope(pr, row, st):
+        t_cap = time.monotonic()
         row[CAPTURE] = snapshot_capture.capture_pr(repo, pr, row, events, st)
+        snapshot_capture.note(row[CAPTURE], time.monotonic() - t_cap)
     return row
 
 
@@ -1208,6 +1207,8 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     # skips PRs already in the checkpoint. main() removes it after a clean write.
     repo_key = f"{owner}/{name}"
     ckpt = (out_path + ".partial.jsonl") if out_path else None
+    if out_path and os.path.dirname(out_path):
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
     done: set = set()
     if ckpt and os.path.isfile(ckpt):
         try:
@@ -1226,6 +1227,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
             pass
 
     skipped: Counter = Counter()
+    pr_secs_total = 0.0                       # worker time on mined PRs (capture share)
     ckpt_fh = open(ckpt, "a", encoding="utf-8") if ckpt else None
     capture = (snapshot_capture.Writer(st.snapshot_dir or os.path.join("snapshots_raw", f"{owner}_{name}"),
                                        resume=bool(done))
@@ -1322,6 +1324,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                 st.llm_breaker_tripped = True
                 break
             r.update(llm_flags.resolve(fetched, st))
+            pr_secs_total += secs or 0.0
             progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="ok",
                           llm="reused" if fetched.get("reused") else fetched.get("status"),
                           llm_secs=fetched.get("secs"),
@@ -1334,6 +1337,15 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         if capture:
             capture.close()
             evidence.save(capture.dir)        # snapshot roles use it too
+    if st.enable_snapshots:
+        cs = snapshot_capture.take_stats()
+        if cs["prs"]:
+            share = cs["secs"] / pr_secs_total if pr_secs_total else 0.0
+            print(f"[snapshots] captured {cs['prs']} PRs · {cs['heads'] / cs['prs']:.2f} heads/PR "
+                  f"({(cs['heads'] - cs['prs']) / cs['prs']:.2f} extra) · capture took "
+                  f"{cs['secs']:.0f}s, {share:.0%} of PR mining time "
+                  f"(~{share / (1 - share) if share < 1 else 0:.0%} slower than without)",
+                  file=sys.stderr)
 
     # repo-local PR-history features need every PR's outcome, so they're
     # computed once all rows are in (strictly point-in-time per row)
@@ -1456,6 +1468,10 @@ def main():
     ap.add_argument("--lead-in-days", type=int, default=None,
                     help="with a window: days before the block read as metadata only, so "
                          "its first PRs have a history (default 180; 0 = off)")
+    ap.add_argument("--cap-on", choices=["all", "training"], default=None,
+                    help="with a window: what --max-prs counts. training = only the PRs the "
+                         "model trains on (outside contributors plus the sample), so "
+                         "--max-prs 10000 gives about 10,000 of them (default all)")
     ap.add_argument("--domain", default=None, help="dataset domain written on every row (ADR 0011)")
     ap.add_argument("--health-dir", default="health", help="where per-repo health JSON goes")
     ap.add_argument("--snapshot-max-heads", type=int, default=None,
@@ -1527,6 +1543,10 @@ def main():
     if bool(args.window_from) != bool(args.window_to):
         sys.exit("--window-from and --window-to go together")
     st.window_from, st.window_to = args.window_from, args.window_to
+    if args.cap_on:
+        if args.cap_on == "training" and not args.window_from:
+            sys.exit("--cap-on training needs a date window (--window-from/--window-to)")
+        st.cap_on = args.cap_on
     if args.lead_in_days is not None:
         st.lead_in_days = args.lead_in_days
     st.domain = args.domain

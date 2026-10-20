@@ -289,4 +289,13 @@ def test_commit_rows_match_their_contract(world, tmp_path):
 def test_snapshot_contract_keeps_every_dataset_column():
     d, s = _schema("mined_dataset.schema.json"), _schema("mined_snapshot.schema.json")
     assert all(s["properties"][k] == v for k, v in d["properties"].items())
-    assert set(s["properties"]) - set(d["properties"]) == set(S.STATE_COLUMNS) | set(S.IDENTITY_COLUMNS)
+    assert set(s["properties"]) - set(d["properties"]) == (set(S.STATE_COLUMNS) | set(S.IDENTITY_COLUMNS)
+                                                           | set(S.TRAINING_COLUMNS))
+
+
+def test_weights_add_up_to_one_per_pr_and_buckets(world):
+    rows = _build(world)
+    assert abs(sum(r["snapshot_weight"] for r in rows) - 1) < 1e-4
+    assert rows[0]["moment_bucket"] == "open"
+    assert all(r["moment_bucket"] in S.MOMENT_BUCKETS for r in rows)
+    assert S.moment_bucket("clock", 30) == "1-3d" and S.moment_bucket("idle", 800) == ">30d"
