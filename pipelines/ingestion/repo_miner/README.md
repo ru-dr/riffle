@@ -133,7 +133,7 @@ python build_dataset.py --window-from 2023-07-01 --window-to 2026-07-31 \
   `path_failure_mode_*`) needs mined outcomes, so it still starts empty.
 - Without `--window-from` the older selection applies.
 
-**Domains (ADR 0011):** tag a line in the repos file with `[domain: web-ts]`;
+**Domains (ADR 0011):** tag a line in the repos file with `[domain: web-ts]` in its `#` comment (`https://github.com/o/r  # [~9000 commits] [domain: web-ts]`);
 `--only-domain web-ts` mines just those repos, and every row records its
 `domain`.
 
@@ -154,6 +154,38 @@ wrong: under 50 rows, almost no unmerged outside PRs (PRs may land outside the
 merge button), over half bot PRs, LLM columns missing on in-scope rows, or CI
 unobserved on most merged rows. Saved as `health/<owner>_<name>.json`
 (`--health-dir`).
+
+## Before the big run: tools and the night-1 pilot
+
+- **`repos_web_ts.txt`:** the first domain (ADR 0011), 43 JavaScript /
+  TypeScript repos tagged `[domain: web-ts]`, `[monorepo]` on the app
+  monorepos, with what was left out and why at the top.
+- **`scout.py`** ranks candidate repos without cloning: outside-contributor
+  share, unmerged share among outside PRs, bots, agents, from each repo's 100
+  latest closed PRs (`--agent-search` adds agent PR counts for 12 months).
+  Caveat: GitHub reports org members with private membership as
+  `CONTRIBUTOR`, so company-run repos can look more "outside" than they are.
+- **`llm_compare.py`** asks two models (default sonnet and haiku) about the
+  same ~300 diffs, exactly as the miner asks, and reports per-flag agreement,
+  so one model can be chosen for the whole dataset. `--dry-run` shows the
+  calls first; answers are saved as they arrive, so it resumes.
+- **`audit_export.py`** writes a stratified ~600-PR CSV (equal per outcome
+  class, agent PRs over-weighted) with links and the miner's labels, and
+  blank columns for the human check of label precision.
+
+**Night-1 pilot** (one full repo, before scaling):
+
+```bash
+python build_dataset.py --repos-file repos_web_ts.txt --only-domain web-ts \
+    --window-from 2023-07-01 --window-to 2026-07-31 --max-prs 8000 \
+    --remine-repo vitejs/vite      # or a repos file with just vite
+python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw
+```
+
+Record from the log, `health/vitejs_vite.json` and the snapshot output:
+seconds per row, LLM calls and `$ at API prices` per row, whether the plan
+pause triggered, head commits per captured PR, `snapshots_raw/` size, and the
+health flags. Scale the estimates for the full run from those.
 
 ## Splitting, waiting, and resuming
 

@@ -1,0 +1,62 @@
+# web-ts domain (ADR 0011): JavaScript/TypeScript web ecosystem, the first
+# domain to prove. Mine with:
+#   python build_dataset.py --repos-file repos_web_ts.txt --only-domain web-ts \
+#       --window-from 2023-07-01 --window-to 2026-07-31 --max-prs 8000
+# [~N commits] counts are from the GitHub API on 2026-10-19. [monorepo] marks
+# app monorepos, reported as their own subgroup. Hold out 6-8 repos for
+# validation and 6-8 for test, at least one monorepo in each.
+# Left out: microsoft/TypeScript (now Go), pnpm/pnpm (now Rust), nodejs/node
+# (commit queue), angular/angular (own merge tooling), electron/electron
+# (mostly backport bots), withastro/astro (two thirds bot PRs),
+# getsentry/sentry and PostHog/posthog (few outside PRs).
+
+# Frameworks and UI libraries
+https://github.com/vercel/next.js  # [~36,330 commits] [domain: web-ts]
+https://github.com/facebook/react  # [~21,736 commits] [domain: web-ts]
+https://github.com/sveltejs/svelte  # [~11,446 commits] [domain: web-ts]
+https://github.com/sveltejs/kit  # [~7,871 commits] [domain: web-ts]
+https://github.com/vuejs/core  # [~7,231 commits] [domain: web-ts]
+https://github.com/nuxt/nuxt  # [~15,837 commits] [domain: web-ts] [monorepo]
+https://github.com/remix-run/react-router  # [~11,290 commits] [domain: web-ts]
+https://github.com/solidjs/solid  # [~1,947 commits] [domain: web-ts]
+https://github.com/preactjs/preact  # [~6,441 commits] [domain: web-ts]
+https://github.com/tailwindlabs/tailwindcss  # [~6,877 commits] [domain: web-ts]
+https://github.com/shadcn-ui/ui  # [~2,575 commits] [domain: web-ts]
+https://github.com/mui/material-ui  # [~28,850 commits] [domain: web-ts]
+https://github.com/ant-design/ant-design  # [~33,109 commits] [domain: web-ts]
+
+# Data, routing and server libraries
+https://github.com/TanStack/query  # [~5,710 commits] [domain: web-ts]
+https://github.com/TanStack/router  # [~6,699 commits] [domain: web-ts]
+https://github.com/trpc/trpc  # [~4,996 commits] [domain: web-ts]
+https://github.com/prisma/prisma  # [~8,470 commits] [domain: web-ts]
+https://github.com/drizzle-team/drizzle-orm  # [~2,945 commits] [domain: web-ts]
+https://github.com/honojs/hono  # [~2,889 commits] [domain: web-ts]
+https://github.com/expressjs/express  # [~6,182 commits] [domain: web-ts]
+https://github.com/fastify/fastify  # [~4,907 commits] [domain: web-ts]
+https://github.com/nestjs/nest  # [~22,276 commits] [domain: web-ts]
+
+# Build, lint and test tools
+https://github.com/vitejs/vite  # [~9,799 commits] [domain: web-ts]
+https://github.com/webpack/webpack  # [~20,101 commits] [domain: web-ts]
+https://github.com/rollup/rollup  # [~6,443 commits] [domain: web-ts]
+https://github.com/prettier/prettier  # [~12,008 commits] [domain: web-ts]
+https://github.com/eslint/eslint  # [~11,072 commits] [domain: web-ts]
+https://github.com/typescript-eslint/typescript-eslint  # [~6,962 commits] [domain: web-ts]
+https://github.com/jestjs/jest  # [~7,786 commits] [domain: web-ts]
+https://github.com/vitest-dev/vitest  # [~6,314 commits] [domain: web-ts]
+https://github.com/microsoft/playwright  # [~18,247 commits] [domain: web-ts]
+https://github.com/storybookjs/storybook  # [~88,830 commits] [domain: web-ts] [monorepo]
+https://github.com/yarnpkg/berry  # [~3,838 commits] [domain: web-ts]
+
+# Apps and app monorepos (community-heavy)
+https://github.com/calcom/cal.com  # [~16,502 commits] [domain: web-ts] [monorepo]
+https://github.com/n8n-io/n8n  # [~25,948 commits] [domain: web-ts] [monorepo]
+https://github.com/supabase/supabase  # [~39,222 commits] [domain: web-ts] [monorepo]
+https://github.com/WordPress/gutenberg  # [~43,128 commits] [domain: web-ts] [monorepo]
+https://github.com/excalidraw/excalidraw  # [~4,128 commits] [domain: web-ts] [monorepo]
+https://github.com/outline/outline  # [~10,714 commits] [domain: web-ts] [monorepo]
+https://github.com/twentyhq/twenty  # [~17,101 commits] [domain: web-ts] [monorepo]
+https://github.com/documenso/documenso  # [~4,218 commits] [domain: web-ts] [monorepo]
+https://github.com/formbricks/formbricks  # [~6,225 commits] [domain: web-ts] [monorepo]
+https://github.com/expo/expo  # [~35,490 commits] [domain: web-ts] [monorepo]
