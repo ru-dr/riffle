@@ -9,6 +9,7 @@
     "docs": "bun scripts/build-docs.mjs"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
     "beautiful-mermaid": "^1.1.3",
     "geist": "^1.8.1",
     "github-slugger": "^2.0.0",
