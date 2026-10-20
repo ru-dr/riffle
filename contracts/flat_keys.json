@@ -1,4 +1,318 @@
 {
+  "mined_commit_features.schema.json": {
+    "/repo": {
+      "type": [
+        "string"
+      ]
+    },
+    "/pr_number": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/head_sha": {
+      "type": [
+        "string"
+      ]
+    },
+    "/base_sha": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/first_seen": {
+      "type": [
+        "string"
+      ]
+    },
+    "/at_open": {
+      "type": [
+        "boolean"
+      ]
+    },
+    "/error": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/Entropy": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/LA": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/LD": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/ND": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/NF": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/NS": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/api_contract_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/bound_or_comparison_edit": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/ccn_delta": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/dependency_major_bump_count": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/docs_only": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/frac_generated_lines": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/frac_test_lines": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/ghsa_malware_dep": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/ghsa_max_severity_introduced": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/hardcoded_secret_added": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/lang_mix": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_ccn_changed_func": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/migration_reversibility": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/n_deps_added": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_deps_downgraded": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_deps_upgraded": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_files_added": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_files_removed": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_files_renamed": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_funcs_modified": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_major_bumps": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/new_env_or_config_key": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/observability_delta": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/osv_ghsa_disagreement": {
+      "type": [
+        "any"
+      ]
+    },
+    "/osv_vulns_fixed": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/osv_vulns_introduced": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/patch_missing_files": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/semgrep_cwe_top25_new": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/semgrep_findings_new": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/semgrep_high_conf_security_new": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/test_only": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_auth_path": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_ci_config": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_codeowners_or_riffle_yml": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_dep_manifest": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_infra": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_lockfile": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_migration": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/unused_import_or_dead_code_added": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/vuln_has_fix_available": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
   "mined_dataset.schema.json": {
     "/AGE": {
       "type": [
@@ -1460,6 +1774,1331 @@
     "/tables/*/sha256": {
       "type": [
         "string"
+      ]
+    }
+  },
+  "mined_snapshot.schema.json": {
+    "/AGE": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/EXP": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/Entropy": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/FIX": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/LA": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/LD": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/LT": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/ND": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/NF": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/NS": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/REXP": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/SEXP": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/agent_boilerplate": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/agent_name": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/agent_recent_closed_count": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/agent_recent_merge_rate": {
+      "type": [
+        "any"
+      ]
+    },
+    "/ai_agent_authored": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/api_contract_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/author_account_age_days": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/author_association": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/author_days_since_last_change": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/author_email": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/author_file_familiarity": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/author_is_bot": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/author_post_merge_ci_fail_rate": {
+      "type": [
+        "any"
+      ]
+    },
+    "/author_prs_merged_repo": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/author_revert_rate": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/authz_check_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/base_behind_by": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/base_sha": {
+      "type": [
+        "string"
+      ]
+    },
+    "/body_checklist_items": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/body_has_test_plan": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/body_headings": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/body_len": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/bound_or_comparison_edit": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/ccn_delta": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/change_intent": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/changes_public_api_signature": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/changes_requested_reviews": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/ci_observed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/close_reason": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/close_reason_source": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/closed_at": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/cochange_degree": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/cochange_partners_missing": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/concurrent_open_prs_same_files": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/concurrent_open_prs_same_hunks": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/config_or_feature_flag_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/created_at": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/days_to_hotfix": {
+      "type": [
+        "any"
+      ]
+    },
+    "/days_to_revert": {
+      "type": [
+        "any"
+      ]
+    },
+    "/days_to_szz_fix": {
+      "type": [
+        "any"
+      ]
+    },
+    "/db_schema_or_query_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/declared_hotfix": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/dependency_major_bump_count": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/docs_only": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/entropy_pctile_repo": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/error_handling_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/exception_swallowed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/expected_test_cochange_missing": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/feature_flag_guarding": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/frac_generated_lines": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/frac_test_lines": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/ghsa_malware_dep": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/ghsa_max_severity_introduced": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/hardcoded_secret_added": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/has_agents_md": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/has_contributing": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/has_linked_issue": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/has_milestone": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/head_branch_agent_prefix": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/head_from_fork": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/head_sha": {
+      "type": [
+        "string"
+      ]
+    },
+    "/hotfix_window_closed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/input_validation_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/la_norm": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/label_abandoned": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_bad": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_bad_observed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_ci_fail": {
+      "type": [
+        "any"
+      ]
+    },
+    "/label_ci_fail_optional": {
+      "type": [
+        "any"
+      ]
+    },
+    "/label_ci_technical": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_duplicate": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_hotfix": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_merged": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_revert": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_rework": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_szz_bug": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/label_unwanted": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/lang_mix": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/ld_norm": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/llm_touches_authn_authz": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/max_NDEV": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_NUC": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_abandoned_lines_share": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_ccn_changed_func": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_file_churn_365d": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_file_churn_90d": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_file_complexity_ccn": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_file_fix_density": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_file_hotspot_score": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_file_minor_contributor_count": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_file_post_merge_ci_fail_rate": {
+      "type": [
+        "any"
+      ]
+    },
+    "/max_file_revert_density": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_file_top_author_share": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_fix_decay_density": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_hotfix_count_365d": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_hunk_fix_proximity": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_mod_lines_distinct_authors": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_mod_lines_prior_fix_share": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_recent_merge_burst_7d": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_revert_decay_density": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_sim_open_prs": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_sim_recent_merged": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/max_test_cochange_ratio": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/mean_file_age_days": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/mean_file_fix_density": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/mean_file_revert_density": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/mean_hunk_fix_proximity": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/mean_mod_lines_self_authored_share": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/median_mod_line_age_days_median": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/merge_via": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/merged_at": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/migration_reversibility": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/min_days_since_last_fix": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/min_days_since_last_revert": {
+      "type": [
+        "any"
+      ]
+    },
+    "/min_file_hotspot_rank": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/min_hotspot_rank_touched": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/min_mod_line_age_days_min": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/mined_at": {
+      "type": [
+        "string"
+      ]
+    },
+    "/n_deps_added": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_deps_downgraded": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_deps_upgraded": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_files_added": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_files_removed": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_files_renamed": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_funcs_modified": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_major_bumps": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/n_topk_hotspots_touched": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/new_env_or_config_key": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/nf_pctile_repo": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/null_handling_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/numeric_money_precision": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/observability_delta": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/observed_through": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/open_snapshot": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/osv_ghsa_disagreement": {
+      "type": [
+        "any"
+      ]
+    },
+    "/osv_vulns_fixed": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/osv_vulns_introduced": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/patch_missing_files": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/path_detection_lag_days": {
+      "type": [
+        "any"
+      ]
+    },
+    "/path_failure_mode_ci": {
+      "type": [
+        "any"
+      ]
+    },
+    "/path_failure_mode_hotfix": {
+      "type": [
+        "any"
+      ]
+    },
+    "/path_failure_mode_revert": {
+      "type": [
+        "any"
+      ]
+    },
+    "/path_size_pctile": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/post_open_commits": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/post_open_force_pushes": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/pr_number": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/pr_size_pctile_repo": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/refactor_vs_behavior": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/release_cycle_position": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/repo": {
+      "type": [
+        "string"
+      ]
+    },
+    "/repo_agent_pr_load_30d": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/repo_median_first_response_hours": {
+      "type": [
+        "any"
+      ]
+    },
+    "/repo_outside_closed_count": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/repo_outside_merge_rate": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/repo_revert_base_rate": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/resource_lifecycle_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/retry_timeout_idempotency_change": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/revealed_path_scrutiny": {
+      "type": [
+        "any"
+      ]
+    },
+    "/revert_window_closed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/satd_added": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "/security_sensitive_ops": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/semantic_risk_1to5": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "/semgrep_cwe_top25_new": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/semgrep_findings_new": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/semgrep_high_conf_security_new": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/similar_pr_bad_rate": {
+      "type": [
+        "any"
+      ]
+    },
+    "/similar_pr_count": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/sum_file_complexity_ccn": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/sum_hotfix_count_365d": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/targets_default_branch": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/test_code_alignment": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/test_only": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/tests_added_for_behavior_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/time_handling_change": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/title_len": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/touches_auth_path": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_ci_config": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_codeowners_or_riffle_yml": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_dep_manifest": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_infra": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_lockfile": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_migration": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/touches_topk_hotspot": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/transaction_boundary_change": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/unrelated_change_share": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "/unused_import_or_dead_code_added": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/vuln_has_fix_available": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/snapshot_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/snapshot_at": {
+      "type": [
+        "string"
+      ]
+    },
+    "/snapshot_index": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/trigger": {
+      "type": [
+        "string"
+      ]
+    },
+    "/trigger_role": {
+      "type": [
+        "string"
+      ]
+    },
+    "/snapshot_head_sha": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/snapshot_base_sha": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/head_found": {
+      "type": [
+        "string"
+      ]
+    },
+    "/near_decided": {
+      "type": [
+        "boolean"
+      ]
+    },
+    "/time_since_start_h": {
+      "type": [
+        "number"
+      ]
+    },
+    "/time_since_last_human_activity_h": {
+      "type": [
+        "number"
+      ]
+    },
+    "/maintainer_replied": {
+      "type": [
+        "boolean"
+      ]
+    },
+    "/first_maintainer_reply_h": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/review_rounds": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/changes_requested_count": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/approvals_count": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/commits_since_start": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/force_pushes_since_start": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/author_pushed_after_last_review": {
+      "type": [
+        "boolean"
+      ]
+    },
+    "/maintainer_comment_count": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/author_comment_count": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/other_comment_count": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/has_outcome_label": {
+      "type": [
+        "boolean"
+      ]
+    },
+    "/marked_duplicate_so_far": {
+      "type": [
+        "boolean"
+      ]
+    },
+    "/is_draft_now": {
+      "type": [
+        "boolean"
+      ]
+    },
+    "/reopen_count": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/new_commits_since_prev": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "/new_comments_since_prev": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "/diff_size_change_since_prev": {
+      "type": [
+        "null",
+        "number"
       ]
     }
   },

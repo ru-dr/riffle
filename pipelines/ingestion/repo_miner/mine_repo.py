@@ -40,6 +40,7 @@ import config
 import gitio
 import aggregate
 import progress
+import snapshot_capture
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
 from labels import (POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
                     szz_window)
@@ -443,6 +444,7 @@ def _retry_llm(repo: str, row: dict, num, st: config.Settings) -> dict:
     return fetched
 
 
+CAPTURE = "__capture__"
 OUTSIDE_ASSOCIATIONS = {"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE"}
 
 
@@ -712,6 +714,11 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         row.update(build_merge_labels(pr, events, ci_head, st, llm_reason))
     else:
         row.update({c: None for c in MERGE_LABEL_COLUMNS})
+
+    # --- snapshot capture (snapshot_capture.py): raw timeline and the heads the
+    # PR had while open, for the rows the model trains on
+    if st.enable_snapshots and _llm_in_scope(pr, row, st):
+        row[CAPTURE] = snapshot_capture.capture_pr(repo, pr, row, events, st)
     return row
 
 
@@ -824,6 +831,7 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
         snaps = list(pool.map(lambda pr: _open_snapshot(
             repo, pr, pushes.get(pr.get("number")), default_branch, st.rework_grace_s), prs))
     for pr, snap in zip(prs, snaps):
+        pr["_pushes"] = pushes.get(pr.get("number"))   # None: unknown (snapshot capture)
         if snap:
             pr["_open"] = snap
         kinds[snap["kind"] if snap else "final"] += 1
@@ -1043,6 +1051,9 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     skipped: Counter = Counter()
     ckpt_fh = open(ckpt, "a", encoding="utf-8") if ckpt else None
+    capture = (snapshot_capture.Writer(st.snapshot_dir or os.path.join("snapshots_raw", f"{owner}_{name}"),
+                                       resume=bool(done))
+               if st.enable_snapshots else None)
 
     def _work(pr: dict):
         t0 = time.monotonic()
@@ -1058,6 +1069,9 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
     def _commit(pr_rows: list[dict]):
         for pr_row in pr_rows:
+            cap = pr_row.pop(CAPTURE, None)
+            if capture:
+                capture.write(cap, pr_row.get(merge_signals.SIDECAR))
             rows.append(pr_row)
             if ckpt_fh:
                 ckpt_fh.write(json.dumps(pr_row, default=str) + "\n")
@@ -1138,6 +1152,8 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         pool.shutdown(wait=False, cancel_futures=True)
         if ckpt_fh:
             ckpt_fh.close()
+        if capture:
+            capture.close()
 
     # repo-local PR-history features need every PR's outcome, so they're
     # computed once all rows are in (strictly point-in-time per row)
@@ -1241,6 +1257,13 @@ def main():
                          "files are cut (default 25000)")
     ap.add_argument("--llm-quota-wait", action=argparse.BooleanOptionalAction, default=None,
                     help="wait for the Claude plan to reset instead of failing calls (default on)")
+    ap.add_argument("--snapshots", action=argparse.BooleanOptionalAction, default=True,
+                    help="capture what PR snapshots need (raw timeline, head commits while "
+                         "open and their code features) for rows in --llm-scope (default on)")
+    ap.add_argument("--snapshot-dir", default=None,
+                    help="where the capture files go (default snapshots_raw/<owner>_<name>)")
+    ap.add_argument("--snapshot-max-heads", type=int, default=None,
+                    help="head commits per PR with code features (default 5)")
     ap.add_argument("--append", action="store_true",
                     help="append rows to --out (one growing dataset); dedups by "
                          "(repo, pr_number), keeping the newest extraction")
@@ -1304,8 +1327,11 @@ def main():
                   file=sys.stderr)
     if args.llm_concurrency is not None:
         st.llm_concurrency = args.llm_concurrency
+    st.enable_snapshots = args.snapshots
+    if args.snapshot_dir:
+        st.snapshot_dir = args.snapshot_dir
     for opt in ("llm_scope", "llm_sample_pct", "close_reason_llm", "llm_max_diff_chars",
-                "llm_quota_wait"):
+                "llm_quota_wait", "snapshot_max_heads"):
         if getattr(args, opt) is not None:
             setattr(st, opt, getattr(args, opt))
     if args.no_network:

@@ -55,6 +55,7 @@ def rows(request, repo, tmp_path_factory):
     out = tmp_path_factory.mktemp("out") / "rows.jsonl"
     env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "LLM_API_KEY")}
     subprocess.run([sys.executable, str(MINER / "mine_repo.py"), "--repo", str(repo), "--out", str(out),
+                    "--snapshot-dir", str(out.parent / "snapshots"),
                     *OFFLINE, *STAGE_SETS[request.param]],
                    cwd=MINER, env=env, check=True, capture_output=True, timeout=600)
     got = [json.loads(line) for line in out.read_text().splitlines()]

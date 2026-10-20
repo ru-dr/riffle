@@ -1,0 +1,425 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/mined_commit_features.schema.json",
+  "title": "Riffle head commit features",
+  "x-riffle-version": "1.0",
+  "x-riffle-miner-version": "3.1.0",
+  "description": "Code features of each head commit a PR had while open, captured during mining (snapshot_capture.py) for the PRs snapshots are built for: up to snapshot_max_heads per PR. Feature columns are null on the at-open head, whose features are in the mined row, and on a head that failed (error).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "Entropy",
+    "LA",
+    "LD",
+    "ND",
+    "NF",
+    "NS",
+    "api_contract_change",
+    "at_open",
+    "base_sha",
+    "bound_or_comparison_edit",
+    "ccn_delta",
+    "dependency_major_bump_count",
+    "docs_only",
+    "error",
+    "first_seen",
+    "frac_generated_lines",
+    "frac_test_lines",
+    "ghsa_malware_dep",
+    "ghsa_max_severity_introduced",
+    "hardcoded_secret_added",
+    "head_sha",
+    "lang_mix",
+    "max_ccn_changed_func",
+    "migration_reversibility",
+    "n_deps_added",
+    "n_deps_downgraded",
+    "n_deps_upgraded",
+    "n_files_added",
+    "n_files_removed",
+    "n_files_renamed",
+    "n_funcs_modified",
+    "n_major_bumps",
+    "new_env_or_config_key",
+    "observability_delta",
+    "osv_ghsa_disagreement",
+    "osv_vulns_fixed",
+    "osv_vulns_introduced",
+    "patch_missing_files",
+    "pr_number",
+    "repo",
+    "semgrep_cwe_top25_new",
+    "semgrep_findings_new",
+    "semgrep_high_conf_security_new",
+    "test_only",
+    "touches_auth_path",
+    "touches_ci_config",
+    "touches_codeowners_or_riffle_yml",
+    "touches_dep_manifest",
+    "touches_infra",
+    "touches_lockfile",
+    "touches_migration",
+    "unused_import_or_dead_code_added",
+    "vuln_has_fix_available"
+  ],
+  "properties": {
+    "repo": {
+      "type": "string",
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "pr_number": {
+      "type": "integer",
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "head_sha": {
+      "type": "string",
+      "description": "A head commit the PR had while it was open"
+    },
+    "base_sha": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Its fork point from the base branch; the code features are base...head"
+    },
+    "first_seen": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this commit became the PR's head (commit time standing in for push time)"
+    },
+    "at_open": {
+      "type": "boolean",
+      "description": "The at-open head; its features are the mined row's, not repeated here"
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Why the features couldn't be computed, if they couldn't"
+    },
+    "Entropy": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "LA": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "LD": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "ND": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "NF": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "NS": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "api_contract_change": {
+      "enum": [
+        "additive",
+        "breaking",
+        null
+      ],
+      "description": "Source 5 API contract diff. Computed in `pipelines/ingestion/repo_miner/features/api_contract.py`."
+    },
+    "bound_or_comparison_edit": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "ccn_delta": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "dependency_major_bump_count": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "docs_only": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "frac_generated_lines": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "frac_test_lines": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "ghsa_malware_dep": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "ghsa_max_severity_introduced": {
+      "enum": [
+        "LOW",
+        "MODERATE",
+        "HIGH",
+        "CRITICAL",
+        null
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "hardcoded_secret_added": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "lang_mix": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "max_ccn_changed_func": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "migration_reversibility": {
+      "enum": [
+        "destructive",
+        "reversible",
+        null
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "n_deps_added": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "n_deps_downgraded": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "n_deps_upgraded": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "n_files_added": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "n_files_removed": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "n_files_renamed": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "n_funcs_modified": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "n_major_bumps": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "new_env_or_config_key": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "observability_delta": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "osv_ghsa_disagreement": {
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. Type not pinned yet: null in every sampled row."
+    },
+    "osv_vulns_fixed": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "osv_vulns_introduced": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "patch_missing_files": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "semgrep_cwe_top25_new": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "semgrep_findings_new": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "semgrep_high_conf_security_new": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "test_only": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "touches_auth_path": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_ci_config": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_codeowners_or_riffle_yml": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_dep_manifest": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_infra": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_lockfile": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_migration": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "unused_import_or_dead_code_added": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "vuln_has_fix_available": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    }
+  }
+}

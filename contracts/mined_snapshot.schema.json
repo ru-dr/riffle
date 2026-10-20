@@ -1,0 +1,1791 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/mined_snapshot.schema.json",
+  "title": "Riffle PR snapshot row",
+  "x-riffle-version": "1.0",
+  "x-riffle-miner-version": "3.1.0",
+  "description": "One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots.py), labelled with how the PR finally ended. Every column of mined_dataset.schema.json, with three groups taken as of snapshot_at instead of the PR's open: the code features of the head commit then (diff sizes, path flags, deterministic, scanner, dependency and API-contract columns), the merge signals (repo_outside_merge_rate and the rest), and the snapshot state columns. Git-history, blame, LLM and PR-metadata columns stay as at open. Labels are outcomes and never model inputs; so is near_decided. Bots count for nothing in the state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "AGE",
+    "EXP",
+    "Entropy",
+    "FIX",
+    "LA",
+    "LD",
+    "LT",
+    "ND",
+    "NF",
+    "NS",
+    "REXP",
+    "SEXP",
+    "agent_boilerplate",
+    "agent_name",
+    "agent_recent_closed_count",
+    "agent_recent_merge_rate",
+    "ai_agent_authored",
+    "api_contract_change",
+    "approvals_count",
+    "author_account_age_days",
+    "author_association",
+    "author_comment_count",
+    "author_days_since_last_change",
+    "author_email",
+    "author_file_familiarity",
+    "author_is_bot",
+    "author_post_merge_ci_fail_rate",
+    "author_prs_merged_repo",
+    "author_pushed_after_last_review",
+    "author_revert_rate",
+    "authz_check_change",
+    "base_behind_by",
+    "base_sha",
+    "body_checklist_items",
+    "body_has_test_plan",
+    "body_headings",
+    "body_len",
+    "bound_or_comparison_edit",
+    "ccn_delta",
+    "change_intent",
+    "changes_public_api_signature",
+    "changes_requested_count",
+    "changes_requested_reviews",
+    "ci_observed",
+    "close_reason",
+    "close_reason_source",
+    "closed_at",
+    "cochange_degree",
+    "cochange_partners_missing",
+    "commits_since_start",
+    "concurrent_open_prs_same_files",
+    "concurrent_open_prs_same_hunks",
+    "config_or_feature_flag_change",
+    "created_at",
+    "days_to_hotfix",
+    "days_to_revert",
+    "days_to_szz_fix",
+    "db_schema_or_query_change",
+    "declared_hotfix",
+    "dependency_major_bump_count",
+    "diff_size_change_since_prev",
+    "docs_only",
+    "entropy_pctile_repo",
+    "error_handling_change",
+    "exception_swallowed",
+    "expected_test_cochange_missing",
+    "feature_flag_guarding",
+    "first_maintainer_reply_h",
+    "force_pushes_since_start",
+    "frac_generated_lines",
+    "frac_test_lines",
+    "ghsa_malware_dep",
+    "ghsa_max_severity_introduced",
+    "hardcoded_secret_added",
+    "has_agents_md",
+    "has_contributing",
+    "has_linked_issue",
+    "has_milestone",
+    "has_outcome_label",
+    "head_branch_agent_prefix",
+    "head_found",
+    "head_from_fork",
+    "head_sha",
+    "hotfix_window_closed",
+    "input_validation_change",
+    "is_draft_now",
+    "la_norm",
+    "label_abandoned",
+    "label_bad",
+    "label_bad_observed",
+    "label_ci_fail",
+    "label_ci_fail_optional",
+    "label_ci_technical",
+    "label_duplicate",
+    "label_hotfix",
+    "label_merged",
+    "label_revert",
+    "label_rework",
+    "label_szz_bug",
+    "label_unwanted",
+    "lang_mix",
+    "ld_norm",
+    "llm_touches_authn_authz",
+    "maintainer_comment_count",
+    "maintainer_replied",
+    "marked_duplicate_so_far",
+    "max_NDEV",
+    "max_NUC",
+    "max_abandoned_lines_share",
+    "max_ccn_changed_func",
+    "max_file_churn_365d",
+    "max_file_churn_90d",
+    "max_file_complexity_ccn",
+    "max_file_fix_density",
+    "max_file_hotspot_score",
+    "max_file_minor_contributor_count",
+    "max_file_post_merge_ci_fail_rate",
+    "max_file_revert_density",
+    "max_file_top_author_share",
+    "max_fix_decay_density",
+    "max_hotfix_count_365d",
+    "max_hunk_fix_proximity",
+    "max_mod_lines_distinct_authors",
+    "max_mod_lines_prior_fix_share",
+    "max_recent_merge_burst_7d",
+    "max_revert_decay_density",
+    "max_sim_open_prs",
+    "max_sim_recent_merged",
+    "max_test_cochange_ratio",
+    "mean_file_age_days",
+    "mean_file_fix_density",
+    "mean_file_revert_density",
+    "mean_hunk_fix_proximity",
+    "mean_mod_lines_self_authored_share",
+    "median_mod_line_age_days_median",
+    "merge_via",
+    "merged_at",
+    "migration_reversibility",
+    "min_days_since_last_fix",
+    "min_days_since_last_revert",
+    "min_file_hotspot_rank",
+    "min_hotspot_rank_touched",
+    "min_mod_line_age_days_min",
+    "mined_at",
+    "n_deps_added",
+    "n_deps_downgraded",
+    "n_deps_upgraded",
+    "n_files_added",
+    "n_files_removed",
+    "n_files_renamed",
+    "n_funcs_modified",
+    "n_major_bumps",
+    "n_topk_hotspots_touched",
+    "near_decided",
+    "new_comments_since_prev",
+    "new_commits_since_prev",
+    "new_env_or_config_key",
+    "nf_pctile_repo",
+    "null_handling_change",
+    "numeric_money_precision",
+    "observability_delta",
+    "observed_through",
+    "open_snapshot",
+    "osv_ghsa_disagreement",
+    "osv_vulns_fixed",
+    "osv_vulns_introduced",
+    "other_comment_count",
+    "patch_missing_files",
+    "path_detection_lag_days",
+    "path_failure_mode_ci",
+    "path_failure_mode_hotfix",
+    "path_failure_mode_revert",
+    "path_size_pctile",
+    "post_open_commits",
+    "post_open_force_pushes",
+    "pr_number",
+    "pr_size_pctile_repo",
+    "refactor_vs_behavior",
+    "release_cycle_position",
+    "reopen_count",
+    "repo",
+    "repo_agent_pr_load_30d",
+    "repo_median_first_response_hours",
+    "repo_outside_closed_count",
+    "repo_outside_merge_rate",
+    "repo_revert_base_rate",
+    "resource_lifecycle_change",
+    "retry_timeout_idempotency_change",
+    "revealed_path_scrutiny",
+    "revert_window_closed",
+    "review_rounds",
+    "satd_added",
+    "security_sensitive_ops",
+    "semantic_risk_1to5",
+    "semgrep_cwe_top25_new",
+    "semgrep_findings_new",
+    "semgrep_high_conf_security_new",
+    "similar_pr_bad_rate",
+    "similar_pr_count",
+    "snapshot_at",
+    "snapshot_base_sha",
+    "snapshot_head_sha",
+    "snapshot_id",
+    "snapshot_index",
+    "sum_file_complexity_ccn",
+    "sum_hotfix_count_365d",
+    "targets_default_branch",
+    "test_code_alignment",
+    "test_only",
+    "tests_added_for_behavior_change",
+    "time_handling_change",
+    "time_since_last_human_activity_h",
+    "time_since_start_h",
+    "title_len",
+    "touches_auth_path",
+    "touches_ci_config",
+    "touches_codeowners_or_riffle_yml",
+    "touches_dep_manifest",
+    "touches_infra",
+    "touches_lockfile",
+    "touches_migration",
+    "touches_topk_hotspot",
+    "transaction_boundary_change",
+    "trigger",
+    "trigger_role",
+    "unrelated_change_share",
+    "unused_import_or_dead_code_added",
+    "vuln_has_fix_available"
+  ],
+  "properties": {
+    "AGE": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "EXP": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "Entropy": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "FIX": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "LA": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "LD": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "LT": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "ND": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "NF": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "NS": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "REXP": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "SEXP": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "agent_boilerplate": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "agent_name": {
+      "enum": [
+        "claude_code",
+        "codex",
+        "copilot",
+        "cursor",
+        "devin",
+        "jules",
+        "sweep",
+        null
+      ],
+      "description": "Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "agent_recent_closed_count": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "agent_recent_merge_rate": {
+      "description": "Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. Type not pinned yet: null in every sampled row."
+    },
+    "ai_agent_authored": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "api_contract_change": {
+      "enum": [
+        "additive",
+        "breaking",
+        null
+      ],
+      "description": "Source 5 API contract diff. Computed in `pipelines/ingestion/repo_miner/features/api_contract.py`."
+    },
+    "author_account_age_days": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "author_association": {
+      "enum": [
+        "OWNER",
+        "MEMBER",
+        "COLLABORATOR",
+        "CONTRIBUTOR",
+        "FIRST_TIME_CONTRIBUTOR",
+        "FIRST_TIMER",
+        "MANNEQUIN",
+        "NONE",
+        null
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "author_days_since_last_change": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "author_email": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "author_file_familiarity": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "author_is_bot": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "author_post_merge_ci_fail_rate": {
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row."
+    },
+    "author_prs_merged_repo": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "author_revert_rate": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "authz_check_change": {
+      "enum": [
+        "none",
+        "added",
+        "removed",
+        "weakened",
+        "moved",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "base_behind_by": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "base_sha": {
+      "type": "string",
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "body_checklist_items": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "body_has_test_plan": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "body_headings": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "body_len": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "bound_or_comparison_edit": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "ccn_delta": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "change_intent": {
+      "enum": [
+        "feat",
+        "fix",
+        "refactor",
+        "perf",
+        "docs",
+        "test",
+        "build_ci",
+        "chore",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "changes_public_api_signature": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "changes_requested_reviews": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "ci_observed": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`."
+    },
+    "close_reason": {
+      "enum": [
+        "duplicate",
+        "unwanted",
+        "ci_technical",
+        "abandoned",
+        "other",
+        null
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "close_reason_source": {
+      "enum": [
+        "llm",
+        "rules",
+        null
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "closed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "cochange_degree": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "cochange_partners_missing": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "concurrent_open_prs_same_files": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "concurrent_open_prs_same_hunks": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "config_or_feature_flag_change": {
+      "enum": [
+        "none",
+        "config",
+        "feature_flag",
+        "both",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "created_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "days_to_hotfix": {
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row."
+    },
+    "days_to_revert": {
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row."
+    },
+    "days_to_szz_fix": {
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row."
+    },
+    "db_schema_or_query_change": {
+      "enum": [
+        "none",
+        "schema",
+        "query",
+        "both",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "declared_hotfix": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "dependency_major_bump_count": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "docs_only": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "entropy_pctile_repo": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "error_handling_change": {
+      "enum": [
+        "none",
+        "added",
+        "removed",
+        "modified",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "exception_swallowed": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "expected_test_cochange_missing": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "feature_flag_guarding": {
+      "enum": [
+        "n_a",
+        "guarded",
+        "partial",
+        "unguarded",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "frac_generated_lines": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "frac_test_lines": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "ghsa_malware_dep": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "ghsa_max_severity_introduced": {
+      "enum": [
+        "LOW",
+        "MODERATE",
+        "HIGH",
+        "CRITICAL",
+        null
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "hardcoded_secret_added": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "has_agents_md": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "has_contributing": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "has_linked_issue": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-model signal. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "has_milestone": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "head_branch_agent_prefix": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "head_from_fork": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "head_sha": {
+      "type": "string",
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "hotfix_window_closed": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`."
+    },
+    "input_validation_change": {
+      "enum": [
+        "none",
+        "added",
+        "weakened",
+        "modified",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "la_norm": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "label_abandoned": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "label_bad": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`."
+    },
+    "label_bad_observed": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`."
+    },
+    "label_ci_fail": {
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row."
+    },
+    "label_ci_fail_optional": {
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`. Type not pinned yet: null in every sampled row."
+    },
+    "label_ci_technical": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "label_duplicate": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "label_hotfix": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`."
+    },
+    "label_merged": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "label_revert": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`."
+    },
+    "label_rework": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "label_szz_bug": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`."
+    },
+    "label_unwanted": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "lang_mix": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "ld_norm": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "llm_touches_authn_authz": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "max_NDEV": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_NUC": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_abandoned_lines_share": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_ccn_changed_func": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "max_file_churn_365d": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_file_churn_90d": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_file_complexity_ccn": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_file_fix_density": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_file_hotspot_score": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_file_minor_contributor_count": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_file_post_merge_ci_fail_rate": {
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row."
+    },
+    "max_file_revert_density": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_file_top_author_share": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_fix_decay_density": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_hotfix_count_365d": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_hunk_fix_proximity": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+    },
+    "max_mod_lines_distinct_authors": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+    },
+    "max_mod_lines_prior_fix_share": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+    },
+    "max_recent_merge_burst_7d": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_revert_decay_density": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "max_sim_open_prs": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "max_sim_recent_merged": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "max_test_cochange_ratio": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "mean_file_age_days": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "mean_file_fix_density": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "mean_file_revert_density": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "mean_hunk_fix_proximity": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+    },
+    "mean_mod_lines_self_authored_share": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+    },
+    "median_mod_line_age_days_median": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+    },
+    "merge_via": {
+      "enum": [
+        "github",
+        "landed_commit",
+        null
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "merged_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "migration_reversibility": {
+      "enum": [
+        "destructive",
+        "reversible",
+        null
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "min_days_since_last_fix": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "min_days_since_last_revert": {
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row."
+    },
+    "min_file_hotspot_rank": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "min_hotspot_rank_touched": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "min_mod_line_age_days_min": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+    },
+    "mined_at": {
+      "type": "string",
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "n_deps_added": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "n_deps_downgraded": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "n_deps_upgraded": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "n_files_added": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "n_files_removed": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "n_files_renamed": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "n_funcs_modified": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "n_major_bumps": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "n_topk_hotspots_touched": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "new_env_or_config_key": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "nf_pctile_repo": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "null_handling_change": {
+      "enum": [
+        "none",
+        "added",
+        "removed",
+        "new_nullable_deref",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "numeric_money_precision": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "observability_delta": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "observed_through": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "open_snapshot": {
+      "enum": [
+        "exact",
+        "recovered",
+        "approx",
+        "final",
+        null
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "osv_ghsa_disagreement": {
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. Type not pinned yet: null in every sampled row."
+    },
+    "osv_vulns_fixed": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "osv_vulns_introduced": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "patch_missing_files": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "path_detection_lag_days": {
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+    },
+    "path_failure_mode_ci": {
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+    },
+    "path_failure_mode_hotfix": {
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+    },
+    "path_failure_mode_revert": {
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+    },
+    "path_size_pctile": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`."
+    },
+    "post_open_commits": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "post_open_force_pushes": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-outcome label or its counts (ADR 0009), an outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`."
+    },
+    "pr_number": {
+      "type": "integer",
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "pr_size_pctile_repo": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "refactor_vs_behavior": {
+      "enum": [
+        "pure_refactor",
+        "behavior_change",
+        "mixed",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "release_cycle_position": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`."
+    },
+    "repo": {
+      "type": "string",
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "repo_agent_pr_load_30d": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "repo_median_first_response_hours": {
+      "description": "Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`. Type not pinned yet: null in every sampled row."
+    },
+    "repo_outside_closed_count": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "repo_outside_merge_rate": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Merge-model signal, prior PRs only. Computed in `pipelines/ingestion/repo_miner/features/merge_signals.py`."
+    },
+    "repo_revert_base_rate": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "resource_lifecycle_change": {
+      "enum": [
+        "none",
+        "acquire_no_release",
+        "release_removed",
+        "modified",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "retry_timeout_idempotency_change": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "revealed_path_scrutiny": {
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+    },
+    "revert_window_closed": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Post-merge label or outcome detail (ADR 0002), never a model input; null on unmerged rows. Computed in `pipelines/ingestion/repo_miner/labels.py`."
+    },
+    "satd_added": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "security_sensitive_ops": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "semantic_risk_1to5": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "semgrep_cwe_top25_new": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "semgrep_findings_new": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "semgrep_high_conf_security_new": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+    },
+    "similar_pr_bad_rate": {
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+    },
+    "similar_pr_count": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`."
+    },
+    "sum_file_complexity_ccn": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "sum_hotfix_count_365d": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+    },
+    "targets_default_branch": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "test_code_alignment": {
+      "enum": [
+        "none",
+        "unrelated",
+        "partial",
+        "aligned",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "test_only": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+    },
+    "tests_added_for_behavior_change": {
+      "enum": [
+        "yes",
+        "no",
+        "n_a",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "time_handling_change": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "title_len": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "touches_auth_path": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_ci_config": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_codeowners_or_riffle_yml": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_dep_manifest": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_infra": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_lockfile": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_migration": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+    },
+    "touches_topk_hotspot": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+    },
+    "transaction_boundary_change": {
+      "enum": [
+        "none",
+        "added",
+        "removed",
+        "widened",
+        "narrowed",
+        null
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "unrelated_change_share": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+    },
+    "unused_import_or_dead_code_added": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+    },
+    "vuln_has_fix_available": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+    },
+    "snapshot_id": {
+      "type": "string",
+      "description": "Stable id: hash of repo, PR number, trigger and time, so re-mining gives the same rows"
+    },
+    "snapshot_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The moment the snapshot describes (UTC). Everything in the row is as of this moment, except labels"
+    },
+    "snapshot_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Order of this snapshot among the PR's kept snapshots"
+    },
+    "trigger": {
+      "enum": [
+        "approval",
+        "author_fix_push",
+        "back_to_draft",
+        "changes_requested",
+        "clock",
+        "first_maintainer_reply",
+        "idle",
+        "marked_duplicate",
+        "no_maintainer_reply",
+        "open",
+        "outcome_label"
+      ],
+      "description": "What made this moment a snapshot: an event, or a clock (time since start, idle, no maintainer reply)"
+    },
+    "trigger_role": {
+      "enum": [
+        "author",
+        "maintainer",
+        "other",
+        "clock"
+      ],
+      "description": "Who caused the trigger; clock for time-based snapshots"
+    },
+    "snapshot_head_sha": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The PR's head commit at snapshot_at (or the nearest earlier captured one, see head_found)"
+    },
+    "snapshot_base_sha": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Fork point the head's code features were computed from"
+    },
+    "head_found": {
+      "enum": [
+        "open",
+        "exact",
+        "approx",
+        "capped"
+      ],
+      "description": "open: the at-open head; exact: from the head line with force-push history known; approx: force-push history unreadable; capped: the true head wasn't captured, so the nearest earlier captured one is used"
+    },
+    "near_decided": {
+      "type": "boolean",
+      "description": "Last hour before close, or after the PR entered a merge queue or got auto-merge. For filtering in training; never a model input"
+    },
+    "time_since_start_h": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Snapshot state. Hours since the clock started (open, ready-for-review, or the last reopen)"
+    },
+    "time_since_last_human_activity_h": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Snapshot state. Hours since the last non-bot event"
+    },
+    "maintainer_replied": {
+      "type": "boolean",
+      "description": "Snapshot state. A maintainer has commented or reviewed"
+    },
+    "first_maintainer_reply_h": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Snapshot state. Hours from start to the first maintainer reply; null if none yet"
+    },
+    "review_rounds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Reviews by humans other than the author"
+    },
+    "changes_requested_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Changes-requested reviews so far"
+    },
+    "approvals_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Approving reviews so far"
+    },
+    "commits_since_start": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Commits pushed after the start (merges from the base not counted)"
+    },
+    "force_pushes_since_start": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Force-pushes after the start"
+    },
+    "author_pushed_after_last_review": {
+      "type": "boolean",
+      "description": "Snapshot state. The author pushed after the latest review"
+    },
+    "maintainer_comment_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Comments by maintainers"
+    },
+    "author_comment_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Comments by the PR author"
+    },
+    "other_comment_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Comments by other humans"
+    },
+    "has_outcome_label": {
+      "type": "boolean",
+      "description": "Snapshot state. An outcome label (duplicate, wontfix, stale, needs-info, ...) is on the PR now"
+    },
+    "marked_duplicate_so_far": {
+      "type": "boolean",
+      "description": "Snapshot state. Someone marked the PR as a duplicate"
+    },
+    "is_draft_now": {
+      "type": "boolean",
+      "description": "Snapshot state. The PR is back in draft"
+    },
+    "reopen_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Snapshot state. Times the PR was reopened so far"
+    },
+    "new_commits_since_prev": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Snapshot state. Commits since the previous kept snapshot; null on the first"
+    },
+    "new_comments_since_prev": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Snapshot state. Human comments since the previous kept snapshot; null on the first"
+    },
+    "diff_size_change_since_prev": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Snapshot state. Change in LA + LD since the previous kept snapshot; null on the first"
+    }
+  }
+}

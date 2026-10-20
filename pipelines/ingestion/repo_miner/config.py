@@ -241,6 +241,12 @@ class Settings:
     llm_retry_backoff_s: float = field(default_factory=lambda: float(os.getenv("LLM_RETRY_BACKOFF_S", "60")))
     # wait between the quick retries inside one claude -p call (x attempt)
     llm_call_retry_s: float = field(default_factory=lambda: float(os.getenv("LLM_CALL_RETRY_S", "10")))
+    # PR snapshots (snapshot_capture.py, snapshots.py): for rows in llm_scope,
+    # store the raw PR, timeline and force-pushes, and the code features of up
+    # to snapshot_max_heads head commits the PR had while open
+    enable_snapshots: bool = True
+    snapshot_max_heads: int = 5
+    snapshot_dir: str | None = None        # default snapshots_raw/<owner>_<name>
     # PRs mined in parallel (threads; the work is mostly git subprocesses).
     # Each worker may run lizard/semgrep, so the default is capped by free RAM
     # (default_workers); RIFFLE_WORKERS or --workers overrides it.
