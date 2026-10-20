@@ -79,7 +79,8 @@ def report(rows: list[dict], repo_key: str, directory: str = "health", in_llm_sc
     pct = lambda v: "-" if v is None else f"{v:.0%}"  # noqa: E731
     print(f"[health] {repo_key}: {s['rows']} rows · merged {pct(s['merged_share'])} · outside "
           f"{pct(s['outside_share'])} (unmerged {pct(s['outside_unmerged_share'])}) · bots "
-          f"{pct(s['bot_share'])} · agents {pct(s['agent_share'])}", file=sys.stderr)
+          f"{pct(s['bot_share'])} · agents {pct(s['agent_share'])} · open_snapshot "
+          f"{dict(s['open_snapshot'])}", file=sys.stderr)
     for f in h["flags"]:
         print(f"[health] {repo_key}: FLAG {f}", file=sys.stderr)
     try:

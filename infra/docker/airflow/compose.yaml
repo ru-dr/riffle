@@ -1,0 +1,131 @@
+# Airflow for Riffle's scheduled pipelines. The same file runs on a laptop and
+# on a single GCP VM; the differences are in .env, not here.
+#
+#   cp .env.example .env   # fill in the secrets, see README.md
+#   docker compose up -d --build
+#
+# LocalExecutor: tasks run as subprocesses of the scheduler. One machine needs
+# no Celery workers or Redis. Heavy work belongs in Kubernetes Jobs, started
+# by a DAG, not in the Airflow containers.
+
+name: riffle-airflow
+
+# The image is built here and never pulled: the name is local-only and
+# pull_policy stops Compose from looking for it on Docker Hub. The Airflow
+# version lives in one place, AIRFLOW_VERSION (default below), and feeds both the
+# build and the tag.
+x-airflow-common: &airflow-common
+  image: riffle-airflow:${AIRFLOW_VERSION:-3.3.2}-local
+  pull_policy: never
+  restart: unless-stopped
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW_LOAD_EXAMPLES:-false}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env}
+    # The URL is built by a script that percent-encodes the password, so any
+    # POSTGRES_PASSWORD works and no user:password@host string sits in this file.
+    # A key with no value passes the variable through from .env. It is written this
+    # way, not as ${VAR:?message}, so secret scanners do not read the message as a password.
+    POSTGRES_PASSWORD:
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: python /opt/airflow/scripts/db_url.py
+    AIRFLOW__API__SECRET_KEY: ${AIRFLOW_API_SECRET_KEY:?set AIRFLOW_API_SECRET_KEY in .env}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
+    # Tasks reach the API server over the Compose network.
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # Simple auth manager: users and roles come from AIRFLOW_USERS (name:role,
+    # comma separated); passwords are read from a file that the init service
+    # writes from AIRFLOW_PASSWORDS.
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: ${AIRFLOW_USERS:?set AIRFLOW_USERS in .env}
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/auth/passwords.json
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+  volumes:
+    - ../../../pipelines/dags:/opt/airflow/dags:ro
+    - airflow-logs:/opt/airflow/logs
+    - airflow-auth:/opt/airflow/auth
+  depends_on: &airflow-depends
+    postgres:
+      condition: service_healthy
+    airflow-init:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD:       # from .env; the container refuses to start without it
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow", "-d", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Runs once: migrate the metadata database and write the login file.
+  # It also owns the image build. The other services only reference the image,
+  # so parallel builds of the same tag cannot collide.
+  airflow-init:
+    <<: *airflow-common
+    build:
+      context: .
+      args:
+        AIRFLOW_VERSION: ${AIRFLOW_VERSION:-3.3.2}
+    pull_policy: build
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *airflow-env
+      AIRFLOW_PASSWORDS:       # from .env; scripts/init_auth.py stops with a message if it is wrong
+    # Runs as root so it can chown the named volumes to AIRFLOW_UID.
+    user: "0:0"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        mkdir -p /opt/airflow/logs /opt/airflow/auth
+        python /opt/airflow/scripts/init_auth.py
+        chmod 600 /opt/airflow/auth/passwords.json
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs /opt/airflow/auth
+        exec env HOME=/home/airflow setpriv --reuid="${AIRFLOW_UID:-50000}" --regid=0 --clear-groups airflow db migrate
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "${AIRFLOW_BIND_ADDR:-127.0.0.1}:${AIRFLOW_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+
+volumes:
+  postgres-data:
+  airflow-logs:
+  airflow-auth:

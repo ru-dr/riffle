@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
@@ -74,8 +75,9 @@ def revert_delay(repo: str, pr: dict, st: config.Settings) -> float | None:
     """
     Days from merge to the first commit that reverts this PR (or None).
 
-    Matching is STRICT: the revert must reference the merge commit's SHA, or
-    quote this PR's exact title in the canonical `Revert "<title>"` form. The
+    Matching is STRICT: the revert must reference the merge commit's SHA, cite
+    this PR's number (`#N`, as squash-merge reverts do: `fix: revert "x (#N)"`),
+    or quote this PR's exact title in the canonical `Revert "<title>"` form. The
     old loose rule (PR title appearing anywhere in the revert body) made short
     titles like "Fix typo" or "Update README" match unrelated reverts.
     """
@@ -91,6 +93,9 @@ def revert_delay(repo: str, pr: dict, st: config.Settings) -> float | None:
     )
     short = merge_sha[:7]
     title = (pr.get("title") or "").strip().lower()
+    # a revert merges after the PR it undoes, so its own PR number is always
+    # higher: a `#N` in its message can only point at an earlier PR
+    num_re = re.compile(rf"(?<![\w/])#{pr['number']}(?!\d)") if pr.get("number") else None
     best = None
     for rec in out.split("\x1e"):
         parts = rec.strip("\n").split("\x1f", 2)
@@ -102,6 +107,7 @@ def revert_delay(repo: str, pr: dict, st: config.Settings) -> float | None:
         m = msg.lower()
         matched = (
             short in msg or merge_sha in msg
+            or (num_re is not None and num_re.search(msg) is not None)
             or (title and f'revert "{title}"' in m)
         )
         if not matched:

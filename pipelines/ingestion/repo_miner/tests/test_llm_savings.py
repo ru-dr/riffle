@@ -250,3 +250,16 @@ def test_close_reason_that_stays_unanswered_stops_the_repo(monkeypatch):
     with pytest.raises(L.LLMUnavailable):
         mine_repo._close_reason_from_llm(_pr(), {"repo": "o/r"}, [], None, _st(llm_retry_backoff_s=0))
 
+
+
+def test_quota_pause_is_counted_as_wait_not_work(monkeypatch):
+    import time
+    from features import llm_flags
+    st = config.Settings()
+    monkeypatch.setitem(llm_flags._QUOTA, "paused_until", time.time() + 0.3)
+    w0 = llm_flags.quota_wait_s()
+    llm_flags._wait_paused(st)
+    assert 0.2 < llm_flags.quota_wait_s() - w0 < 2
+    w1 = llm_flags.quota_wait_s()
+    llm_flags._wait_paused(st)                 # no pause active: adds nothing
+    assert llm_flags.quota_wait_s() - w1 < 0.05

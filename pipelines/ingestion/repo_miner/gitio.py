@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Iterable
 
+import runlog
+
 
 class GitError(RuntimeError):
     pass
@@ -26,9 +28,13 @@ class GitError(RuntimeError):
 def _run(repo: str, *args: str, check: bool = True) -> str:
     """Run a git command in `repo` and return stdout (text)."""
     cmd = ["git", "-C", repo, *args]
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
+    with runlog.span("git", "call", cmd=args[0] if args else "", slow_s=runlog.SLOW_CALL_S):
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+    if proc.returncode != 0:
+        runlog.debug("git", "non-zero exit", cmd=args[0] if args else "", rc=proc.returncode,
+                     err=proc.stderr.strip()[:200])
     if check and proc.returncode != 0:
         raise GitError(f"{' '.join(cmd)}\n{proc.stderr.strip()}")
     return proc.stdout
@@ -346,10 +352,11 @@ def tree_blobs(repo: str, sha: str) -> dict[str, str]:
 
 
 def file_content_at(repo: str, sha: str, path: str) -> str | None:
-    out = subprocess.run(
-        ["git", "-C", repo, "show", f"{sha}:{path}"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
+    with runlog.span("git", "call", cmd="show", slow_s=runlog.SLOW_CALL_S):
+        out = subprocess.run(
+            ["git", "-C", repo, "show", f"{sha}:{path}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
     if out.returncode != 0:
         return None
     return out.stdout
@@ -505,9 +512,10 @@ def _blame(repo: str, sha: str, path: str,
     for start, end in ranges:
         cmd += ["-L", f"{start},{end}"]
     cmd += [sha, "--", path]
-    out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
+    with runlog.span("git", "call", cmd="blame", slow_s=runlog.SLOW_CALL_S):
+        out = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
     _BLAME_STATS["calls"] += 1
     if out.returncode != 0:
         if "no such path" in (out.stderr or ""):

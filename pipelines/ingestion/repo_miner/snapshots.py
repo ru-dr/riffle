@@ -37,8 +37,9 @@ the PR entered a merge queue or got auto-merge: it is for filtering in
 training and is never a model input.
 
 Usage:
-  python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw \
-      --out snapshots.parquet --commit-features-out commit_features.parquet
+  python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw
+      (writes dataset_snapshots.parquet and dataset_commit_features.parquet; --out and
+      --commit-features-out name them yourself)
 """
 from __future__ import annotations
 
@@ -48,10 +49,12 @@ import hashlib
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 import config
 import maintainers
+import naming
 import snapshot_capture as cap
 from features import merge_signals
 from merge_labels import MAINTAINER_ASSOCIATIONS, _event_time, _event_user, _is_bot, _login
@@ -479,20 +482,34 @@ def assemble(dataset_rows: list[dict], raw_root: str, st: config.Settings) -> tu
     return snaps, commits
 
 
+def assemble_files(dataset: str, raw_root: str, out: str, commits_out: str,
+                   st: config.Settings | None = None) -> dict:
+    """Read the mined dataset and the captures under raw_root, write the two
+    tables, and return what was written. Shared by main() and the miner, which
+    runs it when a batch with --snapshots finishes."""
+    t0 = time.monotonic()
+    snaps, commits = assemble(_read_rows(dataset), raw_root, st or config.Settings())
+    _write_rows(snaps, out)
+    _write_rows(commits, commits_out)
+    return {"snapshots": len(snaps), "prs": len({(r["repo"], r["pr_number"]) for r in snaps}),
+            "commits": len(commits), "secs": round(time.monotonic() - t0, 1),
+            "out": out, "commits_out": commits_out}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", required=True, help="mined at-open rows (.parquet or .jsonl)")
     ap.add_argument("--raw-root", default="snapshots_raw")
-    ap.add_argument("--out", default="snapshots.parquet")
-    ap.add_argument("--commit-features-out", default="commit_features.parquet")
+    ap.add_argument("--out", default=None,
+                    help="default: <dataset>_snapshots.<ext>, like the batch's own assembly")
+    ap.add_argument("--commit-features-out", default=None,
+                    help="default: <dataset>_commit_features.<ext>")
     args = ap.parse_args()
-    st = config.Settings()
-    snaps, commits = assemble(_read_rows(args.dataset), args.raw_root, st)
-    _write_rows(snaps, args.out)
-    _write_rows(commits, args.commit_features_out)
-    prs = len({(r["repo"], r["pr_number"]) for r in snaps})
-    print(f"[snapshots] {len(snaps)} snapshots from {prs} PRs -> {args.out}; "
-          f"{len(commits)} head commits -> {args.commit_features_out}", file=sys.stderr)
+    args.out, args.commit_features_out = (args.out or naming.snapshot_outs(args.dataset)[0],
+                                          args.commit_features_out or naming.snapshot_outs(args.dataset)[1])
+    r = assemble_files(args.dataset, args.raw_root, args.out, args.commit_features_out)
+    print(f"[snapshots] {r['snapshots']} snapshots from {r['prs']} PRs -> {args.out}; "
+          f"{r['commits']} head commits -> {args.commit_features_out}", file=sys.stderr)
 
 
 if __name__ == "__main__":
