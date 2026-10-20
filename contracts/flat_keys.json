@@ -1513,6 +1513,30 @@
         "null",
         "string"
       ]
+    },
+    "/outcome_3class": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/nowhere_reason": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/ci_fail_flaky_only": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/author_confirmed_maintainer": {
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "mined_features.schema.json": {
@@ -3155,6 +3179,30 @@
       "type": [
         "null",
         "string"
+      ]
+    },
+    "/outcome_3class": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/nowhere_reason": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/ci_fail_flaky_only": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/author_confirmed_maintainer": {
+      "type": [
+        "boolean",
+        "null"
       ]
     }
   },

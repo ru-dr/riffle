@@ -50,6 +50,7 @@ POST_MERGE_COLUMNS = (
     "label_revert", "label_ci_fail", "label_ci_fail_optional", "label_hotfix",
     "label_szz_bug", "label_bad",
     "ci_observed", "revert_window_closed", "hotfix_window_closed", "label_bad_observed",
+    "ci_fail_flaky_only",
 )
 
 
@@ -163,19 +164,23 @@ def hotfix_delay(repo: str, pr: dict, changed: list[str],
     return best
 
 
-def ci_fail_labels(api, pr: dict) -> tuple[str | None, str | None]:
+def ci_fail_labels(api, pr: dict) -> tuple[str | None, str | None, list[dict]]:
     """(required_conclusion, optional_conclusion) for the merge commit's CI, each
     'failure' | 'success' | None. None means no verdict was observed (no CI on
     push, retention expired, unreadable) — it is NOT a pass. 'required' is the
     gating build/test; 'optional' is auxiliary checks (CodeQL, coverage, etc.).
     Only an observed required 'failure' should feed label_bad."""
     if api is None:
-        return (None, None)
+        return (None, None, [])
     merge_sha = pr.get("merge_commit_sha")
     if not merge_sha:
-        return (None, None)
+        return (None, None, [])
     c = api.check_conclusion(merge_sha)
-    return (c.get("required"), c.get("optional"))
+    return (c.get("required"), c.get("optional"), c.get("checks") or [])
+
+
+CI_SIDECAR = "__ci__"
+_CI_FAIL = {"failure", "timed_out", "startup_failure", "action_required"}
 
 
 def szz_window(prs: list[dict], st: config.Settings) -> tuple[datetime | None, datetime | None]:
@@ -527,7 +532,7 @@ def build_labels(repo: str, pr: dict, changed: list[str], api,
     base = pr_base or (pr.get("base") or {}).get("sha")
     head = pr_head or pr.get("merge_commit_sha") or (pr.get("head") or {}).get("sha")
     d_szz = szz_delay(repo, pr, base, head, szz_index, st) if (base and head) else None
-    ci_req, ci_opt = ci_fail_labels(api, pr)          # 'failure'|'success'|None
+    ci_req, ci_opt, ci_checks = ci_fail_labels(api, pr)   # 'failure'|'success'|None
 
     merged_at = _parse_ts(pr["merged_at"])
     obs = obs_cutoff or snapshot
@@ -561,6 +566,12 @@ def build_labels(repo: str, pr: dict, changed: list[str], api,
         "revert_window_closed": rev_window_closed,
         "hotfix_window_closed": hot_window_closed,
         "label_bad_observed": bool(ci_observed and rev_window_closed and hot_window_closed),
+        # set by flaky.apply once the repo is mined: True when the CI failure came
+        # only from checks flaky at merge time (then label_ci_fail is False)
+        "ci_fail_flaky_only": (False if ci_observed else None),
+        CI_SIDECAR: {"at": pr["merged_at"],
+                     "failing": [c["name"] for c in ci_checks if c["conclusion"] in _CI_FAIL],
+                     "rerun_passes": [c["name"] for c in ci_checks if c["rerun_pass"]]},
         # when this row was extracted, and how far forward outcomes could be seen
         "mined_at": snapshot.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "observed_through": obs.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

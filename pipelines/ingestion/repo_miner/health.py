@@ -33,7 +33,8 @@ def check(rows: list[dict], in_llm_scope=None) -> dict:
     row should have LLM columns (omit to skip that check)."""
     n = len(rows)
     merged = [r for r in rows if r.get("label_merged") is True or (r.get("merged_at") and r.get("label_merged") is None)]
-    outside = [r for r in rows if r.get("author_association") in OUTSIDE and not r.get("author_is_bot")]
+    outside = [r for r in rows if r.get("author_association") in OUTSIDE and not r.get("author_is_bot")
+               and not r.get("author_confirmed_maintainer")]
     outside_unmerged = [r for r in outside if r.get("label_merged") is False]
     bots = [r for r in rows if r.get("author_is_bot")]
     agents = [r for r in rows if r.get("ai_agent_authored")]

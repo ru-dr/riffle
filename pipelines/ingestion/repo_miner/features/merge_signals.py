@@ -165,7 +165,8 @@ def sidecar(pr: dict, row: dict, events: list[dict] | None, title_open: str | No
         "closed": pr.get("merged_at") or pr.get("closed_at"),
         "merged": bool(pr.get("merged_at")),
         "outsider": (None if not pr.get("author_association")
-                     else pr["author_association"] not in MAINTAINERS),
+                     else pr["author_association"] not in MAINTAINERS
+                     and not pr.get("_author_maintainer")),
         "agent": row.get("agent_name"),
         "first_response": first_response_at(pr, events),
         "tokens": tokens(title_open if title_open is not None else pr.get("title"),

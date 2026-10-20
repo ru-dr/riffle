@@ -37,6 +37,7 @@ Earlier drafts (1–4) were never merged and need no migration.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 1.2 | 2026-10-19 | Optional `outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer` (miner v5.0.0) |
 | 1.1 | 2026-10-19 | Optional `miner_version`, `miner_commit`, `llm_model`, `llm_prompt_version`, `domain` (miner v4.0.0 writes them on every row) |
 | 1.0 | 2026-10-18 | The repo miner's training row as of miner v2.2.0: 199 columns, features at open (ADR 0010), breakage labels (ADR 0002) and merge-outcome labels (ADR 0009) |
 
@@ -44,6 +45,7 @@ Earlier drafts (1–4) were never merged and need no migration.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 1.2 | 2026-10-19 | Optional `outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer` (miner v5.0.0) |
 | 1.1 | 2026-10-19 | The same 5 optional provenance and domain columns as `mined_dataset` 1.1 |
 | 1.0 | 2026-10-19 | PR snapshot rows (miner v3.1.0): every `mined_dataset` column plus 9 identity and 20 state columns |
 

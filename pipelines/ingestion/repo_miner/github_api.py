@@ -688,13 +688,18 @@ class GitHubAPI:
         req: list = []
         opt: list = []
         saw_any = False
+        checks: list[dict] = []      # required checks: latest verdict, rerun-pass
 
-        # 1) Checks API (GitHub Actions, paginated — big matrices exceed one page)
+        # 1) Checks API (GitHub Actions, paginated — big matrices exceed one page).
+        # filter=all includes reruns: each check's verdict is its LATEST run, and
+        # a check whose earlier run failed but latest passed is a rerun-pass,
+        # which flaky detection counts (flaky.py).
+        by_name: dict[str, list] = {}
         page = 1
         while page <= 20:                       # up to 2000 check-runs
             status, data, _ = self._get(
                 f"/repos/{self.owner}/{self.repo}/commits/{sha}/check-runs",
-                {"per_page": 100, "page": page})
+                {"per_page": 100, "page": page, "filter": "all"})
             if status != 200 or not data:
                 break
             runs = data.get("check_runs", [])
@@ -702,14 +707,25 @@ class GitHubAPI:
                 break
             saw_any = True
             for r in runs:
-                c = r.get("conclusion")
-                if not c:
+                if not r.get("conclusion"):
                     continue
                 name = (r.get("name") or "").lower()
-                (opt if self._is_optional(name) else req).append(c)
+                by_name.setdefault(name, []).append(
+                    (r.get("completed_at") or r.get("started_at") or "", r.get("id") or 0,
+                     r["conclusion"]))
             if len(runs) < 100:
                 break
             page += 1
+        FAIL = {"failure", "timed_out", "startup_failure", "action_required"}
+        for name, runs in by_name.items():
+            runs.sort()
+            latest = runs[-1][2]
+            if self._is_optional(name):
+                opt.append(latest)
+            else:
+                req.append(latest)
+                checks.append({"name": name, "conclusion": latest,
+                               "rerun_pass": latest == "success" and any(c in FAIL for *_x, c in runs[:-1])})
 
         # 2) legacy commit statuses — merge in, don't replace
         s2, d2, _ = self._get(
@@ -722,13 +738,17 @@ class GitHubAPI:
                 if not c:
                     continue
                 name = (stt.get("context") or "").lower()
-                (opt if self._is_optional(name) else req).append(c)
+                if self._is_optional(name):
+                    opt.append(c)
+                else:
+                    req.append(c)
+                    checks.append({"name": name, "conclusion": c, "rerun_pass": False})
                 saw_any = True
 
         if not saw_any:
-            return {"required": None, "optional": None}
+            return {"required": None, "optional": None, "checks": []}
         return {"required": _reduce_conclusions(req),
-                "optional": _reduce_conclusions(opt)}
+                "optional": _reduce_conclusions(opt), "checks": checks}
 
     # -- persistent getter (waits through rate limits) ----------------------
     def _get_persistent(self, path: str, params: dict | None = None):

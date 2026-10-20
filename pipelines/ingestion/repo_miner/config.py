@@ -244,6 +244,10 @@ class Settings:
     # PR snapshots (snapshot_capture.py, snapshots.py): for rows in llm_scope,
     # store the raw PR, timeline and force-pushes, and the code features of up
     # to snapshot_max_heads head commits the PR had while open
+    # flaky-check detection (rules.mining.flaky_detection, flaky.py)
+    flaky_detection: bool = True
+    flaky_min_rerun_passes: int = 3
+    flaky_lookback_days: int = 90
     enable_snapshots: bool = True
     snapshot_max_heads: int = 5
     snapshot_dir: str | None = None        # default snapshots_raw/<owner>_<name>

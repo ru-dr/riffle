@@ -43,7 +43,12 @@ COLUMNS = (
     "label_merged", "label_rework", "label_duplicate", "label_unwanted",
     "label_abandoned", "label_ci_technical", "close_reason", "close_reason_source",
     "post_open_commits", "post_open_force_pushes", "changes_requested_reviews",
+    "outcome_3class", "nowhere_reason",
 )
+
+# the training targets (proposal Part 4), from the labels above
+OUTCOME_CLASSES = ("lands_clean", "lands_after_rework", "goes_nowhere")
+NOWHERE_REASONS = ("abandoned", "duplicate", "unwanted", "ci_technical", "unknown")
 
 MAINTAINER_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
@@ -294,9 +299,35 @@ def at_open(pr: dict, events: list[dict], cut: datetime) -> dict:
     return {"title": title, "has_milestone": milestone, "labels": labels}
 
 
+def targets(out: dict) -> dict:
+    """outcome_3class and nowhere_reason from a row's merge labels: merged
+    without rework, merged after rework, or went nowhere; and for the last,
+    why (close_reason, with "other" as "unknown")."""
+    merged, rework = out.get("label_merged"), out.get("label_rework")
+    if merged is True:
+        cls = None if rework is None else ("lands_after_rework" if rework else "lands_clean")
+        return {"outcome_3class": cls, "nowhere_reason": None}
+    if merged is False:
+        reason = out.get("close_reason")
+        # null when the reason wasn't observed (unreadable timeline); "unknown"
+        # when it was read and no rule or classifier found one
+        return {"outcome_3class": "goes_nowhere",
+                "nowhere_reason": None if reason is None else
+                (reason if reason in NOWHERE_REASONS else "unknown")}
+    return {"outcome_3class": None, "nowhere_reason": None}
+
+
 def build_merge_labels(pr: dict, events: list[dict] | None,
                        ci_head: str | None, st: config.Settings,
                        llm_reason: str | None = None) -> dict:
+    out = _merge_labels(pr, events, ci_head, st, llm_reason)
+    out.update(targets(out))
+    return out
+
+
+def _merge_labels(pr: dict, events: list[dict] | None,
+                  ci_head: str | None, st: config.Settings,
+                  llm_reason: str | None = None) -> dict:
     """The merge-outcome columns for one closed PR (or one still open past
     abandon_days, pr["_stale_open"]). `events` is the issue timeline (None =
     unreadable); `ci_head` is the required-check conclusion on the head commit

@@ -769,9 +769,9 @@ Code features of each head commit a PR had while open, captured during mining (s
 
 ## Riffle repo miner training row (`mined_dataset.schema.json`)
 
-**Version:** 1.1
+**Version:** 1.2
 
-One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null. Since 1.1 rows also carry provenance (miner_version, miner_commit, llm_model, llm_prompt_version) and domain; these are optional in the schema so rows mined before miner 4.0.0 still validate, and the miner writes them on every row.
+One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null. Since 1.1 rows also carry provenance (miner_version, miner_commit, llm_model, llm_prompt_version) and domain; these are optional in the schema so rows mined before miner 4.0.0 still validate, and the miner writes them on every row. Since 1.2: outcome_3class, nowhere_reason, ci_fail_flaky_only and author_confirmed_maintainer, optional in the schema for older rows; the miner writes them on every row.
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
@@ -979,6 +979,10 @@ One row of the training dataset written by the repo miner (pipelines/ingestion/r
 | `llm_model` | string or null |  |  | LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
 | `llm_prompt_version` | string or null |  |  | Hash of the LLM prompts and schemas (flags and close-reason classifier); null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
 | `domain` | string or null |  |  | Dataset domain of the repository (ADR 0011), from its [domain: NAME] tag in the repos file; null when untagged. Computed in `pipelines/ingestion/repo_miner/build_dataset.py`. |
+| `outcome_3class` | `lands_clean`, `lands_after_rework`, `goes_nowhere`, `None` |  |  | Training target (proposal Part 4): lands_clean (merged, no rework), lands_after_rework (merged after rework), goes_nowhere (closed unmerged, or abandoned); null when rework wasn't observable. An outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `nowhere_reason` | `abandoned`, `duplicate`, `unwanted`, `ci_technical`, `unknown`, `None` |  |  | For goes_nowhere rows: abandoned, duplicate, unwanted, ci_technical, or unknown (read, but no rule or classifier found a reason); null on merged rows and when the timeline was unreadable. An outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `ci_fail_flaky_only` | boolean or null |  |  | True when the merge commit's required CI failure came only from checks flaky at merge time (3+ rerun-passes in the prior 90 days, rules.mining.flaky_detection); label_ci_fail is then False. Null when CI wasn't observed and on unmerged rows. An outcome detail, never a model input. Computed in `pipelines/ingestion/repo_miner/flaky.py`. |
+| `author_confirmed_maintainer` | boolean or null |  |  | The PR author had merged or closed someone else's PR before this one opened, from the repo's timelines (proposal 2.2). author_association shows today's status and hides private org members, so this is what decides outside contributors. Null when no timelines were read. Computed in `pipelines/ingestion/repo_miner/maintainers.py`. |
 
 ## Riffle mined history manifest (`mined_history.schema.json`)
 
@@ -1081,9 +1085,9 @@ Manifest written by the Go history miner (services/miner) for one repository and
 
 ## Riffle PR snapshot row (`mined_snapshot.schema.json`)
 
-**Version:** 1.1
+**Version:** 1.2
 
-One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots.py), labelled with how the PR finally ended. Every column of mined_dataset.schema.json, with three groups taken as of snapshot_at instead of the PR's open: the code features of the head commit then (diff sizes, path flags, deterministic, scanner, dependency and API-contract columns), the merge signals (repo_outside_merge_rate and the rest), and the snapshot state columns. Git-history, blame, LLM and PR-metadata columns stay as at open. Labels are outcomes and never model inputs; so is near_decided. Bots count for nothing in the state.
+One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots.py), labelled with how the PR finally ended. Every column of mined_dataset.schema.json, with three groups taken as of snapshot_at instead of the PR's open: the code features of the head commit then (diff sizes, path flags, deterministic, scanner, dependency and API-contract columns), the merge signals (repo_outside_merge_rate and the rest), and the snapshot state columns. Git-history, blame, LLM and PR-metadata columns stay as at open. Labels are outcomes and never model inputs; so is near_decided. Bots count for nothing in the state. Since 1.2: outcome_3class, nowhere_reason, ci_fail_flaky_only and author_confirmed_maintainer, optional in the schema for older rows; the miner writes them on every row.
 
 | Key | Allowed | Default | Flags | Meaning |
 |---|---|---|---|---|
@@ -1320,3 +1324,7 @@ One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots
 | `llm_model` | string or null |  |  | LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
 | `llm_prompt_version` | string or null |  |  | Hash of the LLM prompts and schemas (flags and close-reason classifier); null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
 | `domain` | string or null |  |  | Dataset domain of the repository (ADR 0011), from its [domain: NAME] tag in the repos file; null when untagged. Computed in `pipelines/ingestion/repo_miner/build_dataset.py`. |
+| `outcome_3class` | `lands_clean`, `lands_after_rework`, `goes_nowhere`, `None` |  |  | Training target (proposal Part 4): lands_clean (merged, no rework), lands_after_rework (merged after rework), goes_nowhere (closed unmerged, or abandoned); null when rework wasn't observable. An outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `nowhere_reason` | `abandoned`, `duplicate`, `unwanted`, `ci_technical`, `unknown`, `None` |  |  | For goes_nowhere rows: abandoned, duplicate, unwanted, ci_technical, or unknown (read, but no rule or classifier found a reason); null on merged rows and when the timeline was unreadable. An outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
+| `ci_fail_flaky_only` | boolean or null |  |  | True when the merge commit's required CI failure came only from checks flaky at merge time (3+ rerun-passes in the prior 90 days, rules.mining.flaky_detection); label_ci_fail is then False. Null when CI wasn't observed and on unmerged rows. An outcome detail, never a model input. Computed in `pipelines/ingestion/repo_miner/flaky.py`. |
+| `author_confirmed_maintainer` | boolean or null |  |  | The PR author had merged or closed someone else's PR before this one opened, from the repo's timelines (proposal 2.2). author_association shows today's status and hides private org members, so this is what decides outside contributors. Null when no timelines were read. Computed in `pipelines/ingestion/repo_miner/maintainers.py`. |
