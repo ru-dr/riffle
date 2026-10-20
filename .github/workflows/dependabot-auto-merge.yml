@@ -1,0 +1,36 @@
+name: dependabot-auto-merge
+
+# Dependabot's patch and minor updates merge themselves once the required checks
+# (build, branch-name) pass. Majors, and anything not opened by Dependabot, are
+# left for a person. The ruleset on main still decides: this only queues the
+# merge (squash, the one allowed method) and adds the approval the ruleset asks for.
+#
+# Needs, once, in the repo settings: Actions > General > "Allow GitHub Actions to
+# create and approve pull requests", and Pull Requests > "Allow auto-merge".
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve and queue the merge (patch and minor only)
+        if: steps.meta.outputs.update-type == 'version-update:semver-patch' || steps.meta.outputs.update-type == 'version-update:semver-minor'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"
