@@ -47,6 +47,13 @@ TEST_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 
 _WEIGHT_RE = re.compile(r"\[~?([\d,]+) commits\]")
+_DOMAIN_RE = re.compile(r"\[domain:\s*([a-z0-9][a-z0-9-]*)\]")
+
+
+def _parse_domain(line: str) -> str | None:
+    """Dataset domain from a repos.txt line's "[domain: web-ts]" tag (ADR 0011)."""
+    m = _DOMAIN_RE.search(line)
+    return m.group(1) if m else None
 
 
 def _parse_weight(line: str) -> int | None:
@@ -398,6 +405,11 @@ def main():
                          "files are cut (default 25000) (passed through)")
     ap.add_argument("--llm-quota-wait", action=argparse.BooleanOptionalAction, default=None,
                     help="wait for the Claude plan to reset instead of failing calls (default on) (passed through)")
+    ap.add_argument("--window-from", default=None, help="date window start YYYY-MM-DD (passed through)")
+    ap.add_argument("--window-to", default=None, help="date window end YYYY-MM-DD (passed through)")
+    ap.add_argument("--lead-in-days", type=int, default=None, help="history lead-in days (passed through)")
+    ap.add_argument("--only-domain", default=None,
+                    help="mine only repos tagged [domain: NAME] in the repos file")
     ap.add_argument("--snapshots", action=argparse.BooleanOptionalAction, default=True,
                     help="capture what PR snapshots need (passed through; default on)")
     ap.add_argument("--snapshot-root", default="snapshots_raw",
@@ -450,6 +462,7 @@ def main():
             sys.exit(f"--remine-repo wants OWNER/NAME, got {repo!r}")
 
     size_of: dict = {}
+    domain_of: dict = {}
     if args.test:
         entries = [p for p in [_parse_url(args.test_repo)] if p]
     else:
@@ -458,8 +471,15 @@ def main():
         with open(args.repos_file, encoding="utf-8") as fh:
             lines = [line for line in fh if _parse_url(line)]
         entries = [_parse_url(line) for line in lines]
+        domains = [_parse_domain(line) for line in lines]
+        if args.only_domain:
+            keep = [i for i, d in enumerate(domains) if d == args.only_domain]
+            lines = [lines[i] for i in keep]
+            entries, domains = [entries[i] for i in keep], [domains[i] for i in keep]
+            print(f"[domain] {len(entries)} repos tagged [domain: {args.only_domain}]", flush=True)
         weights = [_parse_weight(line) for line in lines]
         size_of = {f"{o}/{n}".lower(): w for (o, n, _), w in zip(entries, weights)}
+        domain_of.update({f"{o}/{n}".lower(): d for (o, n, _), d in zip(entries, domains)})
         if args.shard_plan:
             _print_shard_plan(entries, weights, args.shard_plan)
             return
@@ -623,6 +643,12 @@ def main():
         for opt in ("llm_scope", "llm_sample_pct", "close_reason_llm", "llm_max_diff_chars"):
             if getattr(args, opt) is not None:
                 cmd += ["--" + opt.replace("_", "-"), str(getattr(args, opt))]
+        if args.window_from:
+            cmd += ["--window-from", args.window_from, "--window-to", args.window_to or ""]
+        if args.lead_in_days is not None:
+            cmd += ["--lead-in-days", str(args.lead_in_days)]
+        if domain_of.get(f"{owner}/{name}".lower()):
+            cmd += ["--domain", domain_of[f"{owner}/{name}".lower()]]
         cmd.append("--snapshots" if args.snapshots else "--no-snapshots")
         if args.snapshots:
             cmd += ["--snapshot-dir", os.path.join(args.snapshot_root, f"{owner}_{name}")]

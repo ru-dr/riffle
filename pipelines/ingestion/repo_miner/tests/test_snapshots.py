@@ -89,11 +89,11 @@ def world(tmp_path_factory):
     st = config.Settings()
     st.enable_semgrep = False                 # slow, and not what these tests are about
     schema = json.loads((CONTRACTS / "mined_dataset.schema.json").read_text())
-    at_open = {c: None for c in schema["required"]}
+    at_open = {c: None for c in schema["properties"]}
     at_open.update(repo="o/syn", pr_number=7, base_sha=B, head_sha=c1, mined_at="2025-03-01T00:00:00Z",
                    open_snapshot="recovered", author_is_bot=False, label_merged=True, merge_via="github",
                    author_association="CONTRIBUTOR", created_at=pr["created_at"], closed_at=pr["closed_at"],
-                   merged_at=pr["merged_at"])
+                   merged_at=pr["merged_at"], miner_version="4.0.0", miner_commit="test")
     at_open.update(cap.code_features(str(repo), B, c1, st))
     record = cap.capture_pr(str(repo), pr, at_open, events, st)
     record = json.loads(json.dumps(record, default=str))      # as stored on disk

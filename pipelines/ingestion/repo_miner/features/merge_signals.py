@@ -249,12 +249,14 @@ class History:
         return out
 
 
-def compute_repo(rows: list[dict], st: config.Settings, with_unmerged: bool) -> None:
-    """Fill COLUMNS on every row that carries a sidecar, from the other rows,
+def compute_repo(rows: list[dict], st: config.Settings, with_unmerged: bool,
+                 lead_in: list[dict] = ()) -> None:
+    """Fill COLUMNS on every row that carries a sidecar, from the other rows
+    and the lead-in sidecars (PRs before the mined block, metadata only),
     strictly prior to each row's open. Merge rates need the unmerged rows: when
     merge-outcome mining is off every mined PR merged, so they stay null."""
     carriers = [r for r in rows if r.get(SIDECAR)]
-    hist = History([r[SIDECAR] for r in carriers])
+    hist = History([r[SIDECAR] for r in carriers] + list(lead_in))
     by_sc = {id(p["sc"]): p for p in hist.prs}
     for r in carriers:
         p = by_sc.get(id(r[SIDECAR]))
