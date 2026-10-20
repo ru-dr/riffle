@@ -31,6 +31,7 @@ import time
 
 import config
 import gitio
+import runlog
 
 
 class LLMUnavailable(RuntimeError):
@@ -118,11 +119,15 @@ def fetch(repo: str, base: str, head: str, st: config.Settings,
     diff = llm_diff(repo, base, head, st)
     if not diff.strip():
         return {"status": "empty", "raw": None, "secs": 0.0}  # nothing to judge, not a failure
-    t0 = time.monotonic()
+    t0, w0 = time.monotonic(), quota_wait_s()
     raw = _call_with_quota(lambda: _call_claude_cli(diff, st) if st.llm_backend == "claude_cli"
                            else _call_llm(diff, st), st)
-    secs = time.monotonic() - t0
+    secs = time.monotonic() - t0 - (quota_wait_s() - w0)
+    runlog._acc("llm", secs)
+    runlog.debug("llm", "call", ok=raw is not None, secs=round(secs, 2), diff_chars=len(diff),
+                 backend=st.llm_backend, model=st.llm_model)
     if raw is None:
+        runlog.warn("llm", "no usable answer", secs=round(secs, 1), diff_chars=len(diff))
         return {"status": "fail", "raw": None, "secs": secs}
     return {"status": "ok", "raw": _validate(raw, diff), "secs": secs}
 
@@ -226,6 +231,8 @@ def _pause_until(when: float, why: str, st: config.Settings) -> None:
         if when <= _QUOTA["paused_until"]:
             return
         _QUOTA["paused_until"] = when
+    runlog.info("llm", "quota pause started", why=why, until=time.strftime("%H:%M", time.localtime(when)),
+                minutes=round((when - time.time()) / 60))
     at = time.strftime("%H:%M", time.localtime(when))
     import progress
     progress.emit("llm_quota", until=when, why=why)
@@ -234,13 +241,30 @@ def _pause_until(when: float, why: str, st: config.Settings) -> None:
           f"no row is written without them.", file=sys.stderr, flush=True)
 
 
+_WAITED = threading.local()
+
+
+def quota_wait_s() -> float:
+    """Seconds this thread has spent held by a quota pause so far. Callers time
+    work as elapsed minus the change in this, so a pause isn't counted as work."""
+    return getattr(_WAITED, "secs", 0.0)
+
+
 def _wait_paused(st: config.Settings) -> None:
-    while True:
-        with _QUOTA_LOCK:
-            left = _QUOTA["paused_until"] - time.time()
-        if left <= 0:
-            return
-        time.sleep(min(left, 60))
+    t0 = time.monotonic()
+    try:
+        while True:
+            with _QUOTA_LOCK:
+                left = _QUOTA["paused_until"] - time.time()
+            if left <= 0:
+                return
+            time.sleep(min(left, 60))
+    finally:
+        waited = time.monotonic() - t0
+        _WAITED.secs = quota_wait_s() + waited
+        if waited >= 1:
+            runlog._acc("quota_wait", waited)
+            runlog.info("llm", "quota wait ended", waited_s=round(waited, 1))
 
 
 def _quota_gate(st: config.Settings) -> None:
@@ -657,8 +681,9 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
                     obj = _extract_json(out.get("result") or "")
                     if obj is not None:
                         return obj
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
-            pass
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
+            runlog.warn("llm", "claude call failed", exc=type(e).__name__, attempt=attempt + 1,
+                        of=retries + 1, will_retry=attempt < retries)
         if attempt < retries:
             time.sleep(st.llm_call_retry_s * (attempt + 1))
     return None

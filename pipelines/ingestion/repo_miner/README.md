@@ -207,6 +207,31 @@ health flags. Scale the estimates for the full run from those.
   "Number of PCs" and "This PC #", and "Show split" (ctrl+g) lists them.
   GitHub rate limits are per account, so use a token from a different
   account on each PC.
+- Output names: a `--shard` run tags its dataset automatically, so
+  `--out dataset.parquet` on PC 1 of 3 writes `dataset_pc1of3.parquet` (and its
+  run log is `logs/run-<time>-pc1of3.log`). `--out-prefix web` / `--out-postfix
+  lab` add your own text (placeholders `{pc}` `{n}` `{host}` `{date}`; a postfix
+  replaces the automatic tag); `--no-auto-name` turns the tag off. A name that
+  already carries its tag is left alone, so a rerun resumes the same file. If
+  an untagged `dataset.parquet` already exists, the run says so, because
+  `--skip-existing` only looks at the tagged file.
+- Putting the PCs' files together: `python merge_shards.py --out dataset.parquet`
+  reads each PC's `dataset_pcKofN.shard.json` (written when its batch ends) and
+  merges only if every PC 1..N is there, all used the same split ID and miner
+  version (`--allow-version-mix` to override), no repo is on two PCs, no row repeats
+  and the snapshots still match their dataset (`consistency.py`). It writes
+  `dataset_merged`, `dataset_merged_snapshots`, `dataset_merged_commit_features`
+  and `dataset_merged.merge.json`. The three tables stay three: they have one row
+  per PR, per snapshot and per head commit, and are joined when training loads
+  them (`pipelines/training/frames.py`), not stored merged.
+- Run trace: next to each run log, `logs/run-*.trace.jsonl` holds one JSON line
+  per event (`runlog.py`): each run stage with its duration, one line per PR with
+  its time split by stage (diff, history, git, api, llm, quota_wait, ...), GitHub
+  retries and rate-limit waits, slow git/API/LLM calls, and a heartbeat every 2
+  minutes that names what each worker is doing (WARN if no PR finished for 5).
+  `--log-level DEBUG` adds every git, API and LLM call. The run log also gets
+  `[stage] X done in 2m57s` lines. `python trace_report.py logs/run-*.trace.jsonl`
+  summarizes a run: stage times, slowest PRs, stalls, warnings, quiet gaps.
 - `--min-age-days N` (TUI: "Skip PRs merged in last N days", default 90)
   skips PRs merged in the last N days, so `--max-prs` picks PRs whose labels
   are mature. Busy repos merge 100 PRs in days, so without it most rows would
@@ -418,7 +443,11 @@ Six label columns, filled from outcomes after merge (not inference inputs):
 - `label_revert` / `label_ci_fail` / `label_hotfix` — the three explicit
   outcomes. `label_ci_fail` counts only the **required/gating build** check;
   auxiliary checks (CodeQL, Scorecards, coverage) go to `label_ci_fail_optional`
-  (diagnostic only).
+  (diagnostic only). A hotfix is a later commit touching the same files within 7
+  days whose subject says hotfix / hot-fix, rollback / rolled back, quickfix /
+  quick fix, or urgent / emergency / critical followed by fix, patch, bug, issue,
+  regression or security (`config.py`). Cherry-picks and backports are not
+  hotfixes. A repo that never words its fixes that way (vite) has no positives.
 - `label_bad` — the v1 training target: `revert OR ci_fail OR hotfix`. **SZZ is
   not included.**
 - `label_szz_bug` — SZZ fix-tracing (`--szz`): this PR introduced a line a later
@@ -550,8 +579,15 @@ live PR as events arrive gives a better answer. Two steps:
    flags are the at-open ones, so snapshots add no LLM calls. Each repo
    logs what capture cost: `[snapshots] captured N PRs · H heads/PR · capture
    took S s, P% of PR mining time (~X% slower than without)`.
-2. **Assembly, any time later** (`snapshots.py`), from the stored files and
-   the mined rows, with no GitHub calls or clones:
+2. **Assembly** (`snapshots.py`), from the stored files and the mined rows,
+   with no GitHub calls or clones. A batch with `--snapshots` runs it by itself
+   when it ends (it needs every repo's finished at-open rows, so not per PR),
+   writing `<out>_snapshots.parquet` and `<out>_commit_features.parquet` next to
+   the dataset, e.g. `dataset_pc1of3_snapshots.parquet`. `--no-assemble-snapshots`
+   skips it; a failure never fails the batch and prints the command to rebuild.
+   The TUI lists both files, and the web view and big picture show
+   "ASSEMBLING" and then the counts. To rebuild by hand, for example after
+   changing the schedule (about 15 s for 1,200 PRs):
 
    ```bash
    python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw \

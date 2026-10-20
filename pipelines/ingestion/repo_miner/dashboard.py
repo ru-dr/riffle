@@ -679,6 +679,12 @@ function render(s){
   $("logfile").textContent = lf; $("logname").textContent = (s.log || []).length + " lines";
   const paths = $("paths"); paths.replaceChildren();
   if (s.out) paths.appendChild(el("div", null, "output  " + s.out));
+  const asm = s.assembly;
+  if (asm) paths.appendChild(el("div", asm.state === "failed" ? "bad" : null, "snapshots  " + (
+    asm.state === "running" ? "assembling the snapshot tables..."
+    : asm.state === "failed" ? "assembly FAILED: " + (asm.err || "see the log")
+    : Number(asm.snapshots).toLocaleString() + " snapshots from " + Number(asm.prs).toLocaleString() +
+      " PRs, " + Number(asm.commits).toLocaleString() + " head commits")));
   if (s.log_path) paths.appendChild(el("div", null, "log     " + s.log_path));
   document.title = (state === "running" ? (p * 100).toFixed(0) + "% · " : "") + "Riffle Miner";
 }
@@ -787,6 +793,7 @@ function renderBig(){
   if (stale && lastOk) { word = "OFFLINE"; cls = "bad"; }
   else if (s.breaker || /killed|exit|failed|breaker/.test(st)) { word = "STOPPED: ERROR"; cls = "bad"; }
   else if (s.llm_paused) { word = "LLM PAUSED"; cls = "warn"; }
+  else if (st === "running" && s.assembly && s.assembly.state === "running") { word = "ASSEMBLING"; cls = "run"; }
   else if (st === "running") { word = "MINING"; cls = "run"; }
   else if (st === "finished") { word = "FINISHED"; cls = "done"; }
   else if (st === "stopped") { word = "STOPPED"; cls = "warn"; }
@@ -805,7 +812,8 @@ function renderBig(){
   $("bg_rate").textContent = s.rate ? s.rate.replace(/\s*PR\/min$/, "") : "—";
   const rows = s.rows || [];
   const cur = rows.find(r => r.status === "active" || r.status === "warn");
-  $("bg_repo").textContent = cur ? cur.name + (cur.total ? " · " + Number(cur.done).toLocaleString() + "/" + Number(cur.total).toLocaleString() : "") : "—";
+  const asmOn = s.assembly && s.assembly.state === "running";
+  $("bg_repo").textContent = asmOn ? "snapshot tables" : cur ? cur.name + (cur.total ? " · " + Number(cur.done).toLocaleString() + "/" + Number(cur.total).toLocaleString() : "") : "—";
   $("bg_repos").textContent = s.repos || "—";
   const res = s.resources || {};
   $("bg_cpu").textContent = res.cpu_frac != null ? Math.round(res.cpu_frac * 100) + "%" : "—";

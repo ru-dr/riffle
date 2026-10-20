@@ -22,6 +22,7 @@ import urllib.error
 
 import config
 import progress
+import runlog
 import scope
 
 API = "https://api.github.com"
@@ -163,9 +164,13 @@ class GitHubAPI:
         net_fails = 0
         while True:
             try:
-                with urllib.request.urlopen(req, timeout=self.st.request_timeout) as r:
-                    hdrs = dict(r.headers)
-                    return r.status, json.loads(r.read() or "null"), hdrs
+                with runlog.span("api", "request", path=path, attempt=net_fails + 1,
+                                 slow_s=runlog.SLOW_CALL_S, err_level="DEBUG"):
+                    with urllib.request.urlopen(req, timeout=self.st.request_timeout) as r:
+                        hdrs = dict(r.headers)
+                        runlog.debug("api", "response", path=path, status=r.status,
+                                     ratelimit_remaining=hdrs.get("X-RateLimit-Remaining"))
+                        return r.status, json.loads(r.read() or "null"), hdrs
             except urllib.error.HTTPError as e:
                 if e.code in (403, 429):
                     remaining = e.headers.get("X-RateLimit-Remaining")
@@ -173,6 +178,8 @@ class GitHubAPI:
                     reset = e.headers.get("X-RateLimit-Reset")
                     # secondary rate limit: honor Retry-After, then retry
                     if retry_after:
+                        runlog.warn("api", "secondary rate limit; honoring Retry-After",
+                                    path=path, code=e.code, wait_s=min(int(retry_after) + 1, 300))
                         progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}",
                                       wait=min(int(retry_after) + 1, 300))
                         time.sleep(min(int(retry_after) + 1, 300))
@@ -185,6 +192,8 @@ class GitHubAPI:
                         wait = max(1, int(reset) - int(time.time())) + 1
                         print(f"[api] rate limit hit; waiting {min(wait, 3600)}s",
                               file=sys.stderr, flush=True)
+                        runlog.warn("api", "primary rate limit; waiting for reset", path=path,
+                                    code=e.code, wait_s=min(wait, 3600))
                         progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}",
                                       wait=min(wait, 3600))
                         time.sleep(min(wait, 3600))
@@ -192,13 +201,18 @@ class GitHubAPI:
                     # a 403 without rate-limit signals is a genuine permission
                     # error (private endpoint, forbidden) — report it, don't loop
                     if e.code == 403:
+                        runlog.warn("api", "403 without rate-limit headers; treating as unobserved",
+                                    path=path)
                         return 403, None, {}
+                    runlog.warn("api", "429 without Retry-After; retrying in 5s", path=path)
                     time.sleep(5)
                     continue
                 if e.code == 404:
                     return 404, None, {}
                 if e.code >= 500:
                     net_fails += 1
+                    runlog.warn("api", "server error; backing off", path=path, code=e.code,
+                                retry=net_fails, wait_s=min(60, 2 ** net_fails))
                     if net_fails > 8:
                         print(f"[api] {e.code} persisted after {net_fails} retries "
                               f"on {path}; treating as unobserved", file=sys.stderr)
@@ -207,10 +221,14 @@ class GitHubAPI:
                     continue
                 # any other 4xx (401 unauthenticated, 422 ...) is permanent for
                 # this request: report it as unobserved, never kill the run
+                runlog.warn("api", "permanent client error; treating as unobserved", path=path,
+                            code=e.code)
                 return e.code, None, {}
             except (urllib.error.URLError, OSError, http.client.HTTPException,
                     json.JSONDecodeError) as e:      # incl. IncompleteRead, resets, cut bodies
                 net_fails += 1
+                runlog.warn("api", "network error; backing off", path=path, exc=type(e).__name__,
+                            retry=net_fails, wait_s=min(60, 2 ** net_fails))
                 if net_fails > 8:
                     print(f"[api] network error persisted after {net_fails} retries "
                           f"on {path} ({type(e).__name__}); treating as unobserved",

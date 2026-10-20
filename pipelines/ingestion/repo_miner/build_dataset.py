@@ -34,12 +34,16 @@ import json
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import time
 
+import naming
 import progress
+import runlog
+from version import __version__
 
 
 TEST_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -363,6 +367,61 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
             return proc.returncode, True
 
 
+def _write_shard_manifest(args, entries: list, ok: int, failed: list) -> None:
+    """Beside a sharded dataset, record which split, PC and miner version made it
+    (merge_shards.py checks these before joining the PCs' files)."""
+    kn = naming.parse_shard(args.shard)
+    if args.test or not kn:
+        return
+    snap_out, commits_out = naming.snapshot_outs(args.out)
+    manifest = {"split_id": getattr(args, "split_id", None), "pc": kn[0], "of": kn[1],
+                "miner_version": __version__, "host": socket.gethostname(),
+                "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "repos": sorted(f"{o}/{n}" for o, n, _ in entries), "mined_ok": ok, "failed": failed,
+                "files": {"dataset": os.path.basename(args.out),
+                          "snapshots": os.path.basename(snap_out) if os.path.isfile(snap_out) else None,
+                          "commit_features": os.path.basename(commits_out) if os.path.isfile(commits_out) else None}}
+    try:
+        with open(naming.manifest_path(args.out), "w", encoding="utf-8") as fh:
+            json.dump(manifest, fh, indent=2)
+    except OSError as e:
+        print(f"[warn] could not write the shard manifest: {e}", flush=True)
+
+
+def _assemble_snapshots(args) -> None:
+    """Build the snapshot tables once every repo is mined (ADR 0010; snapshots.py).
+    They need the finished at-open rows of the whole dataset, so this runs at the
+    end, not per PR. Never fails the batch: the raw captures stay, and
+    `python snapshots.py` rebuilds the tables by hand."""
+    if args.test or not args.snapshots or not args.assemble_snapshots:
+        return
+    dataset = args.out if os.path.isfile(args.out) else os.path.splitext(args.out)[0] + ".jsonl"
+    out, commits_out = naming.snapshot_outs(dataset)
+    if not os.path.isfile(dataset) or not os.path.isdir(args.snapshot_root):
+        print(f"[snapshots] nothing to assemble (dataset {'found' if os.path.isfile(dataset) else 'missing'}, "
+              f"captures {'found' if os.path.isdir(args.snapshot_root) else 'missing'})", flush=True)
+        return
+    import snapshots
+    print("[snapshots] assembling the snapshot tables from the captures...", flush=True)
+    progress.emit("assemble", state="running", out=out)
+    runlog.stage("assemble snapshots")
+    try:
+        r = snapshots.assemble_files(dataset, args.snapshot_root, out, commits_out)
+    except Exception as e:                                  # noqa: BLE001
+        runlog.stage(None)
+        runlog.error("snapshots", "assembly failed", exc=type(e).__name__, err=str(e)[:300])
+        print(f"[snapshots] assembly FAILED ({type(e).__name__}: {e}); the captures are kept, "
+              f"rebuild with: python snapshots.py --dataset {dataset} --raw-root {args.snapshot_root}",
+              flush=True)
+        progress.emit("assemble", state="failed", err=f"{type(e).__name__}: {e}")
+        return
+    runlog.stage(None)
+    runlog.info("snapshots", "assembled", **r)
+    print(f"[snapshots] {r['snapshots']} snapshots from {r['prs']} PRs -> {out}; "
+          f"{r['commits']} head commits -> {commits_out}  ({r['secs']}s)", flush=True)
+    progress.emit("assemble", state="done", **r)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Clone a list of GitHub repos and mine them into one dataset.")
@@ -370,6 +429,19 @@ def main():
                     help="file with one GitHub URL per line (# comments allowed)")
     ap.add_argument("--out", default="dataset.parquet",
                     help="single output dataset (rows appended, deduped)")
+    ap.add_argument("--out-prefix", default="", metavar="TEXT",
+                    help="text put before the output file's name; placeholders {pc} {n} {host} {date}")
+    ap.add_argument("--out-postfix", default="", metavar="TEXT",
+                    help="text put after the output file's name (before the extension), "
+                         "replacing the automatic pc tag; same placeholders")
+    ap.add_argument("--assemble-snapshots", action=argparse.BooleanOptionalAction, default=True,
+                    help="when the batch ends, build the snapshot tables from what --snapshots "
+                         "captured (<out>_snapshots, <out>_commit_features); on by default")
+    ap.add_argument("--no-auto-name", action="store_true",
+                    help="don't add the automatic pc1of3 tag to the output name of a --shard run")
+    ap.add_argument("--log-level", default=None, choices=["DEBUG", "INFO", "WARN", "ERROR"],
+                    help="detail of the structured run trace (logs/run-*.trace.jsonl): DEBUG "
+                         "adds every git/API/LLM call, INFO (default) one line per PR and stage")
     ap.add_argument("--clone-dir", default="cloned_repos",
                     help="directory to clone repos into")
     ap.add_argument("--max-prs", type=int, default=None)
@@ -458,6 +530,25 @@ def main():
                          "pallets/flask, the smallest repo in the corpus)")
     args = ap.parse_args()
 
+    # a sharded run tags its dataset (dataset_pc1of3.parquet) so PCs' files can't be mixed up
+    plain_out = args.out
+    args.out = naming.tagged_out(args.out, args.shard, args.out_prefix, args.out_postfix,
+                                 auto=not args.no_auto_name)
+    if args.out != plain_out and not args.shard_plan:
+        note = (f"; {plain_out} exists but is not used, so a resume starts from {args.out}"
+                if os.path.exists(plain_out) and not os.path.exists(args.out) else "")
+        print(f"[out] {plain_out} -> {args.out}{note}", flush=True)
+    stem = naming.run_stem(args.shard)
+    if not (args.audit or args.shard_plan):
+        runlog.configure(path=os.environ.get("RIFFLE_TRACE")
+                         or os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs",
+                                         stem + ".trace.jsonl"),
+                         level=args.log_level)
+    if runlog.enabled("INFO"):
+        os.makedirs(os.path.dirname(os.environ["RIFFLE_TRACE"]), exist_ok=True)
+        runlog.info("batch", "start", argv=sys.argv[1:], out=args.out, version=__version__,
+                    host=socket.gethostname(), level=args.log_level or "INFO")
+
     if args.audit:
         _audit(args.out)
         return
@@ -495,6 +586,7 @@ def main():
                 sys.exit(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
             _warn_untagged(entries, weights)
             sid = split_id(entries, weights, n)
+            args.split_id = sid
             mine = balanced_shards(weights, n)[k - 1]
             total = sum(weights[i] or 0 for i in mine)
             entries = [entries[i] for i in mine]
@@ -717,7 +809,12 @@ def main():
         _write_test_parquet(TEST_OUT)
     print(f"[batch] done: {ok}/{len(entries)} repos mined -> {args.out}"
           + (f" ({len(skipped)} skipped)" if skipped else ""))
+    _assemble_snapshots(args)
+    _write_shard_manifest(args, entries, ok, failed)
     progress.emit("batch_done", ok=ok, n=len(entries), failed=failed, skipped=skipped)
+    runlog.info("batch", "done", ok=ok, n=len(entries), failed=failed, skipped=skipped, out=args.out)
+    if runlog.enabled("INFO"):
+        print(f"[trace] {os.environ['RIFFLE_TRACE']}  (summary: python trace_report.py <file>)", flush=True)
     if skipped:
         print("[batch] skipped (mine them later by running again without the skip):")
         for s_ in skipped:
