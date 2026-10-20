@@ -3,13 +3,13 @@
 > Full reference (architecture, how a run works, every column, every flag, why each choice): [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 Extracts the **v1** Riffle inference features from a **cloned GitHub repo**, one
-row per merged PR, computed **as of each PR's base commit** (point-in-time, no
+row per closed PR (merged or not), computed **as of each PR's base commit** (point-in-time, no
 leakage). Excludes Source 1 (`riffle.yml`) by design — those are team-config
 features supplied elsewhere.
 
 ## What it produces
 
-One table (`.parquet` or `.jsonl`), one row per closed PR (merged, and since
+The **dataset** table (`.parquet` or `.jsonl`), one row per closed PR (merged, and since
 v2.0.0 closed-unmerged too; see *Merge-outcome labels*), with:
 
 | Source | Module | Examples |
@@ -63,9 +63,10 @@ else is an optional stage. Put your tokens in a `.env` file at the package root
 ```bash
 # .env
 GITHUB_TOKEN=ghp_...                 # PR list, CI checks, labels
-LLM_API_KEY=sk-ant-...               # only needed with --llm
-LLM_MODEL=claude-sonnet-5            # optional override
-LLM_BASE_URL=https://api.anthropic.com/v1/   # optional override
+LLM_BACKEND=claude_cli               # default: headless Claude Code on your own login, no key
+LLM_MODEL=sonnet                     # default for claude_cli (claude-sonnet-5 with the api backend)
+LLM_API_KEY=sk-ant-...               # only with LLM_BACKEND=api
+LLM_BASE_URL=https://api.anthropic.com/v1/   # api backend only
 ```
 
 See `.env.example`. `.env`, `cloned_repos/`, `ci_cache/`, and `*.parquet` are
@@ -404,11 +405,11 @@ de-duplicated by `(repo, pr_number)`.
 # quick smoke test — confirms the clone -> mine -> append loop works
 python build_dataset.py --max-prs 15
 
-# real dataset run — git features + SZZ + CI-history, no LLM yet
-python build_dataset.py --max-prs 1500 --szz --ci-history
+# real dataset run — SZZ, CI history and the LLM flags are all on by default
+python build_dataset.py --max-prs 1500
 
-# add LLM only once an ablation shows the flags earn their cost
-python build_dataset.py --max-prs 1500 --szz --ci-history --llm
+# without the LLM (no plan quota spent; the LLM columns stay empty)
+python build_dataset.py --max-prs 1500 --no-llm
 ```
 
 ```text
@@ -417,9 +418,10 @@ flags (passed through to the miner):
   --out F            single dataset file, rows appended (default dataset.parquet)
   --clone-dir D      where repos are cloned (default cloned_repos)
   --max-prs N        cap PRs per repo
-  --szz              add the SZZ fix-forward label
-  --ci-history       add historical CI-fail-rate features
-  --llm              enable LLM semantic flags
+  --szz / --no-szz            SZZ fix-forward label (default on)
+  --ci-history / --no-ci-history   historical CI-fail-rate features (default on)
+  --llm / --no-llm            LLM semantic flags (default on)
+  --snapshots / --no-snapshots     PR snapshots, assembled when the batch ends (default on)
   --skip-existing    reuse an already-cloned repo instead of re-cloning
 ```
 
@@ -443,18 +445,17 @@ print("trainable:", len(m), "| label_bad:", int(m.label_bad.sum()),
 Six label columns, filled from outcomes after merge (not inference inputs):
 
 - `label_revert` / `label_ci_fail` / `label_hotfix` — the three explicit
-  outcomes. `label_ci_fail` counts only the **required/gating build** check;
-  auxiliary checks (CodeQL, Scorecards, coverage) go to `label_ci_fail_optional`
-  (diagnostic only). A hotfix is a later commit touching the same files within 7
+  outcomes. `label_ci_fail` counts only the **required/gating build** check,
+  read from the merge commit's **push-triggered** workflow runs (plus other CI
+  apps' checks): issue, schedule and comment workflows leave check runs on
+  whatever commit was the default branch's head, and are not CI. A commit left
+  with no such run has no verdict (`ci_observed` false), not a pass; it costs one
+  extra API call per merged PR. Auxiliary checks (CodeQL, Scorecards, coverage)
+  go to `label_ci_fail_optional` (diagnostic only). A hotfix is a later commit touching the same files within 7
   days whose subject says hotfix / hot-fix, rollback / rolled back, quickfix /
   quick fix, or urgent / emergency / critical followed by fix, patch, bug, issue,
   regression or security (`config.py`). Cherry-picks and backports are not
   hotfixes. A repo that never words its fixes that way (vite) has no positives.
-  `label_ci_fail` counts only the merge commit's **push-triggered** workflow runs
-  (plus other CI apps' checks): issue, schedule and comment workflows leave check
-  runs on whatever commit was the default branch's head, and are not CI. A commit
-  left with no such run has no verdict (`ci_observed` false), not a pass. It costs
-  one extra API call per merged PR.
 - `label_bad` — the v1 training target: `revert OR ci_fail OR hotfix`. **SZZ is
   not included.**
 - `label_szz_bug` — SZZ fix-tracing (`--szz`): this PR introduced a line a later
@@ -686,4 +687,13 @@ features/
   llm_flags.py     Source 6 (schema-constrained LLM, opt-in)
 mine_repo.py     orchestrator + CLI (one repo)
 build_dataset.py batch driver: clone repos.txt + mine all into one dataset
+snapshot_capture.py / snapshots.py   PR snapshots: capture while mining, assemble at batch end
+naming.py        output names (PC tag, prefix/postfix), run stems
+merge_shards.py  join the PCs' files after checking manifests and consistency.py
+runlog.py        structured run trace (logs/run-*.trace.jsonl); trace_report.py summarises it
 ```
+
+Also not listed above: `flaky.py`, `maintainers.py`, `scope.py`, `health.py`, `progress.py`,
+`tui.py`, `dashboard.py`, `doctor.py`, `deps.py`, `scout.py`, `llm_compare.py`, `audit_export.py`,
+`version.py` and `features/{merge_signals,repo_local,api_contract}.py`. The full module map is in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) section 3.2.

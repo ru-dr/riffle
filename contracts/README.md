@@ -23,7 +23,8 @@ Every rule kind, value, setting and default is listed in
 | `mined_commit_features.schema.json` | `pipelines/ingestion` (repo miner), code features per head commit | `pipelines/training` | #5 Ingestion |
 
 Shapes are specified in the root `README.md` under **Contracts**; write the
-schema files to match.
+schema files to match. `pr_event`, `score_result` and `explain` have no schema
+file yet; their rows describe the target.
 
 Planned: `feature_vector.schema.json`, the full fixed model input (repo
 history, blame, diff, checks, mined, declared columns).
@@ -108,10 +109,15 @@ unflatten(flat, schema)   # back to the document; the schema decides list vs obj
 - `python -m pytest contracts/tests` checks that every schema's data
   round-trips through the flat form, every `oneOf` branch included.
 - `pipelines/ingestion/repo_miner/tests/test_dataset_contract.py` checks that
-  the repo miner writes exactly the columns of `mined_dataset.schema.json`.
-- CI validates every schema against the draft 2020-12 meta-schema.
-- CI validates every file in `fixtures/config/` against its schema. Files
-  under `invalid/` must fail.
+  the repo miner writes exactly the columns of `mined_dataset.schema.json`, that
+  its rows validate, and that they flatten losslessly. `test_snapshots.py` does
+  the same for `mined_snapshot` and `mined_commit_features`, and
+  `test_contract_sync.py` checks that each mined schema's recorded miner version
+  is not ahead of `version.py` and has a row in `docs/contracts.md`.
+- `contracts/tests/test_flatten.py` round-trips the files in `fixtures/config/`
+  through the flat form. Nothing in CI yet validates the schemas against the
+  draft 2020-12 meta-schema or the fixtures against their schemas, and there is
+  no `invalid/` fixture directory.
 - `x-riffle-code-checks` rules are tested in the consuming service, not here.
 
 ## Open decisions
