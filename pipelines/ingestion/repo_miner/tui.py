@@ -14,8 +14,8 @@ a later Start (with "reuse clones" on) resume instead of redoing PRs.
 
 Also shows live RAM/CPU of the whole miner process tree, names what killed a
 run (e.g. out of memory), counts down GitHub rate-limit waits, flags repos with
-no progress, saves every run's log under logs/, and remembers the form between
-launches (.tui_settings.json).
+no progress, and saves every run's log under logs/. The form always starts from
+the defaults, so every PC runs the same config unless it is changed on screen.
 
 Keys: ctrl+r start · ctrl+x stop · ctrl+l clear log · ctrl+y copy log ·
 ctrl+b web view QR code (o open here, c copy link) · ctrl+q quit. Drag over the log or stats to
@@ -87,14 +87,13 @@ from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input,
                              Label, Log, ProgressBar, Select, Static)
 from rich.highlighter import Highlighter  # noqa: E402
 
-MODELS = [("Sonnet (default)", "sonnet"), ("Opus", "opus"), ("Haiku (fast/cheap)", "haiku"),
+MODELS = [("Haiku (default, fast/cheap)", "haiku"), ("Sonnet", "sonnet"), ("Opus", "opus"),
           ("Fable 5.1", "claude-fable-5-1")]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(HERE, "build_dataset.py")
 TEST_OUT = os.path.join(HERE, "test_output", "test_dataset.jsonl")
 LOG_DIR = os.path.join(HERE, "logs")
-SETTINGS = os.path.join(HERE, ".tui_settings.json")
 STALL_SECS = 10 * 60              # a mining repo with no event this long is flagged
 # exit codes that mean "killed by a signal", which on Linux is almost always the
 # kernel OOM killer (SIGKILL) when nobody pressed Stop
@@ -464,7 +463,7 @@ class RiffleTUI(App):
                 yield Label("Test PRs")
                 yield Input("10", id="test_prs", type="integer", compact=True)
                 yield Label("LLM model")
-                yield Select(MODELS, value="sonnet", allow_blank=False, id="llm_model", compact=True)
+                yield Select(MODELS, value="haiku", allow_blank=False, id="llm_model", compact=True)
                 yield Checkbox("LLM flags (claude -p)", True, id="llm", compact=True)
                 yield Checkbox("LLM on training PRs only", True, id="llm_training", compact=True)
                 yield Checkbox("Close reason: LLM only when rules are unsure", True,
@@ -509,7 +508,6 @@ class RiffleTUI(App):
                            ("slowest", "Slowest PR")]:
             t.add_column(label, key=key)
         self.query_one("#log", Log).highlighter = _LevelHighlighter()
-        self._load_settings()
         self._check_token()
         self._start_dashboard()
         self.set_interval(0.25, self._poll_events)
@@ -672,33 +670,7 @@ class RiffleTUI(App):
             snap.update(summary)
         self.dash.publish(snap)
 
-    # -------------------------------------------------------------- settings
-    def _form_widgets(self):
-        return self.query("#form Input, #form Checkbox, #form Select")
-
-    def _load_settings(self) -> None:
-        """Restore the form from the last Start (missing/old keys are ignored)."""
-        try:
-            with open(SETTINGS, encoding="utf-8") as fh:
-                saved = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            return
-        for w in self._form_widgets():
-            if w.id in saved:
-                try:
-                    w.value = saved[w.id]
-                except Exception:                     # noqa: BLE001  (e.g. model removed)
-                    pass
-
-    def _save_settings(self) -> None:
-        # "remine" is one-shot: remembering it would re-mine those repos on every Start
-        data = {w.id: w.value for w in self._form_widgets() if w.id and w.id != "remine"}
-        try:
-            with open(SETTINGS, "w", encoding="utf-8") as fh:
-                json.dump(data, fh, indent=1, default=str)
-        except OSError:
-            pass
-
+    # -------------------------------------------------------------- checks
     def _check_token(self) -> bool:
         ok = bool(os.environ.get("GITHUB_TOKEN"))
         self.query_one("#token_warn", Static).update(
@@ -958,7 +930,6 @@ class RiffleTUI(App):
         os.close(fd)
         self.events_pos = 0
         self.out_paths = self._output_paths(test)
-        self._save_settings()
         self._open_log()
         self._procs.clear()
         if not self._check_token():
