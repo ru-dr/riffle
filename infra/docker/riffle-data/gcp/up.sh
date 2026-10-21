@@ -14,6 +14,7 @@ export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 P=${PROJECT:-riffle-data-miner}; R=${REGION:-us-central1}; Z=${ZONE:-us-central1-a}
 B=${BUCKET:-riffle-data-miner-mined}; SA=riffle-data@$P.iam.gserviceaccount.com; VM=riffle-data
 SSH=(--project="$P" --zone="$Z" --quiet --ssh-flag="-o ConnectTimeout=15" --ssh-flag="-o StrictHostKeyChecking=accept-new")
+SCP=(--project="$P" --zone="$Z" --quiet --scp-flag="-o ConnectTimeout=15" --scp-flag="-o StrictHostKeyChecking=accept-new")
 step() { printf '\n==> %s\n' "$*"; }
 
 step "0/6 account $(gcloud config get-value account 2>/dev/null), project $P"
@@ -54,7 +55,7 @@ done
 
 step "5/6 copying the store to the VM and starting it"
 tar czf /tmp/riffle-data.tgz --exclude=tests --exclude=gcp --exclude=__pycache__ -C .. riffle-data
-gcloud compute scp /tmp/riffle-data.tgz "$VM":/tmp/ "${SSH[@]}"
+gcloud compute scp /tmp/riffle-data.tgz "$VM":/tmp/ "${SCP[@]}"
 gcloud compute ssh "$VM" "${SSH[@]}" --command="
   set -e; sudo mkdir -p /opt && sudo tar xzf /tmp/riffle-data.tgz -C /opt && cd /opt/riffle-data
   sudo tee .env >/dev/null <<ENV
