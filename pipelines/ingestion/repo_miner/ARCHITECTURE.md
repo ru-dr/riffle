@@ -205,7 +205,7 @@ flowchart LR
 3. **Audit-only and shard-plan-only modes** print and exit (see 12).
 4. **Read the repos file.** Each line is a GitHub URL; text after `#` is a comment but carries two tags: `[~N commits]` (approximate commit count, used as the repo's weight) and `[domain: NAME]` (ADR 0011). `--only-domain NAME` keeps matching repos only. A GitHub URL is parsed with `github.com[:/]owner/name(.git)`.
 5. **Shard.** `balanced_shards` gives each PC an equal number of repos (±1) with balanced total weight: heaviest repo first, each to the lightest PC that still has room; unknown weights count as the median; deterministic, so every PC computes the same split. `split_id` is the first 8 hex of a SHA-256 over the ordered repo list, weights and PC count; PCs that print the same split ID have disjoint shares of the same list.
-6. **Test mode** (`--test`): first repo only (default `pallets/flask`), `--test-prs` PRs (10), fresh output `test_output/test_dataset.jsonl` (also saved as parquet to check that path), clone kept.
+6. **Test mode** (`--test`): first repo only (default `pallets/flask`), `--test-prs` PRs (10), fresh output `test_output/test_dataset.jsonl` (also saved as parquet to check that path), clone kept. It always mines the fixed window `config.TEST_WINDOW_FROM..TEST_WINDOW_TO` (2020-01-01 to 2025-06-30) with `--min-age-days 0` and no `--cap-on` or `--max-unmerged`, whatever the form or flags say, so every PC and every run picks the same PRs whatever day it runs. `--test-prs` then caps merged and unmerged PRs together (the newest contiguous block, mode A), so the output holds about that many rows. Remaining sources of drift: a PR created in the window that was still open on the first run and closes later, and a stale reused clone (merge-landing detection reads it).
 7. **Re-mine.** `--auto-remine` audits the output and adds flagged repos in this PC's share; each `--remine-repo` must be in this PC's share (else the run stops with nothing changed). `_drop_repo` keeps the repo's earlier LLM answers (`ci_cache/<owner>_<name>.llm_reuse.json`, keyed by base and head SHA), rewrites the dataset atomically without the repo, removes its SZZ cache, partial files, blame store and pinned selection, and removes its checkpoint lines.
 8. **Skip finished repos** (rows already in `--out`; `--remine` disables). A repo only lands in `--out` after a clean complete mine, so presence means done.
 9. **For each repo:**
@@ -1311,7 +1311,7 @@ Pass-through of the mine flags above (`--max-prs`, `--min-age-days`, `--ci-histo
 | `--snapshot-root D` | `snapshots_raw` | capture root |
 | `--assemble-snapshots / --no-assemble-snapshots` | on | assemble at batch end |
 | `--log-level {DEBUG,INFO,WARN,ERROR}` | INFO | trace detail |
-| `--test`, `--test-prs N`, `--test-repo URL` | 10, pallets/flask | smoke test |
+| `--test`, `--test-prs N`, `--test-repo URL` | 10, pallets/flask | smoke test; fixed window, so the same PRs on every PC |
 
 Scale example (the web-ts pilot and run):
 
@@ -1512,6 +1512,7 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.3.0 | 10-20 | `label_ci_fail` counts only the merge commit's push-triggered CI; `preview` joins the optional-check denylist |
 | 6.4.0 | 10-20 | environment doctor: OS/distro detection, per-package-manager installs (Node and Go first when missing), user-prefix npm, PATH for user bin dirs, grouped report, 5 s pause before the TUI opens; fixed label: every GraphQL diff was `breaking` (the miner matched "No breaking changes detected"); a `graphql-inspector` failure is now null |
 | 6.5.0 | 10-20 | `--full-repo`: mine a repo's whole history instead of a date window or a cap; a missing LLM backend now stops the run instead of nulling the LLM columns; the shard plan (and TUI Show split) also lists PR counts from the `[N PRs]` tags |
+| 6.5.1 | 10-21 | `--test` mines a fixed window (2020-01-01 to 2025-06-30, no age cutoff), so test runs pick the same PRs on every PC and day; before, the cap, `--min-age-days` and the stale-open cutoff moved with today's date and the form |
 
 Contract versions: `mined_dataset` 1.0 (2026-10-18, miner 2.2.0) → 1.1 (provenance, `domain`; miner 4.0.0) → 1.2 (`outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer`; miner 5.0.0). `mined_snapshot` 1.0 (miner 3.1.0) → 1.1 → 1.2 → 1.3 (`snapshot_weight`, `moment_bucket`; miner 6.0.0). `mined_commit_features` 1.0 (miner 3.1.0). Full table: `docs/contracts.md`.
 

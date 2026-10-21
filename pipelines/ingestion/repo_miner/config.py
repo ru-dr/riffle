@@ -137,6 +137,10 @@ def default_workers(ram_gb: float | None = None, cpus: int | None = None) -> int
 # dates, not today's, so a resumed run's pinned selection still matches.
 FULL_REPO_FROM = "2000-01-01"
 FULL_REPO_TO = "9999-12-31"
+# --test mines a fixed window in the past, so every PC and every run picks the same PRs
+# whatever day it is run (a window ending near today moves with the date and the PR list).
+TEST_WINDOW_FROM = "2020-01-01"
+TEST_WINDOW_TO = "2025-06-30"
 
 
 @dataclass

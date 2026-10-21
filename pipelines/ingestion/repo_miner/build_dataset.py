@@ -625,7 +625,11 @@ def main():
     if not entries:
         sys.exit("no valid GitHub URLs found in the repos file")
     if args.test:
+        import config
         args.max_prs = args.test_prs
+        # fixed window and no age cutoff, so the PR set doesn't depend on the day or the form
+        args.window_from, args.window_to = config.TEST_WINDOW_FROM, config.TEST_WINDOW_TO
+        args.min_age_days, args.cap_on, args.max_unmerged = 0, None, None
         args.skip_existing = True            # reuse the test clone between runs
         args.out = TEST_OUT
         args.keep_clones = True
