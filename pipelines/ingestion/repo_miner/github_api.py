@@ -98,6 +98,7 @@ class GitHubAPI:
         self.incomplete = False
         # closed-unmerged PRs found by merged_prs() (enable_merge_outcome only)
         self.unmerged: list[dict] = []
+        self.merged_span: tuple[str, str] | None = None   # legacy mode: (oldest, newest) merge time of the kept merged PRs
         self.use_landed = False
         self._user_cache: dict[str, str | None] = {}
         self._user_lock = threading.Lock()
@@ -460,11 +461,15 @@ class GitHubAPI:
         if use_landed and self.st.enable_merge_outcome:
             print("[merge-outcome] landed-commit repo: closed-unmerged PRs skipped "
                   "(not-merged is ambiguous here)", file=sys.stderr)
-        # keep unmerged PRs from the same creation window as the kept merged
-        # ones, so the merged / not-merged mix is the repo's real one
-        if unmerged and collected:
-            oldest = min(p.get("created_at") or "" for p in collected)
-            unmerged = [p for p in unmerged if (p.get("created_at") or "") >= oldest]
+        # keep the unmerged PRs closed in the same span as the kept merged ones (from the oldest kept merge to the newest),
+        # so the merged / not-merged mix is the repo's real one. The cap only shortens the span of merged PRs: unmerged PRs
+        # closed before or after it would have no merged counterparts and skew the mix (a repo with 20 merged PRs in three
+        # weeks came out with 168 unmerged ones from the three months before).
+        self.merged_span = None
+        if collected:
+            merged_times = [p.get("merged_at") or "" for p in collected]
+            self.merged_span = (min(merged_times), max(merged_times))
+            unmerged = [p for p in unmerged if self.merged_span[0] <= (p.get("closed_at") or "") <= self.merged_span[1]]
         cap = self.st.max_unmerged
         if cap is not None and len(unmerged) > cap:
             print(f"[merge-outcome] {len(unmerged)} closed-unmerged PRs in the window; "
@@ -773,11 +778,8 @@ class GitHubAPI:
                     (r.get("completed_at") or r.get("started_at") or "", r.get("id") or 0,
                      r["conclusion"]))
             if len(runs) < 100:
-                complete = True
                 break
             page += 1
-            if pages_path and page % 10 == 0:
-                self._save_ci_pages(pages_path, raw, page)
         FAIL = {"failure", "timed_out", "startup_failure", "action_required"}
         for name, runs in by_name.items():
             runs.sort()

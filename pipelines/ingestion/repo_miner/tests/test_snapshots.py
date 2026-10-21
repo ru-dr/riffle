@@ -349,3 +349,20 @@ def test_batch_end_assembly_writes_tables_and_skips_when_off(world, tmp_path, ca
     for off in ({"snapshots": False}, {"assemble_snapshots": False}, {"test": True}):
         build_dataset._assemble_snapshots(argparse.Namespace(**{**vars(args), **off}))
         assert not (tmp_path / "dataset_pc1of2_snapshots.jsonl").exists()
+
+
+def test_assembly_skips_captures_that_have_no_row_in_the_dataset(world, tmp_path):
+    """snapshots_raw/ keeps every earlier run's captures. A repo this PC did not mine (a smoke test, another split) must not
+    put commit rows into this PC's table: real runs showed 5 flask rows in the PC that mined click and jinja."""
+    d = tmp_path / "pallets_other"
+    d.mkdir()
+    foreign = dict(world["record"], repo="pallets/other")
+    (d / cap.CAPTURE_FILE).write_text(json.dumps(foreign) + "\n")
+    (d / cap.INDEX_FILE).write_text("".join(json.dumps(s) + "\n" for s in world["sidecars"]))
+    own = tmp_path / "z_own"
+    own.mkdir()
+    (own / cap.CAPTURE_FILE).write_text(json.dumps(world["record"]) + "\n")
+    (own / cap.INDEX_FILE).write_text("".join(json.dumps(s) + "\n" for s in world["sidecars"]))
+    snaps, commits = S.assemble([world["at_open"]], str(tmp_path), world["st"])
+    assert {r["repo"] for r in snaps} == {world["at_open"]["repo"]}
+    assert {r["repo"] for r in commits} == {world["at_open"]["repo"]}, "commit rows of a repo with no dataset row leaked in"

@@ -161,5 +161,5 @@
       { head: [o.th || "x"].concat(series.map(function (s) { return s.n; })), rows: x.map(function (l, i) { return [l].concat(series.map(function (s) { return fv(s.v[i]); })); }) });
   }
 
-  window.RFC = { hbar: hbar, vbar: vbar, line: line, stackh: stackh, nf: nf, h: h, empty: empty };
+  window.RFC = { mark: mark, hbar: hbar, vbar: vbar, line: line, stackh: stackh, nf: nf, h: h, empty: empty };
 })();

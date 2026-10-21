@@ -204,3 +204,14 @@ def test_the_store_hears_at_once_when_a_run_and_each_repo_start(monkeypatch):
     bd._SYNC["beat"] -= bd.HEARTBEAT_S + 1
     bd._sync_beat()
     assert sent[-1][1] == "heartbeat"
+
+
+def test_the_status_carries_what_the_run_is_set_to_including_the_model(monkeypatch):
+    import argparse
+    import build_dataset as bd
+    ns = bd.build_parser().parse_args(["--llm-model", "haiku", "--max-prs", "20", "--shard", "1/2", "--no-szz"])
+    st = bd._run_settings(ns)
+    assert st["llm"] is True and st["llm_model"] == "haiku" and st["szz"] is False and st["max_prs"] == 20 and st["shard"] == "1/2"
+    assert not any("key" in k or "token" in k for k in st), "no secret belongs in a status"
+    off = bd._run_settings(bd.build_parser().parse_args(["--no-llm"]))
+    assert off["llm"] is False and off["llm_model"] is None

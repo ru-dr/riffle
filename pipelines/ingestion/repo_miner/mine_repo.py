@@ -1000,6 +1000,9 @@ def _stale_open_prs(api, merged: list[dict], st: config.Settings) -> list[dict]:
               ).strftime("%Y-%m-%dT%H:%M:%SZ")
     if st.window_from and st.window_to:
         cutoff = min(cutoff, st.window_to + ("T23:59:59Z" if len(st.window_to) == 10 else ""))
+    span = getattr(api, "merged_span", None)
+    if span and not st.window_from:       # legacy mode: only PRs opened before the newest kept merge, like the unmerged rows
+        cutoff = min(cutoff, span[1])
     if getattr(api, "use_landed", False):
         return []                     # closed PRs skipped there; open ones would skew the mix
     cands = api.open_prs(oldest, cutoff)
@@ -1418,7 +1421,13 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
               file=sys.stderr)
     runlog.stage(None)
     runlog.info("repo", "done", rows=len(rows), skipped=dict(skipped))
+    LAST_SKIPS.clear()
+    LAST_SKIPS.update(skipped)
     return rows
+
+
+# why PRs of the last mined repo produced no row (reason -> count); the health check reads it
+LAST_SKIPS: dict = {}
 
 
 def _infer_owner_name(repo: str):
@@ -1633,7 +1642,7 @@ def main():
     in_scope = (lambda r: st.enable_llm and _llm_skip_reason(
         {"author_association": r.get("author_association"), "number": r.get("pr_number"), "user": {}},
         r, [], st) is None)
-    health.report(rows, f"{owner}/{name}", args.health_dir, in_llm_scope=in_scope)
+    health.report(rows, f"{owner}/{name}", args.health_dir, in_llm_scope=in_scope, skipped=dict(LAST_SKIPS))
     reuse_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.llm_reuse.json")
     if ok and os.path.isfile(reuse_path):
         os.remove(reuse_path)                       # one-shot: the re-mine is done

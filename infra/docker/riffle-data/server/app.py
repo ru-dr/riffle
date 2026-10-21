@@ -50,6 +50,7 @@ SEARCH_MAX_BYTES = 400 * 1024 ** 2
 SEARCH_BUDGET_S = 5.0
 SEARCH_LINE = 2000                                          # characters of a log line a pattern is tried on
 SOCKET_TIMEOUT_S = 120
+DATA_TTL_S = int(os.environ.get("RIFFLE_DATA_TTL_S", "600"))      # mined-data reads are recomputed at most this often
 MAX_RUN_JSON = 1024 * 1024
 POST_CAP = {"/v1/admin/splits": 400_000}                    # a repo list is up to tokens.MAX_REPOS_TEXT, JSON-escaped
 POST_CAP_DEFAULT = 32768
@@ -99,6 +100,32 @@ class Throttle:
             self.fails.setdefault(who, []).append(now)
 
 
+class DataCache:
+    """The mined-data views (the table catalogue and every parquet read) are computed once per window of `ttl` seconds and
+    shared by every reader, so reloading the page cannot make the server read the tables again. The window opens at the
+    first request after the last one ran out; every answer in it carries when it opened and when the next one may."""
+    MAX_ENTRIES, MAX_BODY = 300, 4 * 1024 ** 2
+
+    def __init__(self, ttl: int):
+        self.ttl, self.t, self.entries, self.lock = ttl, 0.0, {}, threading.Lock()
+
+    def window(self) -> tuple[float, float]:
+        now = time.time()
+        with self.lock:
+            if now - self.t >= self.ttl:
+                self.t, self.entries = now, {}
+            return self.t, self.t + self.ttl
+
+    def get(self, key: str, t: float):
+        with self.lock:
+            return self.entries.get(key) if t == self.t else None
+
+    def put(self, key: str, body: str, t: float) -> None:
+        with self.lock:
+            if t == self.t and len(self.entries) < self.MAX_ENTRIES and len(body) <= self.MAX_BODY:
+                self.entries[key] = body
+
+
 class Service:
     def __init__(self, data_dir: str, bucket: str | None = None):
         self.data = data_dir
@@ -108,6 +135,7 @@ class Service:
         self.index = index_mod.Index(os.path.join(data_dir, "index.db"))
         self.spool = os.path.join(data_dir, "spool")
         self.throttle = Throttle()
+        self.data_cache = DataCache(DATA_TTL_S)
         os.makedirs(self.spool, exist_ok=True)
 
     def tokens_changed(self) -> None:
@@ -139,18 +167,79 @@ class Service:
             st = (r or {}).get("status", {})
             pcs.append({"pc": name, "split": rec.get("split"), "created": rec.get("created"), "expires": rec.get("expires"),
                         "last_upload": r["updated"] if r else None, "state": state, "host": st.get("host"),
+                        "settings": st.get("settings") if isinstance(st.get("settings"), dict) else None,
+                        "argv": st.get("argv") if isinstance(st.get("argv"), list) else None, "miner_version": st.get("miner_version"),
+                        "started_at": st.get("started_at"), "current": st.get("current"),
                         "repos_done": st.get("repos_done"), "repos_total": st.get("repos_total"), "prs_done": st.get("prs_done")})
         splits = []
         for sid, meta in sorted(data["splits"].items()):
             mine = [p for p in pcs if p["split"] == sid]
             shown = {k: v for k, v in meta.items() if k != "repos_text"}
-            splits.append(dict(shown, split_id=sid, tokens=len(mine), uploaded=sum(1 for p in mine if p["last_upload"]),
+            models = sorted({(p["settings"] or {}).get("llm_model") for p in mine if (p["settings"] or {}).get("llm_model")})
+            splits.append(dict(shown, split_id=sid, tokens=len(mine), uploaded=sum(1 for p in mine if p["last_upload"]), models=models,
                                can_rotate=bool(meta.get("flags") is not None),
                                n_repos=sum(1 for ln in (meta.get("repos_text") or "").splitlines() if ln.strip() and not ln.strip().startswith("#"))))
         names = lambda kind: [{"name": n, "created": r.get("created")} for n, r in sorted(data[kind].items())]   # noqa: E731
         return {"pcs": pcs, "splits": splits, "readers": names("readers"), "admins": names("admins"),
                 "bucket": self.store.bucket_name,
-                "backup": dict(backup.STATE) if self.store.bucket_name else None}
+                "backup": dict(backup.STATE) if self.store.bucket_name else None,}
+
+    # -- activity: who mined when ---------------------------------------
+    ACTIVITY_STEP = {1: 900, 7: 3600, 30: 21600}              # days -> seconds per block (96, 168 and 120 blocks)
+    ENDED = ("batch done", "stopped", "batch aborted")
+
+    def activity(self, days: int) -> dict:
+        """One row of blocks per PC for the last `days`: mining (it pushed a status in that block), done, stopped, offline
+        (silent between its first and last block) or not seen. Also what each PC is doing right now."""
+        days = days if days in self.ACTIVITY_STEP else 7
+        step = self.ACTIVITY_STEP[days]
+        now = time.time()
+        end = (int(now) // step + 1) * step
+        n = days * 86400 // step
+        start = end - n * step
+        by_pc: dict[str, list[dict]] = {}
+        for r in self.index.activity(start - step):
+            by_pc.setdefault(r["pc"], []).append(r)
+        out = []
+        for pc, rows in sorted(by_pc.items()):
+            cells = [{"mining": 0, "done": 0, "stopped": 0, "prs": 0, "n": 0} for _ in range(n)]
+            prev: dict[str, int] = {}
+            for r in rows:
+                gain = 0
+                if r["prs_done"] is not None:
+                    gain = max(0, r["prs_done"] - prev.get(r["prefix"], r["prs_done"]))
+                    prev[r["prefix"]] = r["prs_done"]
+                i = int((r["ts"] - start) // step)
+                if not 0 <= i < n:
+                    continue
+                c = cells[i]
+                c["n"] += 1
+                c["prs"] += gain
+                kind = "done" if r["reason"] == "batch done" else "stopped" if r["reason"] in ("stopped", "batch aborted") else "mining"
+                c[kind] += 1
+            seen = [i for i, c in enumerate(cells) if c["n"]]
+            blocks = []
+            for i, c in enumerate(cells):
+                if c["n"]:
+                    state = "mining" if c["mining"] else "stopped" if c["stopped"] else "done"
+                elif seen and seen[0] < i < seen[-1]:
+                    state = "offline"
+                else:
+                    state = "none"
+                blocks.append([state, c["prs"], c["n"]])
+            last = rows[-1]
+            age = now - last["ts"]
+            if last["reason"] == "batch done":
+                cur = "done"
+            elif last["reason"] in ("stopped", "batch aborted"):
+                cur = "stopped"
+            else:
+                cur = "mining" if age < 25 * 60 else "offline"
+            span = [b for b in blocks[seen[0]:] if b[0] != "none"] if seen else []
+            up = sum(1 for b in span if b[0] in ("mining", "done")) / len(span) if span else None
+            out.append({"pc": pc, "now": cur, "last": last["ts"], "current": last["current"] if cur == "mining" else None,
+                        "uptime": up, "prs": sum(b[1] for b in blocks), "blocks": blocks})
+        return {"days": days, "step": step, "start": start, "end": end, "now": now, "pcs": out}
 
     # -- uploads ---------------------------------------------------------
     def put(self, pc: str, key: str, rfile, length: int, want_sha: str | None) -> tuple[int, str]:
@@ -633,35 +722,85 @@ def make_handler(svc: Service):
             self._send(200, body, ctype + ("; charset=utf-8" if ctype.startswith("text/") or ctype.endswith("javascript") else ""),
                        {"Cache-Control": "public, max-age=3600"})
 
+        def _raw(self, q: dict):
+            """The whole file as plain text, inline or as a download, optionally only the lines that match q / warnings."""
+            key = q.get("key", "")
+            path = svc.text_path(key)
+            needle, levels = (q.get("q") or "")[:200], q.get("lvl") == "1"
+            filtered = bool(needle) or levels
+            base = os.path.basename(key)
+            name = f"{key.split('/')[0]}_{base}" if not filtered else f"{key.split('/')[0]}_{base}.filtered.txt"
+            ctype = "application/octet-stream" if base.endswith(".parquet") else "text/plain; charset=utf-8"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Security-Policy", CSP)
+            self.send_header("Cache-Control", "no-store")
+            if q.get("download") == "1":
+                self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            if filtered:
+                self.send_header("Connection", "close")             # the length is not known up front
+                self.close_connection = True
+            else:
+                self.send_header("Content-Length", str(os.path.getsize(path)))
+            self.end_headers()
+            if self.command == "HEAD":
+                return
+            if filtered:
+                for chunk in views.matching_lines(path, needle, levels):
+                    self.wfile.write(chunk)
+            else:
+                with open(path, "rb") as fh:
+                    while True:
+                        block = fh.read(1024 * 1024)
+                        if not block:
+                            break
+                        self.wfile.write(block)
+
+        def _data_obj(self, route: str, q: dict):
+            """The JSON for a mined-data route (computed at most once per data window)."""
+            if route == "tables":
+                return svc.table_catalogue(q.get("version"), q.get("split"))
+            p = svc.parquet(q)
+            try:
+                op = route.split("/", 1)[1]
+                if op == "schema":
+                    return p.schema()
+                if op == "rows":
+                    return p.rows(_int(q, "offset", 0), _int(q, "limit", 50), q.get("sort"), q.get("dir", "asc"), q.get("fcol"), q.get("fq"))
+                if op == "profile":
+                    return p.profile(q.get("col", ""))
+                if op == "charts":
+                    return p.charts()
+            finally:
+                p.close()
+            raise LookupError("unknown parquet operation")
+
         def _api(self, route: str, q: dict):
+            if route == "raw":
+                return self._raw(q)
+            if route == "tables" or route.startswith("parquet/"):
+                t, nxt = svc.data_cache.window()
+                ckey = route + "?" + "&".join(f"{k}={v}" for k, v in sorted(q.items()))
+                body = svc.data_cache.get(ckey, t)
+                if body is None:
+                    body = json.dumps(self._data_obj(route, q), default=str)
+                    svc.data_cache.put(ckey, body, t)
+                return self._send(200, body, "application/json",
+                                  {"X-Data-Updated": str(int(t)), "X-Data-Next": str(int(nxt)), "Access-Control-Expose-Headers": "X-Data-Updated, X-Data-Next"})
             if route == "runs":
                 return self._json(svc.index.runs())
+            if route == "activity":
+                return self._json(svc.activity(_int(q, "days", 7)))
             if route == "run":
                 d = svc.run_detail(q.get("pc", ""), q.get("prefix", ""))
                 if not d:
                     raise LookupError("no such run")
                 return self._json(d)
-            if route == "tables":
-                return self._json(svc.table_catalogue(q.get("version"), q.get("split")))
             if route == "search":
                 hits, note = svc.search(q.get("q", ""), q.get("pc", ""), q.get("regex") == "1") if q.get("q") else ([], "")
                 return self._json({"hits": hits, "note": note, "pcs": sorted({r["pc"] for r in svc.index.runs()})})
-            if route.startswith("parquet/"):
-                p = svc.parquet(q)
-                try:
-                    op = route.split("/", 1)[1]
-                    if op == "schema":
-                        return self._json(p.schema())
-                    if op == "rows":
-                        return self._json(p.rows(_int(q, "offset", 0), _int(q, "limit", 50), q.get("sort"),
-                                                 q.get("dir", "asc"), q.get("fcol"), q.get("fq")))
-                    if op == "profile":
-                        return self._json(p.profile(q.get("col", "")))
-                    if op == "charts":
-                        return self._json(p.charts())
-                finally:
-                    p.close()
-                raise LookupError("unknown parquet operation")
             if route in ("meta", "lines", "jsonl", "json", "trace"):
                 key = q.get("key", "")
                 path = svc.text_path(key)

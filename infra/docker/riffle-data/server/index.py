@@ -18,7 +18,11 @@ CREATE TABLE IF NOT EXISTS files (key TEXT PRIMARY KEY, pc TEXT NOT NULL, size I
                                   sha256 TEXT, updated REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS runs (pc TEXT NOT NULL, prefix TEXT NOT NULL, status TEXT NOT NULL,
                                  updated REAL NOT NULL, PRIMARY KEY (pc, prefix));
+CREATE TABLE IF NOT EXISTS activity (pc TEXT NOT NULL, prefix TEXT NOT NULL, ts REAL NOT NULL, reason TEXT,
+                                     prs_done INTEGER, repos_done INTEGER, current TEXT);
+CREATE INDEX IF NOT EXISTS activity_ts ON activity (ts);
 """
+ACTIVITY_KEEP_S = 35 * 86400                                 # the activity graph looks back at most 30 days
 
 
 class Index:
@@ -36,9 +40,21 @@ class Index:
                             (key, pc, size, sha256, time.time()))
 
     def put_run(self, pc: str, prefix: str, status: dict) -> None:
+        now = time.time()
+        num = lambda v: v if isinstance(v, int) and not isinstance(v, bool) else None   # noqa: E731
+        cur = status.get("current")
         with self.lock, self.db:
-            self.db.execute("INSERT OR REPLACE INTO runs VALUES (?,?,?,?)",
-                            (pc, prefix, json.dumps(status), time.time()))
+            self.db.execute("INSERT OR REPLACE INTO runs VALUES (?,?,?,?)", (pc, prefix, json.dumps(status), now))
+            # every status push is one point on the activity timeline (a heartbeat while mining, a push per repo)
+            self.db.execute("INSERT INTO activity VALUES (?,?,?,?,?,?,?)",
+                            (pc, prefix, now, str(status.get("reason"))[:40] if status.get("reason") is not None else None,
+                             num(status.get("prs_done")), num(status.get("repos_done")), cur[:120] if isinstance(cur, str) else None))
+            self.db.execute("DELETE FROM activity WHERE ts < ?", (now - ACTIVITY_KEEP_S,))
+
+    def activity(self, since: float) -> list[dict]:
+        with self.lock:
+            rows = self.db.execute("SELECT * FROM activity WHERE ts >= ? ORDER BY ts", (since,)).fetchall()
+        return [dict(r) for r in rows]
 
     def runs(self) -> list[dict]:
         with self.lock:

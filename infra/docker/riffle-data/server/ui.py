@@ -25,9 +25,13 @@ BODIES = {
  <div class="panel"><div class="cap">PRs mined</div><h3>By PC</h3><div class="chart" id="c-prs"></div></div>
  <div class="panel"><div class="cap">Repos</div><h3>By state, per PC</h3><div class="chart" id="c-repos"></div></div>
 </section>
+<section class="rule section"><div class="shead"><div class="cap">Activity</div><h2>Who mined when</h2>
+<p>One bar per PC, one block per time slice. Green means the PC sent a status in that slice; a gap between green blocks is time it was offline.</p></div></section>
+<section id="activity" class="actpad"></section>
 <section class="rule section"><div class="shead"><div class="cap">PCs</div><h2>Every machine</h2>
 <p>PRs left counts the repo each PC is mining now. A repo that has not started has no PR selection yet, so it counts under repos waiting.</p></div></section>
-<section><div id="pcs"></div></section>""",
+<section><div id="pcs"></div></section>
+<section id="bigpic" class="rule"></section>""",
     "run": """
 <section class="rule intro"><div class="cap" id="r-cap">Run</div><h1 id="r-title">…</h1><p id="r-sub"></p></section>
 <section class="rule grid g5" id="kpis"></section>
@@ -65,7 +69,8 @@ BODIES = {
 <div id="newreader" class="alert ok" hidden></div></section>
 <section><div id="readers"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Admins</div><h2>Admin tokens</h2><p>Made on the VM with <code>manage.py add-admin</code>. Listed here for reference.</p></div></section>
-<section><div id="admins"></div></section>""",
+<section><div id="admins"></div></section>
+<section id="bigpic" class="rule"></section>""",
     "search": """
 <section class="rule intro"><div class="cap">Logs and traces</div><h1>Search the <span class="of">logs</span></h1>
 <p>Plain text or a regular expression, over every PC's run logs and traces.</p></section>

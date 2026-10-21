@@ -28,9 +28,10 @@ def _share(n: int, d: int) -> float | None:
     return round(n / d, 3) if d else None
 
 
-def check(rows: list[dict], in_llm_scope=None) -> dict:
+def check(rows: list[dict], in_llm_scope=None, skipped: dict | None = None) -> dict:
     """Stats and flags for one repo's rows. `in_llm_scope(row)` says whether a
-    row should have LLM columns (omit to skip that check)."""
+    row should have LLM columns (omit to skip that check). `skipped` counts the PRs that produced no row, by reason
+    (a reason starting `exc:` is an error, not a PR with nothing to mine)."""
     n = len(rows)
     merged = [r for r in rows if r.get("label_merged") is True or (r.get("merged_at") and r.get("label_merged") is None)]
     outside = [r for r in rows if r.get("author_association") in OUTSIDE and not r.get("author_is_bot")
@@ -57,7 +58,12 @@ def check(rows: list[dict], in_llm_scope=None) -> dict:
         missing = sum(1 for r in llm_rows if all(r.get(k) is None for k in FLAG_SCHEMA))
         stats["llm_rows"] = len(llm_rows)
         stats["llm_missing_share"] = _share(missing, len(llm_rows))
+    errors = {k: v for k, v in (skipped or {}).items() if str(k).startswith("exc:")}
+    stats["skipped_errors"] = sum(errors.values())
     flags = []
+    if errors:
+        flags.append(f"{sum(errors.values())} PRs dropped by errors ({', '.join(f'{k}={v}' for k, v in errors.items())}): "
+                     f"the rows are not the whole selection; see the run log")
     if n < MIN_ROWS:
         flags.append(f"only {n} rows (< {MIN_ROWS})")
     if outside and (stats["outside_unmerged_share"] or 0) < MIN_OUTSIDE_UNMERGED:
@@ -72,9 +78,9 @@ def check(rows: list[dict], in_llm_scope=None) -> dict:
     return {"stats": stats, "flags": flags}
 
 
-def report(rows: list[dict], repo_key: str, directory: str = "health", in_llm_scope=None) -> dict:
+def report(rows: list[dict], repo_key: str, directory: str = "health", in_llm_scope=None, skipped: dict | None = None) -> dict:
     """Print a one-line summary plus any flags, and save the JSON."""
-    h = check(rows, in_llm_scope)
+    h = check(rows, in_llm_scope, skipped)
     s = h["stats"]
     pct = lambda v: "-" if v is None else f"{v:.0%}"  # noqa: E731
     print(f"[health] {repo_key}: {s['rows']} rows · merged {pct(s['merged_share'])} · outside "

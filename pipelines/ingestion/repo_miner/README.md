@@ -535,7 +535,7 @@ v1 output: merged PRs and breakage labels only. Every shard PC must use the
 same setting, or the merge model only sees some of the repos. Repos mined
 before v2.0.0 need a re-mine to get merge labels.
 
-- Rows: closed-unmerged PRs from the same creation window as the merged PRs
+- Rows: closed-unmerged PRs closed in the same span as the merged PRs
   mined, so the merged / unmerged mix is the repo's own. Their commits are
   fetched from `refs/pull/N/head` without local refs, so no `git log --all`
   scan sees them. Features are computed at the fork point as usual;

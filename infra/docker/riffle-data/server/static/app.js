@@ -10,11 +10,14 @@
     [].concat(kids == null ? [] : kids).forEach(function (k) { if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k))); });
     return e;
   }
+  var DATA = { updated: 0, next: 0 };                     // the mined-data window: when it opened, when the next may open
   function api(route, params) {
     var u = new URL("/api/" + route, location.origin);
     Object.keys(params || {}).forEach(function (k) { if (params[k] != null && params[k] !== "") u.searchParams.set(k, params[k]); });
     return fetch(u, { credentials: "same-origin" }).then(function (r) {
       if (r.status === 401) { location.href = "/login"; return new Promise(function () {}); }
+      var up = +r.headers.get("X-Data-Updated"), nx = +r.headers.get("X-Data-Next");
+      if (up && nx) { DATA.updated = up; DATA.next = nx; document.dispatchEvent(new Event("riffle-data")); }
       return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; });
     });
   }
@@ -88,11 +91,139 @@
   function link(text, href) { var a = h("a"); a.href = href; a.textContent = text; return a; }
   function viewHref(key) { return "/view?key=" + encodeURIComponent(key); }
 
+
+  /* ---------------- live refresh and big picture ----------------
+     A page polls only while some PC is mining (POLL_MS apart, one small read of the store's local index each time).
+     When nothing is mining it stays idle: no timer, no requests, until the tab is shown again or Refresh is pressed.
+     load() returns a promise of true when something is mining. */
+  var POLL_MS = 15000;
+  function bigPref() {
+    try { var u = new URLSearchParams(location.search).get("view"); if (u) return u === "big"; return localStorage.getItem("riffle-big") === "1"; } catch (e) { return false; }
+  }
+  function setBig(on) {
+    document.body.classList.toggle("big", on);
+    try { localStorage.setItem("riffle-big", on ? "1" : "0"); } catch (e) { /* private window: the choice just is not remembered */ }
+  }
+  /* a slim strip under the header holds the page's live status and its buttons, so the header stays just logo, menu, sign out */
+  function strip() {
+    var st = document.querySelector(".strip");
+    if (!st) { st = h("div", "rule strip"); var hd = document.querySelector("header.top"); if (hd) hd.after(st); }
+    return st;
+  }
+  function liveLoop(load, opts) {
+    opts = opts || {};
+    var timer = null, chip = el("span", "livechip", "…"), busy = false;
+    var refresh = el("button", "btn", "Refresh"), bigBtn = el("button", "btn", "Big picture"), full = el("button", "btn", "Fullscreen");
+    refresh.type = bigBtn.type = full.type = "button";
+    strip().append.apply(strip(), opts.big ? [chip, refresh, bigBtn, full] : [chip, refresh]);
+    function chipText(active, err) {
+      chip.className = "livechip" + (active ? " on" : "");
+      chip.textContent = err ? "Could not refresh" : active ? "Live · every " + POLL_MS / 1000 + " s" : "Idle · nothing is mining";
+    }
+    function tick() {
+      clearTimeout(timer);
+      if (busy) return; busy = true; refresh.disabled = true;
+      Promise.resolve(load()).then(function (active) {
+        busy = false; refresh.disabled = false; chipText(!!active, false);
+        if (active && !document.hidden) timer = setTimeout(tick, POLL_MS);
+      }, function () { busy = false; refresh.disabled = false; chipText(false, true); });
+    }
+    function paint() {
+      var on = document.body.classList.contains("big");
+      bigBtn.textContent = on ? "Normal view" : "Big picture"; bigBtn.setAttribute("aria-pressed", String(on)); full.hidden = !on;
+    }
+    bigBtn.onclick = function () { setBig(!document.body.classList.contains("big")); paint(); };
+    full.onclick = function () { if (document.fullscreenElement) document.exitFullscreen(); else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); };
+    refresh.onclick = tick;
+    document.addEventListener("visibilitychange", function () { if (document.hidden) clearTimeout(timer); else tick(); });
+    if (opts.big) setBig(bigPref());
+    paint(); tick();
+  }
+  function bigNum(label, value, cls) { return el("div", "bignum", [el("div", "cap", label), el("b", cls || "", String(value))]); }
+  function bigBar(pct, text) { var b = el("div", "bigbar"), f = h("i"); f.style.width = Math.max(0, Math.min(100, pct)) + "%"; b.append(f, el("span", "", text)); return b; }
+  function bigOverview(runs) {
+    var sum = function (k) { return runs.reduce(function (a, r) { return a + (r.status[k] || 0); }, 0); };
+    var total = sum("repos_total"), done = sum("repos_done"), pct = total ? Math.round(100 * done / total) : 0;
+    var active = runs.filter(function (r) { return runState(r)[0] === "mining"; }).length;
+    var cards = runs.map(function (r) {
+      var s = r.status, st = runState(r), p = s.repos_total ? Math.round(100 * (s.repos_done || 0) / s.repos_total) : 0;
+      return el("div", "bigcard", [
+        el("div", "bigcardhead", [el("b", "", r.pc), tag(st[0], st[1])]),
+        bigBar(p, (s.repos_done || 0) + " of " + (s.repos_total || 0) + " repos"),
+        el("div", "bigrow", [el("span", "cap", "PRs mined"), el("b", "", (s.prs_done || 0).toLocaleString())]),
+        el("div", "bigrow", [el("span", "cap", "Now"), el("span", "", s.current || "–")]),
+        el("div", "bigrow", [el("span", "cap", "Last sync"), el("span", "", ago(r.updated))])]);
+    });
+    $("#bigpic").replaceChildren(
+      el("div", "bigtop", [bigNum("PRs mined", sum("prs_done").toLocaleString(), "good"), bigNum("Repos done", done + " / " + total),
+        bigNum("PCs mining", active + " / " + runs.length, active ? "good" : ""), bigNum("PRs left", sum("prs_remaining").toLocaleString())]),
+      el("div", "bigwide", [bigBar(pct, pct + "% of all assigned repos")]),
+      cards.length ? el("div", "bigcards", cards) : el("div", "empty", "No PC has synced yet."));
+  }
+  function bigAdmin(d) {
+    var by = function (st) { return d.pcs.filter(function (p) { return p.state === st; }).length; };
+    var soon = Date.now() / 1000 + 3 * 86400, expiring = d.pcs.filter(function (p) { return p.expires && p.expires < soon && p.expires > Date.now() / 1000; }).length;
+    var splits = d.splits.map(function (x) {
+      return el("div", "bigcard", [el("div", "bigcardhead", [el("b", "", "Split " + x.split_id), tag(x.tokens + " PCs", "")]),
+        bigBar(x.tokens ? Math.round(100 * x.uploaded / x.tokens) : 0, x.uploaded + " of " + x.tokens + " have uploaded"),
+        el("div", "bigrow", [el("span", "cap", "Miner"), el("span", "", x.version || "?")]),
+        el("div", "bigrow", [el("span", "cap", "Repos in list"), el("span", "", x.repos_name ? x.repos_name + " (" + (x.n_repos || 0) + ")" : "–")])]);
+    });
+    var pcs = d.pcs.map(function (p) {
+      var color = { mining: "green", done: "green", stopped: "amber", silent: "red", expired: "red", never: "" }[p.state] || "";
+      return el("div", "bigcard", [el("div", "bigcardhead", [el("b", "", p.pc), tag(p.state, color)]),
+        el("div", "bigrow", [el("span", "cap", "Last upload"), el("span", "", ago(p.last_upload))]),
+        el("div", "bigrow", [el("span", "cap", "Progress"), el("span", "", (p.repos_done || 0) + " / " + (p.repos_total || 0) + " repos")]),
+        el("div", "bigrow", [el("span", "cap", "PRs mined"), el("b", "", (p.prs_done || 0).toLocaleString())])]);
+    });
+    $("#bigpic").replaceChildren(
+      el("div", "bigtop", [bigNum("PC tokens", d.pcs.length), bigNum("Mining now", by("mining"), by("mining") ? "good" : ""),
+        bigNum("Never uploaded", by("never"), by("never") ? "warn" : ""), bigNum("Expiring in 3 days", expiring, expiring ? "warn" : "")]),
+      splits.length ? el("div", "bigcards", splits) : null,
+      pcs.length ? el("div", "bigcards", pcs) : el("div", "empty", "No PC tokens yet. Issue codes from the miner's TUI (Lead tools, F3)."));
+  }
+
+
+  /* ---------------- activity: who mined when ---------------- */
+  var ACT_NOW = { mining: ["mining now", "green"], done: ["done", "green"], stopped: ["stopped", "amber"], offline: ["offline", "red"] };
+  function clock(ts, withDay) {
+    var d = new Date(ts * 1000), t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return withDay ? d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + t : t;
+  }
+  function span(sec) { sec = Math.round(sec); return sec < 3600 ? Math.max(1, Math.round(sec / 60)) + " min" : sec < 86400 ? (sec / 3600).toFixed(1).replace(/\.0$/, "") + " h" : (sec / 86400).toFixed(1).replace(/\.0$/, "") + " d"; }
+  function drawActivity(host, d, onRange) {
+    var days = d.days, withDay = days > 1, head = el("div", "toolbar"), sel = h("select");
+    sel.setAttribute("aria-label", "Time range");
+    [[1, "Last 24 hours"], [7, "Last 7 days"], [30, "Last 30 days"]].forEach(function (x) { sel.append(new Option(x[1], x[0])); }); sel.value = days;
+    sel.onchange = function () { onRange(+sel.value); };
+    head.append(el("div", "grp", [el("span", "cap", "Range"), sel]));
+    var legend = el("div", "uptlegend");
+    [["mining", "Mining"], ["done", "Done"], ["stopped", "Stopped"], ["offline", "Offline"], ["none", "Not seen"]].forEach(function (x) { legend.append(el("span", "", [el("i", "b-" + x[0]), x[1]])); });
+    var rows = d.pcs.map(function (p) {
+      var now = ACT_NOW[p.now] || ["", ""], blocks = el("div", "upt"), top = el("div", "uptrow");
+      blocks.style.gridTemplateColumns = "repeat(" + p.blocks.length + ",1fr)";
+      p.blocks.forEach(function (b, i) {
+        var t0 = d.start + i * d.step, node = h("i", "b-" + b[0]);
+        var label = { mining: "Mining", done: "Finished", stopped: "Stopped", offline: "Offline (no status received)", none: "Not seen yet" }[b[0]];
+        C.mark(node, clock(t0, withDay) + " – " + clock(t0 + d.step, false), [{ v: label }].concat(b[0] === "mining" || b[1] ? [{ v: String(b[1]), n: "PRs mined" }, { v: String(b[2]), n: "status pushes" }] : []));
+        blocks.append(node);
+      });
+      var info = el("div", "uptinfo", [el("b", "", p.pc), tag(now[0], now[1]),
+        el("span", "cap", p.now === "mining" ? (p.current ? "now on " + p.current : "just pushed a status") : p.now === "offline" ? "last seen " + ago(p.last) : p.now === "done" ? "finished " + ago(p.last) : "stopped " + ago(p.last))]);
+      var stat = el("div", "uptstat", [p.uptime == null ? "–" : Math.round(100 * p.uptime) + "% up", el("span", "cap", p.prs.toLocaleString() + " PRs")]);
+      top.append(info, stat);
+      return el("div", "uptpc", [top, blocks]);
+    });
+    var axis = el("div", "uptaxis", [el("span", "", clock(d.start, withDay)), el("span", "", clock(d.start + (d.end - d.start) / 2, withDay)), el("span", "", "now")]);
+    host.replaceChildren(head, legend, rows.length ? el("div", "uptlist", rows.concat([axis])) : el("div", "empty", "No PC has sent a status yet. A bar appears for each PC as soon as it starts mining."));
+  }
+
   /* ---------------- overview ---------------- */
   var STATE_RANK = { mining: 0, silent: 1, stopped: 2, done: 3 };
   function overview() {
+    var actDays = 7;
     function draw() {
-      api("runs").then(function (runs) {
+      return api("runs").then(function (runs) {
         var sum = function (k) { return runs.reduce(function (a, r) { return a + (r.status[k] || 0); }, 0); };
         var active = runs.filter(function (r) { return runState(r)[0] === "mining"; }).length;
         $("#kpis").replaceChildren(
@@ -101,6 +232,8 @@
           stat("PRs mined", sum("prs_done").toLocaleString(), "rows written so far"),
           stat("PRs left", sum("prs_remaining").toLocaleString(), "in repos already started"),
           stat("Failed repos", sum("repos_failed").toLocaleString(), sum("repos_pending") + " not started", sum("repos_failed") ? "bad" : ""));
+        bigOverview(runs);
+        api("activity", { days: actDays }).then(function (d) { drawActivity($("#activity"), d, function (v) { actDays = v; draw(); }); });
         runs.sort(function (a, b) { return (STATE_RANK[runState(a)[0]] - STATE_RANK[runState(b)[0]]) || a.pc.localeCompare(b.pc); });
         C.hbar($("#c-prs"), runs.map(function (r) { return { l: r.pc, v: r.status.prs_done || 0 }; }).sort(function (a, b) { return b.v - a.v; }),
           { aria: "PRs mined per PC", th: "PC", vh: "PRs mined", ml: 150 });
@@ -127,16 +260,17 @@
             return td;
           }
         }));
+        return active > 0;
       }).catch(function (e) { failure($("#pcs"), e); });
     }
-    draw(); setInterval(draw, 30000);
+    liveLoop(draw, { big: true });
   }
 
   /* ---------------- one run ---------------- */
   var REPO_RANK = { mining: 0, failed: 1, pending: 2, skipped: 3, done: 4 };
   function run() {
     var pc = qs.get("pc"), prefix = qs.get("prefix"), filter = "all";
-    function load() { api("run", { pc: pc, prefix: prefix }).then(function (d) {
+    function load() { return api("run", { pc: pc, prefix: prefix }).then(function (d) {
       var r = d.run, s = r.status, st = runState(r);
       $("#r-cap").textContent = "Run · split " + (s.split_id || "none") + " · miner " + (s.miner_version || "?");
       $("#r-title").replaceChildren(document.createTextNode(r.pc + " "), tag(st[0], st[1]));
@@ -193,8 +327,9 @@
           return td;
         }
       }));
+      return st[0] === "mining";
     }).catch(function (e) { $("#r-title").textContent = "Run not found"; $("#r-sub").textContent = e.message; }); }
-    load(); setInterval(load, 30000);                                   // follow a PC that is mining
+    liveLoop(load);                                                     // follows a PC that is mining, idle otherwise
   }
 
   /* ---------------- parquet explorer ---------------- */
@@ -342,6 +477,52 @@
     }).catch(function (e) { failure($("#explorer"), e); });
   }
 
+
+  /* ---------------- mined-data clock ----------------
+     The store computes the mined tables once per window (10 minutes) for everyone. This shows when the data on the page is
+     from and when a newer copy may be had, and keeps Refresh off until then, so reloading cannot ask for more. */
+  function mmss(sec) { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"); }
+  function dataClock() {
+    var chip = el("span", "livechip", "Reading data…"), btn = el("button", "btn", "Refresh");
+    btn.type = "button"; btn.disabled = true;
+    strip().append(chip, btn);
+    btn.onclick = function () { location.reload(); };
+    function tick() {
+      if (!DATA.updated) return;
+      var now = Date.now() / 1000, wait = DATA.next - now, due = wait <= 0;
+      chip.className = "livechip" + (due ? " due" : " on");
+      chip.textContent = "Data from " + mmss(now - DATA.updated) + " ago · " + (due ? "update ready" : "next in " + mmss(wait));
+      chip.title = "Mined data is recomputed at most every " + Math.round((DATA.next - DATA.updated) / 60) + " minutes and shared by everyone.";
+      btn.disabled = !due; btn.textContent = due ? "Refresh" : "Refresh in " + mmss(wait);
+    }
+    setInterval(tick, 1000); document.addEventListener("riffle-data", tick);
+  }
+
+  /* ---------------- log lines: colour by meaning ---------------- */
+  var TOKEN = /(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?Z?)|\b(ERROR|CRITICAL|Traceback|FAILED)\b|\b(WARN(?:ING)?)\b|\b(INFO|DEBUG|TRACE)\b|(\[[A-Za-z][\w:. -]{0,30}\])|(https?:\/\/[^\s)\]]+)|\b([A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+)\b|\b([a-z_]{2,24})=|(\b\d[\d,.]*\b)/g;
+  var TOKEN_CLASS = ["", "tk-time", "tk-err", "tk-warn", "tk-info", "tk-tag", "tk-url", "tk-repo", "tk-key", "tk-num"];
+  function segments(text) {
+    var out = [], last = 0, m; TOKEN.lastIndex = 0;
+    while ((m = TOKEN.exec(text))) {
+      var g = 1; while (g < 10 && m[g] === undefined) g++;
+      var len = g === 8 ? m[8].length : m[0].length;          // a key= token colours the name, not the =
+      if (m.index > last) out.push([text.slice(last, m.index), ""]);
+      out.push([m[0].slice(0, len), TOKEN_CLASS[g]]); last = m.index + len; if (g === 8) TOKEN.lastIndex = last;
+    }
+    if (last < text.length) out.push([text.slice(last), ""]);
+    return out;
+  }
+  function logLine(text, needle) {
+    var row = h("span"), low = needle ? needle.toLowerCase() : "";
+    segments(text).forEach(function (sg) {
+      var node = sg[1] ? h("span", sg[1]) : row, t = sg[0], i = low ? t.toLowerCase().indexOf(low) : -1;
+      if (i >= 0) { node.append(document.createTextNode(t.slice(0, i)), el("mark", "", t.slice(i, i + low.length)), document.createTextNode(t.slice(i + low.length))); }
+      else node.append(document.createTextNode(t));
+      if (node !== row) row.append(node);
+    });
+    return row;
+  }
+
   /* ---------------- file viewer ---------------- */
   function tree(v, key) {
     if (v !== null && typeof v === "object") {
@@ -358,9 +539,15 @@
     line.append(val); return line;
   }
   function textViewer(root, key, kind) {
-    var st = { offset: 0, limit: 200, q: "", tail: false, lvl: false };
+    var st = { offset: 0, limit: 200, q: "", tail: false, lvl: false }, ALL_CAP = 100000, stopAll = false;
     var box = el("div"); root.replaceChildren(box);
+    function rawHref(download) {
+      var u = new URL("/api/raw", location.origin); u.searchParams.set("key", key);
+      if (st.q) u.searchParams.set("q", st.q); if (st.lvl) u.searchParams.set("lvl", "1"); if (download) u.searchParams.set("download", "1");
+      return u.pathname + u.search;
+    }
     function draw() {
+      stopAll = true;
       api("lines", { key: key, offset: st.offset, limit: st.limit, q: st.q, tail: st.tail ? "1" : "", lvl: st.lvl ? "1" : "" }).then(function (d) {
         var tools = el("div", "toolbar"); tools.style.padding = "16px 24px 0";
         var g1 = el("div", "grp", [el("span", "cap", "Find in this file")]), r1 = el("div", "tools"); r1.style.margin = "0";
@@ -373,7 +560,15 @@
           var b = el("button", "", x[0]); b.setAttribute("aria-pressed", String(st.lvl === x[1])); b.onclick = function () { st.lvl = x[1]; st.offset = 0; draw(); }; seg.append(b);
         });
         var tl = el("button", "btn", st.tail ? "From the start" : "Jump to the end"); tl.onclick = function () { st.tail = !st.tail; st.offset = 0; draw(); };
-        seg.append(tl); g2.append(seg); tools.append(g1, g2);
+        seg.append(tl); g2.append(seg);
+        var g3 = el("div", "grp", [el("span", "cap", "Lines per page")]), size = h("select"); size.setAttribute("aria-label", "Lines per page");
+        [200, 500, 1000, 2000].forEach(function (n) { size.append(new Option(String(n), n)); }); size.value = st.limit;
+        size.onchange = function () { st.limit = +size.value; st.offset = 0; draw(); }; g3.append(size);
+        var filt = st.q || st.lvl, g4 = el("div", "grp", [el("span", "cap", "Whole file")]), row4 = el("div", "tools"); row4.style.margin = "0";
+        var open = el("a", "btn", filt ? "Open all matching" : "Open full log"); open.href = rawHref(false); open.target = "_blank"; open.rel = "noopener";
+        var dl = el("a", "btn solid", filt ? "Download matching" : "Download"); dl.href = rawHref(true);
+        var all = el("button", "btn", "Load all here"); row4.append(open, dl, all); g4.append(row4);
+        tools.append(g1, g2, g3, g4);
         var pager = el("div", "pager"); pager.style.padding = "0 24px";
         if (!st.tail) {
           var prev = el("button", "btn", "← Prev"), next = el("button", "btn", "Next →"), to = Math.min(d.total, d.offset + d.limit);
@@ -381,16 +576,34 @@
           prev.onclick = function () { st.offset = Math.max(0, d.offset - d.limit); draw(); }; next.onclick = function () { st.offset = d.offset + d.limit; draw(); };
           pager.append(prev, (d.total ? d.offset + 1 : 0).toLocaleString() + "–" + to.toLocaleString() + " of " + d.total.toLocaleString() + " lines", next);
         } else pager.append("last " + d.lines.length + " of " + d.total.toLocaleString() + " lines");
-        var pre = h("pre", "log"); var needle = st.q.toLowerCase();
-        d.lines.forEach(function (l) {
-          var row = h("span"), txt = l[1];
-          if (/\b(ERROR|Traceback)\b|\[error/i.test(txt)) row.className = "e"; else if (/\b(WARN|WARNING)\b|\[warn/i.test(txt)) row.className = "w";
-          row.append(h("span", "ln", String(l[0])));
-          var i = needle ? txt.toLowerCase().indexOf(needle) : -1;
-          if (i >= 0) { row.append(document.createTextNode(txt.slice(0, i)), el("mark", "", txt.slice(i, i + needle.length)), document.createTextNode(txt.slice(i + needle.length))); }
-          else row.append(document.createTextNode(txt));
-          pre.append(row, document.createTextNode("\n"));
-        });
+        var pre = h("pre", "log"), needle = st.q;
+        function addLines(lines) {
+          lines.forEach(function (l) {
+            var row = logLine(l[1], needle);
+            if (/\b(ERROR|Traceback)\b|\[error/i.test(l[1])) row.classList.add("e"); else if (/\b(WARN|WARNING)\b|\[warn/i.test(l[1])) row.classList.add("w");
+            row.prepend(h("span", "ln", String(l[0])));
+            pre.append(row, document.createTextNode("\n"));
+          });
+        }
+        addLines(d.lines);
+        all.onclick = function () {                                   // page through the whole file into this view, stoppable
+          var next = (d.lines.length ? d.lines[d.lines.length - 1][0] : 0), have = 0, off = st.tail ? 0 : st.offset + d.lines.length, status = el("span", "cap");
+          stopAll = false; pre.replaceChildren(); pager.replaceChildren(status); all.disabled = true;
+          var stop = el("button", "btn", "Stop"); stop.onclick = function () { stopAll = true; }; pager.append(stop);
+          off = 0;
+          (function step() {
+            api("lines", { key: key, offset: off, limit: 2000, q: st.q, lvl: st.lvl ? "1" : "" }).then(function (x) {
+              addLines(x.lines); have += x.lines.length; off += x.lines.length;
+              status.textContent = "Loaded " + have.toLocaleString() + " of " + x.total.toLocaleString() + " lines";
+              if (!x.lines.length || have >= x.total || stopAll || have >= ALL_CAP) {
+                stop.remove(); all.disabled = false;
+                if (have >= ALL_CAP && have < x.total) status.textContent += ". That is as many as this view holds; use Open full log or Download for the rest.";
+                return;
+              }
+              setTimeout(step, 0);
+            }).catch(function (e) { status.textContent = "Stopped: " + e.message; stop.remove(); all.disabled = false; });
+          })();
+        };
         box.replaceChildren(tools, pager, d.lines.length ? pre : el("div", "empty", st.lvl ? "No warnings or errors in this file." : "No lines."));
       }).catch(function (e) { failure(box, e); });
     }
@@ -475,7 +688,7 @@
       $("#v-cap").textContent = m.kind + " · " + bytes(m.size) + " · updated " + ago(m.updated);
       $("#v-title").textContent = parts.slice(3).join("/") || key;
       $("#v-sub").textContent = parts[0] + " · miner " + parts[1] + " · split " + parts[2] + (m.uri ? " · " + m.uri : "");
-      if (m.kind === "parquet") explorer(root, { key: key });
+      if (m.kind === "parquet") { dataClock(); explorer(root, { key: key }); }
       else if (m.kind === "trace") traceViewer(root, key);
       else if (m.kind === "jsonl") jsonlViewer(root, key);
       else if (m.kind === "json") jsonViewer(root, key);
@@ -516,12 +729,14 @@
 
   /* ---------------- admin ---------------- */
   /* the lead's flags as tags: `--max-prs 8000` is one tag, a bare switch is a tag with no value */
-  function flagList(flags) {
+  function flagList(flags, models) {
     var groups = [];
     flags.forEach(function (f) {
       f = String(f);
       if (f.slice(0, 2) === "--" || !groups.length) groups.push({ name: f, value: [] }); else groups[groups.length - 1].value.push(f);
     });
+    if (models && models.length && !flags.some(function (f) { return String(f).indexOf("--llm-model") === 0; }))
+      groups.push({ name: "LLM model", value: [models.join(", ")] });                 // the default model is not in the flags; the PCs report it
     var d = h("details", "flags"), n = groups.length;
     d.append(h("summary", "", n + (n === 1 ? " setting" : " settings")));
     var box = h("div", "flagbox");
@@ -532,6 +747,28 @@
     });
     if (!n) box.append(h("span", "cap", "no flags: the miner's defaults"));
     d.append(box); return d;
+  }
+  /* one PC's run in detail: what it is set to (including the LLM model), where it is, and the exact command */
+  function runDetails(p, copyBtn) {
+    var st = p.settings, d = h("details", "flags"), box = h("div", "flagbox"), chips = [];
+    d.append(h("summary", "", st ? (st.llm ? (st.llm_model || "model ?") : "LLM off") + " · details" : "details"));
+    function chip(n, v) { if (v === null || v === undefined || v === "") return; chips.push([n, String(v)]); }
+    function sw(b) { return b ? "on" : "off"; }
+    if (st) {
+      chip("LLM", st.llm ? "on" : "off"); chip("model", st.llm_model); chip("backend", st.llm_backend); chip("scope", st.llm_scope); chip("llm concurrency", st.llm_concurrency);
+      chip("SZZ", sw(st.szz)); chip("CI history", sw(st.ci_history)); chip("scanners", sw(st.scanners)); chip("workers", st.workers);
+      chip("max PRs", st.full_repo ? "all (full repo)" : st.max_prs == null ? "no cap" : st.max_prs); chip("cap on", st.cap_on);
+      chip("window", st.window_from || st.window_to ? (st.window_from || "…") + " → " + (st.window_to || "…") : ""); chip("domain", st.only_domain); chip("repos file", st.repos_file); chip("shard", st.shard);
+    }
+    chip("host", p.host); chip("miner", p.miner_version); chip("started", p.started_at ? p.started_at.replace("T", " ").replace("Z", " UTC") : ""); chip("now on", p.current);
+    chips.forEach(function (c) { var e = h("span", "flag"); e.append(h("b", "", c[0]), h("i", "", c[1])); box.append(e); });
+    if (!st) box.append(h("span", "cap", "This PC's miner did not report its settings (older version). The command below is what it was started with."));
+    d.append(box);
+    if (p.argv && p.argv.length) {
+      var cmd = "python build_dataset.py " + p.argv.map(function (a) { return /[\s"'$`]/.test(a) ? "'" + a.replace(/'/g, "'\\''") + "'" : a; }).join(" ");
+      var line = h("div", "cmdline"); line.append(h("code", "", cmd), copyBtn(cmd, "Copy command")); d.append(line);
+    }
+    return d;
   }
   function admin() {
     var pending = null;
@@ -585,7 +822,8 @@
       $("#newcodes").scrollIntoView({ block: "start" });
     }
     function draw() {
-      call("GET", "overview").then(function (d) {
+      return call("GET", "overview").then(function (d) {
+        bigAdmin(d);
         var soon = Date.now() / 1000 + 3 * 86400;
         $("#kpis").replaceChildren(
           stat("PC tokens", String(d.pcs.length), d.splits.length + " split" + (d.splits.length === 1 ? "" : "s")),
@@ -604,7 +842,7 @@
             else if (i === 2) td.textContent = x.uploaded + "/" + x.tokens + " uploaded";
             else if (i === 3) td.textContent = x.version || "?";
             else if (i === 4) td.textContent = (x.created || "").slice(0, 10);
-            else if (i === 5) { td.append(flagList(x.flags || [])); }
+            else if (i === 5) { td.append(flagList(x.flags || [], x.models || [])); }
             else {
               var acts = el("div", "actions");
               acts.append(x.can_rotate ? confirmBtn("Rotate", "rot:" + x.split_id, function () {
@@ -617,11 +855,14 @@
           }
         }) : el("div", "empty", "No split has been planned yet. Plan one from the miner's TUI: Lead tools (F3)."));
         // PCs
-        $("#pcs").replaceChildren(grid(["PC", "Split", "State", "Progress", "PRs mined", "Expires", "Last upload", ""],
-          d.pcs.map(function (p) { return [p.pc, p.split, p.state, p, p.prs_done, p.expires, p.last_upload, p]; }), {
-          emptyText: "No PC tokens issued yet. Plan a split from the miner's TUI (Lead tools, F3).", hsm: [1, 3, 4, 5], left: [5, 6],
-          cell: function (v, i, row) {
-            var p = row[3], td = h("td");
+        // on a phone the Revoke button comes before the wide Run column, so it stays in reach without scrolling sideways
+        var order = window.matchMedia("(max-width:48rem)").matches ? [0, 1, 2, 3, 4, 5, 6, 8, 7] : [0, 1, 2, 3, 4, 5, 6, 7, 8];
+        var pcCols = ["PC", "Split", "State", "Progress", "PRs mined", "Expires", "Last upload", "Run", ""];
+        $("#pcs").replaceChildren(grid(order.map(function (k) { return pcCols[k]; }),
+          d.pcs.map(function (p) { var r = [p.pc, p.split, p.state, p, p.prs_done, p.expires, p.last_upload, p, p]; return order.map(function (k) { return r[k]; }); }), {
+          emptyText: "No PC tokens issued yet. Plan a split from the miner's TUI (Lead tools, F3).", hsm: [1, 3, 4, 5, 6], left: [5, 6],
+          cell: function (v, i0, row) {
+            var p = row[3], td = h("td"), i = order[i0];
             if (i === 0) { td.append(el("div", "", p.pc), el("div", "cap", p.host || "")); }
             else if (i === 1) td.textContent = v || "-";
             else if (i === 2) td.append(stateTag(v));
@@ -629,6 +870,7 @@
             else if (i === 4) { td.className = "n"; td.textContent = v == null ? "–" : v.toLocaleString(); }
             else if (i === 5) td.textContent = v ? new Date(v * 1000).toISOString().slice(0, 10) : "never";
             else if (i === 6) td.textContent = ago(v);
+            else if (i === 7) { td.className = "wrapc"; td.append(p.last_upload ? runDetails(p, copyBtn) : el("span", "cap", "nothing sent yet")); }
             else td.append(confirmBtn("Revoke", "rev:" + p.pc, function () { call("POST", "revoke", { name: p.pc, kind: "pcs" }).then(draw).catch(function (e) { window.riffleToast(e.message); draw(); }); }, true));
             return td;
           }
@@ -644,6 +886,7 @@
           }
         }));
         $("#admins").replaceChildren(grid(["Admin", "Created"], d.admins.map(function (r) { return [r.name, (r.created || "").slice(0, 10)]; }), { emptyText: "No admins." }));
+        return d.pcs.some(function (p) { return p.state === "mining"; });
       }).catch(function (e) { failure($("#pcs"), e); });
     }
     $("#rform").onsubmit = function (e) {
@@ -659,10 +902,11 @@
         e.target.reset(); draw();
       }).catch(function (err) { box.hidden = false; box.textContent = err.message; });
     };
-    draw(); setInterval(draw, 60000);
+    liveLoop(draw, { big: true });
   }
 
   var page = document.body.dataset.page;
   var pages = { overview: overview, run: run, data: data, view: view, search: search, admin: admin };
+  if (page === "data") dataClock();
   if (pages[page]) pages[page]();
 })();

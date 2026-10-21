@@ -303,3 +303,91 @@ def test_pages_name_their_assets_by_content_so_a_deploy_is_not_hidden_by_the_bro
         assert f"/static/{f}?v={ui.ASSET_V}" in html, f
     code, body = req(store, "GET", f"/static/riffle.css?v={ui.ASSET_V}")
     assert code == 200 and b".selbtn" in body
+
+
+def test_overview_and_admin_have_a_big_picture_host_and_the_reader_pages_poll_only_while_mining():
+    import ui
+    for page in ("overview", "admin"):
+        assert 'id="bigpic"' in ui.shell(page, page)
+    js = open(os.path.join(os.path.dirname(store_app.__file__), "static", "app.js"), encoding="utf-8").read()
+    assert "setInterval(draw" not in js and "setInterval(load" not in js, "a fixed timer polls even when nothing is mining"
+    assert "liveLoop(draw, { big: true })" in js and "liveLoop(load)" in js
+
+
+def test_the_whole_log_can_be_opened_and_exported_with_or_without_a_filter(store):
+    pc = tokens.issue(store.tp, "pcs", "pcx")
+    rdr = tokens.issue(store.tp, "readers", "r")
+    lines = [f"2026-10-21 10:00:{i % 60:02d} INFO [mine] pallets/flask pr={i}" if i % 10 else f"2026-10-21 10:00:00 ERROR [mine] boom {i}" for i in range(1, 3001)]
+    req(store, "PUT", "/v1/files/6.0.0/abc/logs/run.log", pc, ("\n".join(lines) + "\n").encode())
+    key = "pcx/6.0.0/abc/logs/run.log"
+    code, body = req(store, "GET", f"/api/raw?key={key}", rdr)
+    assert code == 200 and body.decode().count("\n") == 3000                      # every line, not a page
+    code, body = req(store, "GET", f"/api/raw?key={key}&lvl=1&download=1", rdr)
+    assert code == 200 and body.decode().count("\n") == 300 and "ERROR" in body.decode() and "INFO" not in body.decode()
+    code, body = req(store, "GET", f"/api/raw?key={key}&q=pr%3D2999", rdr)
+    assert code == 200 and body.decode().count("\n") == 1
+    assert req(store, "GET", f"/api/raw?key={key}")[0] == 401                  # signing in is required
+    assert req(store, "GET", "/api/raw?key=nope/6.0.0/abc/x", rdr)[0] == 404
+
+
+def test_mined_data_reads_are_computed_once_per_window_and_say_when(tmp_path, monkeypatch):
+    monkeypatch.setattr(store_app, "DATA_TTL_S", 600)
+    tp = os.path.join(str(tmp_path), "tokens.json")
+    rdr = tokens.issue(tp, "readers", "r")
+    s = store_app.serve(str(tmp_path), "127.0.0.1", 0)
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    try:
+        calls = []
+        real = s.service.table_catalogue
+        s.service.table_catalogue = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+        url = f"http://127.0.0.1:{s.server_port}/api/tables"
+        heads = []
+        for _ in range(3):
+            r = urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": f"Bearer {rdr}"}))
+            heads.append((r.headers["X-Data-Updated"], r.headers["X-Data-Next"]))
+        assert len(calls) == 1, "every reload recomputed the tables"
+        assert len(set(heads)) == 1 and int(heads[0][1]) - int(heads[0][0]) == 600
+        s.service.data_cache.t -= 601                                               # the window runs out
+        urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": f"Bearer {rdr}"})).read()
+        assert len(calls) == 2
+    finally:
+        s.shutdown()
+
+
+def test_activity_shows_when_each_pc_mined_and_what_it_is_doing_now(store):
+    svc = store.service
+    now = time.time()
+    h = 3600
+
+    def beat(pc, ago_s, reason, prs, current=None):
+        svc.index.db.execute("INSERT INTO activity VALUES (?,?,?,?,?,?,?)", (pc, "6.0.0/abc", now - ago_s, reason, prs, 1, current))
+    for ago_s, prs in ((30 * h, 0), (29.9 * h, 10), (29.8 * h, 25)):               # mined 30 hours ago, then went quiet
+        beat("pc1", ago_s, "repo done", prs, "o/a")
+    beat("pc1", 5 * h, "repo done", 40, "o/a")                                       # and came back
+    beat("pc1", 60, "repo done", 55, "o/b")                                          # mining right now
+    beat("pc2", 2 * h, "repo done", 5)
+    beat("pc2", 1 * h, "batch done", 9)                                              # finished
+    svc.index.db.commit()
+    d = svc.activity(7)
+    assert d["days"] == 7 and d["step"] == 3600 and len(d["pcs"]) == 2
+    pc1, pc2 = d["pcs"]
+    assert pc1["now"] == "mining" and pc1["current"] == "o/b" and pc2["now"] == "done"
+    states = [b[0] for b in pc1["blocks"]]
+    assert states[-1] == "mining" and "offline" in states, "a silent stretch between pushes is offline, not mining"
+    assert states[0] == "none", "before a PC was ever seen is not offline"
+    assert pc1["prs"] == 55 and 0 < pc1["uptime"] < 1
+    assert svc.activity(3)["days"] == 7                                              # an unknown range falls back to 7 days
+    code, body = req(store, "GET", "/api/activity?days=1", tokens.issue(store.tp, "readers", "rr"))
+    assert code == 200 and json.loads(body)["step"] == 900
+
+
+def test_the_admin_overview_carries_each_pcs_settings_and_the_splits_model(store):
+    pcs = tokens.issue_split(store.tp, "abc", 2, flags=["--max-prs", "20"], version="6.10.10")
+    st = {"reason": "repo done", "host": "fedora", "argv": ["--repos-file", "r.txt", "--llm-model", "haiku"], "miner_version": "6.10.10",
+          "settings": {"llm": True, "llm_model": "haiku", "llm_backend": "claude_cli", "szz": True, "workers": 6}}
+    assert req(store, "PUT", "/v1/files/6.10.10/abc/run.json", pcs[0]["token"], json.dumps(st).encode())[0] == 200
+    code, body = req(store, "GET", "/v1/admin/overview", store.adm)
+    d = json.loads(body)
+    p1 = [p for p in d["pcs"] if p["pc"].startswith("pc1")][0]
+    assert p1["settings"]["llm_model"] == "haiku" and p1["argv"][-1] == "haiku" and d["splits"][0]["models"] == ["haiku"]
+    assert "retention" not in d, "nothing in the store deletes run logs on a timer"

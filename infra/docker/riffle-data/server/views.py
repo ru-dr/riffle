@@ -211,6 +211,18 @@ def lines(path: str, offset=0, limit=200, q: str | None = None, tail: bool = Fal
     return {"total": total, "offset": offset, "limit": limit, "lines": out}
 
 
+def matching_lines(path: str, q: str | None = None, levels: bool = False):
+    """Every line (as bytes, with its newline) that contains q and, with `levels`, is a warning or error. For exports."""
+    needle = (q or "").lower()
+    with open(path, "rb") as fh:
+        for raw in fh:
+            if needle or levels:
+                s = raw.decode("utf-8", "replace")
+                if (needle and needle not in s.lower()) or (levels and not LEVEL.search(s)):
+                    continue
+            yield raw if raw.endswith(b"\n") else raw + b"\n"
+
+
 def jsonl_rows(path: str, offset=0, limit=50, q: str | None = None) -> dict:
     _check_size(path)
     limit = max(1, min(int(limit), MAX_ROWS))

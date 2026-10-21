@@ -527,6 +527,23 @@ def _selected_count(repo: str) -> int | None:
         return None
 
 
+def _run_settings(args) -> dict:
+    """What this PC's run is set to, for the admin's per-run view. Names and switches only: no keys, no paths."""
+    g = lambda n: getattr(args, n, None)                    # noqa: E731
+    llm = bool(g("llm"))
+    try:
+        cfg = config.Settings()
+        model, backend = (g("llm_model") or cfg.llm_model), cfg.llm_backend
+    except Exception:                                       # noqa: BLE001  (a status must never fail the run)
+        model, backend = g("llm_model"), None
+    return {"llm": llm, "llm_model": model if llm else None, "llm_backend": backend if llm else None,
+            "llm_scope": g("llm_scope") if llm else None, "llm_concurrency": g("llm_concurrency") if llm else None,
+            "szz": bool(g("szz")), "ci_history": bool(g("ci_history")), "scanners": not g("no_scanners"),
+            "workers": g("workers"), "max_prs": g("max_prs"), "window_from": g("window_from"), "window_to": g("window_to"),
+            "full_repo": bool(g("full_repo")), "cap_on": g("cap_on"), "only_domain": g("only_domain"),
+            "repos_file": os.path.basename(g("repos_file") or "") or None, "shard": g("shard")}
+
+
 def _sync_status(why: str) -> dict:
     """The run.json body: counts per repo and totals. PRs of repos not yet
     started are unknown (their selection does not exist yet), so `prs_remaining`
@@ -547,7 +564,7 @@ def _sync_status(why: str) -> dict:
     prs_done = sum(r.get("rows", 0) for r in repos.values())
     remaining = (max(0, (mining[1].get("selected") or 0) - mining[1].get("rows", 0)) if mining else 0)
     return dict(_SYNC["counts"], reason=why, pc=args.shard, split_id=getattr(args, "split_id", None),
-                miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:],
+                miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:], settings=_run_settings(args),
                 started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining else None,
                 repos_total=len(repos), repos_done=states.count("done"), repos_failed=states.count("failed"),
                 repos_skipped=states.count("skipped"), repos_pending=states.count("pending"),
