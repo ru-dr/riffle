@@ -15,3 +15,5 @@ snapshots*.parquet
 commit_features*.parquet
 health/
 .sync_state.json
+.join.json
+joined_repos/

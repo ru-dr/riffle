@@ -701,6 +701,7 @@ def _fix_join(plat: Platform) -> None:
             print(f"  {_sym(FAIL)} {r['why']}. Ask the lead for a new code.")
             return
         join.write_env(ENV_PATH, {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
+        join.save_state(os.path.join(os.path.dirname(ENV_PATH), join.STATE_FILE), doc)
         os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
         print(f"  {_sym(OK)} joined as {r['name']} (PC {doc['k']} of {doc['n']}) · saved to {ENV_PATH}")
         print(f"  Run this, exactly: {join.command(doc)}   (or open the TUI: it fills the form from the code)")

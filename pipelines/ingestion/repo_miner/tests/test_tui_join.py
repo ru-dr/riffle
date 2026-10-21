@@ -167,3 +167,92 @@ def test_f4_opens_the_store_and_copies_the_saved_read_token(monkeypatch):
         app.action_open_store()
         assert opened[-1] == "https://s.example" and copied == ["rd_secret"]
     _run(go)
+
+
+# -- the lead's settings are locked after joining, and remembered ------------------------------------
+
+MACHINE_IDS = ("clone_dir", "workers", "llm_conc", "remine", "quota_wait", "skip_existing", "keep_clones", "auto_remine", "skip_big", "big_n")
+
+
+def _locked(app, wid):
+    return app.query_one(f"#{wid}").disabled
+
+
+def test_joining_locks_the_leads_settings_but_not_the_machine_ones(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    code = join.encode(store, "rw_good", "abc12345", 2, 3, LEAD)
+
+    async def go(app, pilot):
+        assert not any(_locked(app, w) for w in tui.LOCKED_IDS)            # before joining everything is editable
+        assert app.query_one("#leave").display is False
+        await _join(app, pilot, code)
+        assert all(_locked(app, w) for w in tui.LOCKED_IDS), [w for w in tui.LOCKED_IDS if not _locked(app, w)]
+        assert not any(_locked(app, w) for w in MACHINE_IDS)               # workers, clone dir, resume switches stay yours
+        assert app.query_one("#leave").display is True
+        assert "locked" in _text(app, "join_msg")
+        # a run starting and ending must not unlock them
+        app._set_running(True)
+        assert all(_locked(app, w) for w in tui.LOCKED_IDS) and all(_locked(app, w) for w in MACHINE_IDS)
+        app._set_running(False)
+        assert all(_locked(app, w) for w in tui.LOCKED_IDS) and not any(_locked(app, w) for w in MACHINE_IDS)
+    _run(go)
+
+
+def test_the_locked_settings_come_back_after_a_restart(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    code = join.encode(store, "rw_good", "abc12345", 2, 3, LEAD)
+
+    async def first(app, pilot):
+        await _join(app, pilot, code)
+    _run(first)
+    assert (tmp_path / ".join.json").exists() and oct((tmp_path / ".join.json").stat().st_mode & 0o777) == "0o600"
+
+    async def second(app, pilot):                                          # a new TUI process: nothing is typed in
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.joined and app.lead_argv[-2:] == ["--shard", "2/3"]
+        assert app.query_one("#pcs", Input).value == "3" and app.query_one("#pc_index", Input).value == "2"
+        assert app.query_one("#max_prs", Input).value == "8000" and app.query_one("#only_domain", Input).value == "web-ts"
+        assert all(_locked(app, w) for w in tui.LOCKED_IDS) and app.query_one("#leave").display is True
+    _run(second)
+
+
+def test_a_remembered_join_is_ignored_when_the_store_no_longer_accepts_it(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    join.save_state(str(tmp_path / ".join.json"), {"u": store, "t": "rw_x", "s": "other999", "k": 1, "n": 2, "a": LEAD})
+    monkeypatch.setenv("RIFFLE_SYNC_URL", store)
+    monkeypatch.setenv("RIFFLE_SYNC_TOKEN", "rw_good")                      # the token's split is abc12345, the file says other999
+
+    async def go(app, pilot):
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert app.joined is None and not any(_locked(app, w) for w in tui.LOCKED_IDS)
+    _run(go)
+    (tmp_path / ".join.json").write_text("{not json")                       # a damaged file is ignored, never an error
+    _run(go)
+
+
+def test_leaving_the_split_unlocks_the_form_and_forgets_the_settings(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    code = join.encode(store, "rw_good", "abc12345", 2, 3, LEAD)
+
+    async def go(app, pilot):
+        await _join(app, pilot, code)
+        assert (tmp_path / ".join.json").exists()
+        app.action_leave()
+        await pilot.pause()
+        assert not any(_locked(app, w) for w in tui.LOCKED_IDS) and app.query_one("#leave").display is False
+        assert app.joined is None and app.lead_argv is None and not (tmp_path / ".join.json").exists()
+        assert app._lead_differences() == []                                # with no lead, nothing to differ from
+        assert "Unlocked" in _text(app, "join_msg")
+    _run(go)
+
+
+def test_the_join_state_helpers_round_trip(tmp_path):
+    p = str(tmp_path / ".join.json")
+    assert join.load_state(p) is None
+    join.save_state(p, {"u": "https://s", "t": "rw_t", "s": "abc", "k": 1, "n": 2, "a": ["--max-prs", "20"]})
+    assert join.load_state(p)["a"] == ["--max-prs", "20"]
+    join.clear_state(p)
+    join.clear_state(p)                                                     # clearing twice is fine
+    assert join.load_state(p) is None

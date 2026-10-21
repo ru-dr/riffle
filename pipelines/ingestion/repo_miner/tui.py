@@ -115,6 +115,13 @@ def form_values(argv: list[str]) -> dict:
 MODELS = [("Haiku (default, fast/cheap)", "haiku"), ("Sonnet", "sonnet"), ("Opus", "opus"),
           ("Fable 5.1", "claude-fable-5-1")]
 
+# the form fields a join code decides: locked after joining. Machine settings (workers, clone dir, resume
+# switches, the test fields) stay editable, because PCs differ in RAM and disk.
+LOCKED_IDS = frozenset((
+    "repos_file", "out", "out_prefix", "out_postfix", "pcs", "pc_index", "max_prs", "min_age", "window_from",
+    "window_to", "cap_training", "full_repo", "lead_in", "only_domain", "llm", "llm_model", "llm_training",
+    "close_other_only", "snapshots", "szz", "ci_history", "merge_outcome", "scanners", "api_contract", "git_discovery"))
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(HERE, "build_dataset.py")
 TEST_OUT = os.path.join(HERE, "test_output", "test_dataset.jsonl")
@@ -383,6 +390,53 @@ class QRScreen(ModalScreen):
     @on(Button.Pressed, "#qr_close")
     def _b_close(self) -> None:
         self.app.pop_screen()
+
+
+class LeadSettingsScreen(ModalScreen):
+    """What the lead chose, read-only, for a PC that joined: the repo list and who mines what, every setting that shapes the
+    data, who issued it and when it expires."""
+
+    BINDINGS = [Binding("escape,q", "app.pop_screen", "Close")]
+    CSS = """
+    LeadSettingsScreen { align: center middle; }
+    #ls { width: 100; max-width: 98%; height: auto; max-height: 96%; border: round $primary; background: $surface; padding: 0 2 1 2; }
+    #ls_title { margin-top: 1; text-style: bold; }
+    #ls_info { margin-top: 1; color: $text-muted; }
+    .sec { margin-top: 1; text-style: bold; }
+    #ls DataTable { height: auto; max-height: 12; margin-top: 1; }
+    """
+
+    def __init__(self, info: dict, doc: dict, my_version: str):
+        super().__init__()
+        self.info, self.doc, self.my_version = info, doc, my_version
+
+    def compose(self) -> ComposeResult:
+        lead, d = self.info["lead"], self.doc
+        exp = time.strftime("%Y-%m-%d", time.gmtime(lead["expires"])) if lead.get("expires") else "never"
+        ver = lead.get("version") or d.get("v") or "?"
+        same = "same as yours" if ver == self.my_version else f"yours is {self.my_version}: run git pull"
+        with VerticalScroll(id="ls"):
+            yield Static("The lead's settings   [dim]read-only · Esc closes[/dim]", id="ls_title")
+            yield Static(f"issued by [b]{lead.get('issued_by') or 'the lead'}[/b] on {(lead.get('created') or '?')[:10]} · "
+                         f"split [b]{d['s']}[/b] · you are PC [b]{d['k']}[/b] of [b]{d['n']}[/b]\n"
+                         f"code valid until {exp} · miner {ver} ({same})", id="ls_info")
+            yield Static("Settings every PC runs with", classes="sec")
+            yield DataTable(id="ls_settings", show_header=False)
+            n = len(self.info["repos"])
+            yield Static(f"Repos in {lead.get('repos_name') or 'the list'} ({n}); yours are marked", classes="sec")
+            yield DataTable(id="ls_repos")
+
+    def on_mount(self) -> None:
+        t = self.query_one("#ls_settings", DataTable)
+        t.add_columns("setting", "value")
+        for k, v in self.info["settings"]:
+            t.add_row(k, str(v))
+        r = self.query_one("#ls_repos", DataTable)
+        r.add_columns("Repo", "Commits", "Mined by")
+        for name, w, pc in self.info["repos"]:
+            r.add_row(name, f"~{w:,}" if w else "–", f"PC {pc}" + ("  ◀ you" if pc == self.doc["k"] else ""))
+        if not self.info["repos"]:
+            r.add_row("(the list is not on this PC)", "", "")
 
 
 class LeadScreen(ModalScreen):
@@ -679,8 +733,12 @@ class RiffleTUI(App):
     #morebtns { height: 1; margin-top: 1; }
     #morebtns Button { width: 1fr; min-width: 6; }
     #join_msg { height: auto; color: $text-muted; }
+    #lead_card { height: auto; margin-top: 1; padding: 0 1; border-left: thick $success; display: none; }
     #storerow { height: 1; margin-top: 1; }
-    #storerow Button { width: 1fr; min-width: 8; }
+    #storerow Button { width: 1fr; min-width: 7; }
+    #leave { display: none; }
+    #form Input:disabled, #form Select:disabled { text-style: italic; opacity: 70%; }
+    #form Checkbox:disabled { opacity: 70%; }
     #form Input { margin-bottom: 0; }
     #form Label { color: $text-muted; margin-top: 1; }
     #form Checkbox { margin-top: 1; }
@@ -699,6 +757,7 @@ class RiffleTUI(App):
         Binding("f2", "join", "Join"),
         Binding("f3", "lead", "Lead"),
         Binding("f4", "open_store", "Store"),
+        Binding("f5", "lead_settings", "Settings"),
         Binding("ctrl+g", "show_split", "Split"),
         Binding("ctrl+b", "open_dashboard", "Web view"),
         Binding("ctrl+q", "quit", "Quit"),
@@ -750,14 +809,16 @@ class RiffleTUI(App):
                 with VerticalScroll(id="form"):
                     yield Static("", id="token_warn")
                     yield Static("", id="store_line")
+                    yield Static("", id="lead_card")
                     yield Label("Join code from the lead (riffle1.…)")
                     yield Input("", id="join_code", placeholder="paste it here, then Join (F2)", password=True,
                                 compact=True)
                     yield Static("", id="join_msg")
                     with Horizontal(id="storerow"):
-                        yield Button("Join · F2", id="join", variant="primary", compact=True)
-                        yield Button("Lead · F3", id="lead_btn", compact=True)
-                        yield Button("Store · F4", id="store_btn", compact=True)
+                        yield Button("Join F2", id="join", variant="primary", compact=True)
+                        yield Button("Lead F3", id="lead_btn", compact=True)
+                        yield Button("Store F4", id="store_btn", compact=True)
+                        yield Button("Leave", id="leave", variant="warning", compact=True)
                     yield Label("Repos file")
                     yield Input("repos.txt", id="repos_file", compact=True)
                     yield Label("Output dataset")
@@ -1037,6 +1098,8 @@ class RiffleTUI(App):
         else:
             text = f"[b]Team store[/b]\n[red]✗ {r['why']}[/]\n[dim]ask the lead for a new code and paste it below[/]"
         self.query_one("#store_line", Static).update(text)
+        if r.get("ok") and self.lead_argv is None:
+            self._restore_join(r)
 
     @on(Button.Pressed, "#join")
     def _join_btn(self) -> None:
@@ -1092,10 +1155,12 @@ class RiffleTUI(App):
         def work() -> None:
             import sync
             r = sync.whoami(doc["u"], doc["t"])
+            d2 = doc
             if r["ok"]:
                 join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
                 os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
-            self.call_from_thread(self._joined, doc, r)
+                d2 = join.apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), HERE)    # the lead's repo list, not our own file
+            self.call_from_thread(self._joined, d2, r)
         self.run_worker(work, thread=True, group="join", exclusive=True)
 
     def _join_msg(self, text: str, level: str = "") -> None:
@@ -1114,14 +1179,17 @@ class RiffleTUI(App):
             self._join_msg("")
 
     def _joined(self, doc: dict, r: dict) -> None:
+        import join
         if not r["ok"]:
             self._join_msg(f"Not saved: {r['why']}. Ask the lead for a new code.", "bad")
             return
         self.joined = doc
         self.lead_argv = list(doc.get("a", [])) + ["--shard", f"{doc['k']}/{doc['n']}"]
+        join.save_state(os.path.join(HERE, join.STATE_FILE), doc)
         self.query_one("#join_code", Input).value = ""          # the code is a secret: do not leave it on screen
         self._show_store(r)
-        self._join_msg("Joined. The form now has the lead's settings.", "ok")
+        self._lock_form(True)
+        self._join_msg("Joined. The lead's settings are filled in and locked. Leave the split to change them.", "ok")
         try:
             self._apply_form(form_values(self.lead_argv))
         except ValueError as e:
@@ -1134,6 +1202,85 @@ class RiffleTUI(App):
             self.notify(f"Miner version differs from the lead's ({doc['v']}). git pull first.", severity="warning", timeout=10)
         else:
             self.notify(f"Joined as {r['name']}. Form filled from the lead's flags.")
+
+    def _lock_form(self, on: bool) -> None:
+        """Lock (or unlock) the fields the lead's join code decides. Called when joining, leaving and restoring."""
+        for wid in LOCKED_IDS:
+            try:
+                w = self.query_one(f"#{wid}")
+                w.disabled = on
+                w.tooltip = "Set by the lead. Leave the split to change it." if on else None
+            except Exception:                                   # noqa: BLE001
+                continue
+        self.query_one("#leave", Button).display = on
+        self._show_card()
+
+    def _restore_join(self, r: dict) -> None:
+        """A TUI restarted after joining: the lead's settings come back from .join.json and stay locked, as long as the
+        store still accepts the token for that split."""
+        import join
+        doc = join.load_state(os.path.join(HERE, join.STATE_FILE))
+        if not doc or not r.get("ok") or (r.get("split") and r["split"] != doc.get("s")):
+            return
+        self.joined = doc
+        self.lead_argv = list(doc.get("a", [])) + ["--shard", f"{doc['k']}/{doc['n']}"]
+        try:
+            self._apply_form(form_values(self.lead_argv))
+        except ValueError:
+            return
+        self._lock_form(True)
+        self._join_msg("The lead's settings are locked in. Leave the split to change them.", "ok")
+
+    def _describe(self) -> dict | None:
+        import join
+        if not self.joined:
+            return None
+        try:
+            return join.describe(self.joined, HERE)
+        except Exception:                                   # noqa: BLE001  (a card must never break the form)
+            return None
+
+    def _show_card(self) -> None:
+        """A short, always-visible summary of what the lead chose, under the store status."""
+        card = self.query_one("#lead_card", Static)
+        if not self.joined:
+            card.update("")
+            card.display = False
+            return
+        d, info = self.joined, self._describe()
+        lead = d.get("lead") or {}
+        lines = ["[b]Lead's settings[/b] · locked"]
+        name = lead.get("repos_name") or "repos list"
+        lines.append(f"file [b]{name}[/b]" + (f" · {len(info['repos'])} repos" if info and info["repos"] else ""))
+        if info and info["mine"]:
+            lines.append("yours: " + ", ".join(info["mine"]))
+        if info:
+            s = dict(info["settings"])
+            lines.append(f"{s['Max PRs per repo']} PRs/repo · LLM {s['LLM flags']} · SZZ {s['SZZ label']}")
+        lines.append(f"[dim]split {d['s']} · PC {d['k']} of {d['n']} · F5 for all[/]")
+        card.update("\n".join(lines))
+        card.display = True
+
+    def action_lead_settings(self) -> None:
+        info = self._describe()
+        if not info:
+            self.notify("Join first: these are the settings the lead chose.", severity="warning")
+            return
+        self.push_screen(LeadSettingsScreen(info, self.joined, __version__))
+
+    @on(Button.Pressed, "#leave")
+    def _leave_btn(self) -> None:
+        self.action_leave()
+
+    def action_leave(self) -> None:
+        """Unlock the form: forget the lead's settings on this PC. Uploads stop while your settings make a different split."""
+        import join
+        if self.lead_argv is None:
+            return
+        self.joined = self.lead_argv = None
+        join.clear_state(os.path.join(HERE, join.STATE_FILE))
+        self._lock_form(False)
+        self._join_msg("Unlocked. Your settings are your own now; uploads turn off while they make a different split.", "warn")
 
     def _apply_form(self, vals: dict) -> None:
         for wid, v in vals.items():
@@ -1491,8 +1638,9 @@ class RiffleTUI(App):
         self.query_one("#split", Button).disabled = running
         self.query_one("#audit", Button).disabled = running
         self.query_one("#join", Button).disabled = running
+        locked = self.lead_argv is not None
         for w in self.query("#form Input, #form Checkbox, #form Select"):
-            w.disabled = running
+            w.disabled = running or (locked and w.id in LOCKED_IDS)
 
     # ------------------------------------------------------------- subprocess
     async def _run_proc(self, cmd: list[str]) -> None:

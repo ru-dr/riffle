@@ -166,7 +166,18 @@ def _issue_tokens(args, sid: str, n: int) -> None:
         sys.exit("[tokens] set RIFFLE_SYNC_URL and RIFFLE_ADMIN_TOKEN (an admin token from the store: "
                  "`manage.py add-admin NAME`) in .env to issue tokens")
     flags = _run_flags(sys.argv[1:])
-    body = json.dumps({"split_id": sid, "n": n, "days": args.token_days, "flags": flags, "miner_version": __version__}).encode()
+    repos_file = getattr(args, "repos_file", None)
+    repos_text = None
+    if repos_file:
+        try:                                 # the repo list itself travels, so another PC does not need the same file
+            with open(repos_file, encoding="utf-8") as fh:
+                repos_text = fh.read()
+        except OSError:
+            pass
+    payload = {"split_id": sid, "n": n, "days": args.token_days, "flags": flags, "miner_version": __version__}
+    if repos_text is not None:
+        payload.update(repos_name=os.path.basename(repos_file), repos_text=repos_text)
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(f"{url}/v1/admin/splits", data=body, method="POST",
                                  headers={"Authorization": f"Bearer {admin}", "Content-Type": "application/json"})
     try:
@@ -189,6 +200,18 @@ def _issue_tokens(args, sid: str, n: int) -> None:
             fh.write("\n".join(lines) + "\n")
         print(f"\n[tokens] also saved to {args.tokens_out} (private to you). Delete it when the codes are sent.")
     print("\n[tokens] running this again for the same split issues new tokens and revokes the old ones.")
+
+
+def plan_shares(repos_file: str, only_domain: str | None, n: int) -> list[list[tuple[str, int | None]]]:
+    """Who mines what: the repos file split over n PCs the way a run splits it, as [(owner/name, commits tag)] per PC
+    (index 0 is PC 1). Used to show a volunteer which repos are theirs."""
+    with open(repos_file, encoding="utf-8") as fh:
+        lines = [line for line in fh if _parse_url(line)]
+    if only_domain:
+        lines = [ln for ln in lines if _parse_domain(ln) == only_domain]
+    entries = [_parse_url(ln) for ln in lines]
+    weights = [_parse_weight(ln) for ln in lines]
+    return [[(f"{entries[i][0]}/{entries[i][1]}", weights[i]) for i in sh] for sh in balanced_shards(weights, n)]
 
 
 def _mined_repos(out: str) -> dict[str, int]:

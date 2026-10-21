@@ -228,6 +228,18 @@ def whoami(url: str | None = None, token: str | None = None, timeout: float = 15
         return {"ok": False, "why": f"cannot reach the store ({type(e).__name__})", "unreachable": True}
 
 
+def fetch_split(url: str, token: str, timeout: float = 15.0) -> dict | None:
+    """What the store keeps about this token's split (the lead's flags and repos list), or None when it cannot
+    be had (an older store, no split, unreachable). Never raises; the caller falls back to the code's own contents."""
+    req = urllib.request.Request(f"{url.rstrip('/')}/v1/split", headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            doc = json.loads(r.read())
+        return doc if isinstance(doc, dict) and doc.get("split_id") else None
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+        return None
+
+
 def put_status(prefix: str, status: dict) -> bool:
     """Send only run.json (no files): the cheap heartbeat between syncs, so the
     store's per-PC progress is never hours stale during a long repo. Never raises."""

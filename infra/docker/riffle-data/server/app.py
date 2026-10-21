@@ -127,8 +127,10 @@ class Service:
         splits = []
         for sid, meta in sorted(data["splits"].items()):
             mine = [p for p in pcs if p["split"] == sid]
-            splits.append(dict(meta, split_id=sid, tokens=len(mine), uploaded=sum(1 for p in mine if p["last_upload"]),
-                               can_rotate=bool(meta.get("flags") is not None)))
+            shown = {k: v for k, v in meta.items() if k != "repos_text"}
+            splits.append(dict(shown, split_id=sid, tokens=len(mine), uploaded=sum(1 for p in mine if p["last_upload"]),
+                               can_rotate=bool(meta.get("flags") is not None),
+                               n_repos=sum(1 for ln in (meta.get("repos_text") or "").splitlines() if ln.strip() and not ln.strip().startswith("#"))))
         names = lambda kind: [{"name": n, "created": r.get("created")} for n, r in sorted(data[kind].items())]   # noqa: E731
         return {"pcs": pcs, "splits": splits, "readers": names("readers"), "admins": names("admins"),
                 "bucket": self.store.bucket_name}
@@ -455,7 +457,9 @@ def make_handler(svc: Service):
                     flags = body.get("flags")
                     out = tokens.issue_split(svc.tokens_path, str(body.get("split_id", "")), int(body.get("n", 0)),
                                              float(body["days"]) if body.get("days") else None,
-                                             flags if isinstance(flags, list) else None, body.get("miner_version"))
+                                             flags if isinstance(flags, list) else None, body.get("miner_version"),
+                                             body.get("repos_name"), body.get("repos_text"),
+                                             (tokens.who(svc.tokens_path, self._admin_token()) or ("", ""))[1])
                     svc.tokens_changed()
                     return self._json({"split_id": body["split_id"], "pcs": out})
                 if path == "/v1/admin/rotate":
@@ -465,6 +469,7 @@ def make_handler(svc: Service):
                         return self._json({"error": f"no split {sid}"}, 404)
                     days = float(body["days"]) if body.get("days") not in (None, "") else meta.get("days")
                     out = tokens.issue_split(svc.tokens_path, sid, int(meta["n"]), days or None, meta.get("flags", []), meta.get("version"))
+                    # the repos list, name and issuer carry over: issue_split keeps what it is not given
                     svc.tokens_changed()
                     url = self._public_url()
                     for p in out:
@@ -488,6 +493,21 @@ def make_handler(svc: Service):
             except (ValueError, KeyError, TypeError) as e:
                 return self._json({"error": str(e) or "bad request"}, 400)
             self._json({"error": "unknown endpoint"}, 404)
+
+        def _split_info(self):
+            """What a joined PC may read about its own split: the lead's flags, repos list and who issued it."""
+            info = tokens.lookup(svc.tokens_path, self._token())
+            if not info or info["kind"] != "pcs":
+                svc.throttle.fail(self.client())
+                return self._json({"error": "PC token required"}, 401)
+            meta = tokens.load(svc.tokens_path)["splits"].get(info["split"] or "")
+            if not meta:
+                return self._json({"error": "this token is not for a split the store knows"}, 404)
+            n_repos = sum(1 for ln in (meta.get("repos_text") or "").splitlines() if ln.strip() and not ln.strip().startswith("#"))
+            return self._json({"split_id": info["split"], "pc": info["name"], "n": meta["n"], "flags": meta.get("flags", []),
+                               "version": meta.get("version"), "created": meta.get("created"), "days": meta.get("days"),
+                               "expires": info.get("expires"), "issued_by": meta.get("issued_by"),
+                               "repos_name": meta.get("repos_name"), "repos_text": meta.get("repos_text"), "n_repos": n_repos})
 
         def _admin_overview(self):
             if self._admin():
@@ -520,6 +540,8 @@ def make_handler(svc: Service):
                     svc.throttle.fail(self.client())
                     return self._json({"error": "token not accepted (wrong, revoked or expired)"}, 401)
                 return self._json(info)
+            if path == "/v1/split":
+                return self._split_info()
             if path == "/v1/admin/pcs":
                 return self._admin_pcs()
             if path == "/v1/admin/overview":

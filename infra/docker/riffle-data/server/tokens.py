@@ -65,20 +65,32 @@ def issue(path: str, kind: str, name: str, *, split: str | None = None, days: fl
     return token
 
 
+REPOS_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+MAX_REPOS_TEXT = 200_000
+
+
 def issue_split(path: str, split: str, n: int, days: float | None = None, flags: list[str] | None = None,
-                version: str | None = None) -> list[dict]:
+                version: str | None = None, repos_name: str | None = None, repos_text: str | None = None,
+                issued_by: str | None = None) -> list[dict]:
     """One token per PC 1..n for a split, named pc<k>of<n>-<split>. Issuing the same split
     again replaces its tokens, so it also rotates them. The split's flags and miner version are
     kept (not secret) so the admin page can rotate it and rebuild the join codes later."""
     if not SPLIT.match(split) or not 1 <= n <= 200:
         raise ValueError("a split ID and 1 to 200 PCs")
+    if repos_name is not None and not REPOS_NAME.match(repos_name):
+        raise ValueError("repos_name must be a plain file name")
+    if repos_text is not None and (not isinstance(repos_text, str) or len(repos_text) > MAX_REPOS_TEXT):
+        raise ValueError(f"repos_text must be text of at most {MAX_REPOS_TEXT} characters")
     out = [{"pc": f"pc{k}of{n}-{split}", "k": k, "n": n,
             "token": issue(path, "pcs", f"pc{k}of{n}-{split}", split=split, days=days)} for k in range(1, n + 1)]
     data = load(path)
     old = data["splits"].get(split, {})
     data["splits"][split] = {"n": n, "days": days, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                              "flags": [str(f) for f in flags] if flags is not None else old.get("flags", []),
-                             "version": version or old.get("version")}
+                             "version": version or old.get("version"),
+                             "repos_name": repos_name or old.get("repos_name"),
+                             "repos_text": repos_text if repos_text is not None else old.get("repos_text"),
+                             "issued_by": issued_by or old.get("issued_by")}
     save(path, data)
     return out
 

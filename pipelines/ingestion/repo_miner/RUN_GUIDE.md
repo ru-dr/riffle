@@ -213,7 +213,7 @@ python join.py riffle1.PASTE-THE-WHOLE-CODE
 ```
 
 That checks the code with the store, saves the store address and your token in `.env`,
-and prints the exact command to run, including `--shard K/N`. Run that command and no
+and prints the exact command to run, including `--shard K/N`. In the TUI the form fills in and **locks**: you cannot change the lead's settings on your PC (workers, clone folder and resume switches stay yours). Run that command and no
 other, because every PC must use the same flags. `python doctor.py` shows a "Team store"
 line that says whether it is working, and `python join.py --check` tests it alone.
 
