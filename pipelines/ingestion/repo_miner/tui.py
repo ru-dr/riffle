@@ -437,6 +437,8 @@ class RiffleTUI(App):
                 yield Input("1", id="pc_index", type="integer", compact=True)
                 yield Label("Clone dir")
                 yield Input("cloned_repos", id="clone_dir", compact=True)
+                yield Checkbox("Full repo: every closed PR, no cap or window", False, id="full_repo",
+                               compact=True)
                 yield Label("Max PRs per repo (blank = all)")
                 yield Input("100", id="max_prs", type="integer", compact=True)
                 yield Label("Skip PRs merged in last N days (mature labels)")
@@ -716,11 +718,14 @@ class RiffleTUI(App):
                "--repos-file", self._val("repos_file") or "repos.txt",
                "--out", self._val("out") or "dataset.parquet",
                "--clone-dir", self._val("clone_dir") or "cloned_repos"]
-        if self._val("max_prs"):
+        full = self._on("full_repo")
+        if full:
+            cmd.append("--full-repo")
+        elif self._val("max_prs"):
             cmd += ["--max-prs", self._val("max_prs")]
         if self._val("min_age"):
             cmd += ["--min-age-days", self._val("min_age")]
-        if self._val("window_from") and self._val("window_to"):
+        if not full and self._val("window_from") and self._val("window_to"):
             cmd += ["--window-from", self._val("window_from"), "--window-to", self._val("window_to")]
             if self._on("cap_training"):
                 cmd += ["--cap-on", "training"]
@@ -929,12 +934,15 @@ class RiffleTUI(App):
             return
         if not test and not self._window_ok():
             return
+        if self._on("full_repo") and test:
+            self.notify("Test run is capped; untick Full repo for it.", severity="error")
+            return
         repos_file = self._val("repos_file") or "repos.txt"
         if not test and not os.path.isfile(os.path.join(HERE, repos_file)) and not os.path.isfile(repos_file):
             self.notify(f"Repos file not found: {repos_file}", severity="error")
             return
         mp = self._val("max_prs")
-        self.max_prs = int(mp) if mp.isdigit() else None
+        self.max_prs = int(mp) if mp.isdigit() and not self._on("full_repo") else None
         self.test_mode = test
         if test:
             tp = self._val("test_prs")

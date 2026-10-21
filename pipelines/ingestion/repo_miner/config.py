@@ -132,6 +132,13 @@ def default_workers(ram_gb: float | None = None, cpus: int | None = None) -> int
 
 
 # ---- Tunables --------------------------------------------------------------
+# --full-repo is a date window wide enough to hold every PR, so it takes the
+# window path (merged + unmerged, drafts and too-recent PRs left out). Fixed
+# dates, not today's, so a resumed run's pinned selection still matches.
+FULL_REPO_FROM = "2000-01-01"
+FULL_REPO_TO = "9999-12-31"
+
+
 @dataclass
 class Settings:
     # windows (days)

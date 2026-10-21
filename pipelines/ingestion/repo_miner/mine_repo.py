@@ -1450,7 +1450,7 @@ def main():
                          "(default 90: covers the 30-day maturity and 90-day SZZ windows; 0 = off)")
     ap.add_argument("--llm", action=argparse.BooleanOptionalAction, default=True,
                     help="LLM semantic flags (Source 6) and the close-reason classifier "
-                         "(default on; off automatically when no backend is usable). Default "
+                         "(default on; the run stops when no backend is usable; use --no-llm to skip). Default "
                          "backend is headless Claude Code (`claude -p`); LLM_BACKEND=api uses "
                          "LLM_API_KEY")
     ap.add_argument("--llm-model", default=None,
@@ -1519,6 +1519,10 @@ def main():
                     help="with a window: what --max-prs counts. training = only the PRs the "
                          "model trains on (outside contributors plus the sample), so "
                          "--max-prs 10000 gives about 10,000 of them (default all)")
+    ap.add_argument("--full-repo", action="store_true",
+                    help="mine the repo's whole history: every closed PR ever opened, merged and "
+                         "unmerged, with no date window, no --max-prs cap and no lead-in. PRs too "
+                         "recent for mature labels are still left out (--min-age-days)")
     ap.add_argument("--domain", default=None, help="dataset domain written on every row (ADR 0011)")
     ap.add_argument("--health-dir", default="health", help="where per-repo health JSON goes")
     ap.add_argument("--snapshot-max-heads", type=int, default=None,
@@ -1564,11 +1568,11 @@ def main():
     if st.enable_llm:
         why = llm_flags.unavailable_reason(st)
         if why:
-            # on by default, so a box without an LLM must still mine: drop the
-            # stage instead of tripping the breaker five PRs in
-            print(f"[llm] off: {why}. LLM flags and the close-reason classifier "
-                  f"stay null; close_reason uses the rules.", file=sys.stderr)
-            st.enable_llm = False
+            # on by default, and null LLM columns would make this dataset differ
+            # from one mined with a working backend: stop, don't degrade
+            sys.exit(f"[llm] unavailable: {why}. The LLM flags and close-reason classifier are "
+                     f"part of the default dataset. Fix the backend, or pass --no-llm to mine "
+                     f"without them on purpose (those columns come back null).")
     st.enable_merge_outcome = args.merge_outcome
     st.max_unmerged = args.max_unmerged
     st.pr_discovery = args.pr_discovery
@@ -1587,6 +1591,12 @@ def main():
     if args.llm_concurrency is not None:
         st.llm_concurrency = args.llm_concurrency
     st.enable_snapshots = args.snapshots
+    if args.full_repo:
+        if args.window_from or args.window_to or args.max_prs or args.lead_in_days or args.cap_on:
+            sys.exit("--full-repo mines everything; it can't be combined with "
+                     "--window-from/--window-to, --max-prs, --lead-in-days or --cap-on")
+        args.window_from, args.window_to = config.FULL_REPO_FROM, config.FULL_REPO_TO
+        args.lead_in_days = 0      # nothing precedes the first PR
     if bool(args.window_from) != bool(args.window_to):
         sys.exit("--window-from and --window-to go together")
     st.window_from, st.window_to = args.window_from, args.window_to
