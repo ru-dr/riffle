@@ -392,13 +392,19 @@ class LeadScreen(ModalScreen):
     BINDINGS = [Binding("escape", "app.pop_screen", "Close")]
     CSS = """
     LeadScreen { align: center middle; }
-    #lead { width: 130; max-width: 98%; height: 94%; border: round $primary; background: $surface; padding: 1 2; }
-    #lead Label { color: $text-muted; margin-top: 1; }
-    #lead .row { height: 3; }
-    #lead .row Input { width: 40; }
-    #lead .row Button { margin-right: 1; }
-    #lead DataTable { height: 8; margin-top: 1; }
-    #lead_msg { margin-top: 1; }
+    #lead { width: 104; max-width: 98%; height: auto; max-height: 96%; border: round $primary;
+            background: $surface; padding: 0 2 1 2; }
+    #lead_title { height: 1; margin-top: 1; text-style: bold; }
+    #lead_status { margin-top: 1; color: $text-muted; }
+    #lead_msg { margin-top: 1; padding: 0 1; background: $boost; min-height: 1; }
+    .sec { margin-top: 1; text-style: bold; }
+    .hint { color: $text-muted; }
+    .lrow { height: 1; margin-top: 1; }
+    .lrow Input { width: 1fr; background: $boost; }
+    .lrow .days { width: 8; }
+    .lrow Button { margin-left: 1; }
+    .lrow Static { width: auto; margin-right: 1; color: $text-muted; }
+    #lead DataTable { height: 6; margin-top: 1; }
     """
 
     def __init__(self, tui_app):
@@ -410,32 +416,35 @@ class LeadScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="lead"):
-            yield Static("[b]Lead tools[/b]   (escape closes)")
+            yield Static("Lead tools   [dim]Esc closes[/dim]", id="lead_title")
             yield Static("", id="lead_status")
-            yield Label("Admin token (from manage.py add-admin on the store; saved to .env)")
-            with Horizontal(classes="row"):
+            yield Static("Set the form on the left first, then Issue codes.", id="lead_msg")
+            yield Static("Admin token", classes="sec")
+            yield Static("From manage.py add-admin on the store. Checked with the store, then saved to .env.", classes="hint")
+            with Horizontal(classes="lrow"):
                 yield Input("", id="adm_token", password=True, placeholder="ad_…", compact=True)
-                yield Button("Save", id="adm_save")
-            yield Label("Join codes: one per PC, for the settings in the form on the left")
-            with Horizontal(classes="row"):
-                yield Input("30", id="adm_days", type="integer", compact=True)
-                yield Button("Issue codes", id="adm_issue", variant="primary")
-                yield Static("  days until the tokens expire (0 = never)")
+                yield Button("Save", id="adm_save", compact=True)
+            yield Static("Join codes", classes="sec")
+            yield Static("One per PC, carrying the settings in the form. Send each only to its owner.", classes="hint")
+            with Horizontal(classes="lrow"):
+                yield Static("Valid for", classes="")
+                yield Input("30", id="adm_days", type="integer", compact=True, classes="days")
+                yield Static("days (0 = never)")
+                yield Button("Issue codes", id="adm_issue", variant="primary", compact=True)
             yield DataTable(id="codes", cursor_type="row")
-            with Horizontal(classes="row"):
-                yield Button("Copy selected", id="code_copy")
-                yield Button("Copy all", id="code_all")
-                yield Button("Save to a private file", id="code_save")
-            yield Label("PC tokens on the store")
+            with Horizontal(classes="lrow"):
+                yield Button("Copy selected", id="code_copy", compact=True)
+                yield Button("Copy all", id="code_all", compact=True)
+                yield Button("Save to a private file", id="code_save", compact=True)
+            yield Static("PC tokens on the store", classes="sec")
             yield DataTable(id="pcs_tbl", cursor_type="row")
-            with Horizontal(classes="row"):
-                yield Button("Refresh", id="pc_refresh")
-                yield Button("Revoke selected PC", id="pc_revoke", variant="error")
-                yield Button("Revoke its whole split", id="split_revoke", variant="error")
-            yield Static("", id="lead_msg")
+            with Horizontal(classes="lrow"):
+                yield Button("Refresh", id="pc_refresh", compact=True)
+                yield Button("Revoke selected PC", id="pc_revoke", variant="error", compact=True)
+                yield Button("Revoke its whole split", id="split_revoke", variant="error", compact=True)
 
     def on_mount(self) -> None:
-        self.query_one("#codes", DataTable).add_columns("PC", "Join code (copy it; send it only to that PC's owner)")
+        self.query_one("#codes", DataTable).add_columns("PC", "Join code (shortened here; Copy gives the whole code)")
         self.query_one("#pcs_tbl", DataTable).add_columns("PC", "Split", "Expires", "Last upload")
         self._status()
         if self._admin_ready():
@@ -449,8 +458,8 @@ class LeadScreen(ModalScreen):
         url = os.environ.get("RIFFLE_SYNC_URL") or "(not set)"
         ok = bool(os.environ.get("RIFFLE_ADMIN_TOKEN"))
         self.query_one("#lead_status", Static).update(
-            f"Store: [b]{url}[/b]   ·   admin token: " + ("[green]saved[/]" if ok else "[yellow]not saved: paste it below[/]")
-            + f"\nPCs in the form: [b]{self.tui._val('pcs') or '1'}[/b]  ·  repos file: [b]{self.tui._val('repos_file')}[/b]")
+            f"Store [b]{url}[/b]  ·  admin token: " + ("[green]saved[/]" if ok else "[yellow]not saved: paste it below[/]")
+            + f"\nForm: [b]{self.tui._val('pcs') or '1'}[/b] PC(s) · repos file [b]{self.tui._val('repos_file')}[/b]")
 
     def _msg(self, text: str, level: str = "") -> None:
         color = {"bad": "red", "ok": "green", "warn": "yellow"}.get(level)
@@ -662,12 +671,19 @@ class RiffleTUI(App):
     TITLE = "Riffle miner"
     SUB_TITLE = f"build_dataset · v{__version__}"
     CSS = """
-    #form { width: 42; border: round $primary; padding: 0 1; }
+    #side { width: 44; }
+    #form { height: 1fr; border: round $primary; padding: 0 1; }
+    #actions { height: auto; border: round $primary; padding: 0 1; }
+    #mainbtns { height: 3; }
+    #mainbtns Button { width: 1fr; }
+    #morebtns { height: 1; margin-top: 1; }
+    #morebtns Button { width: 1fr; min-width: 6; }
+    #join_msg { height: auto; color: $text-muted; }
+    #storerow { height: 1; margin-top: 1; }
+    #storerow Button { width: 1fr; min-width: 8; }
     #form Input { margin-bottom: 0; }
     #form Label { color: $text-muted; margin-top: 1; }
     #form Checkbox { margin-top: 1; }
-    #buttons { height: 3; margin-top: 1; }
-    #buttons Button { width: 1fr; }
     #main { padding: 0 1; }
     #stats { height: 9; border: round $secondary; padding: 0 1; }
     #overall { height: 1; margin: 0 0 1 0; }
@@ -680,19 +696,20 @@ class RiffleTUI(App):
     BINDINGS = [
         Binding("ctrl+r", "start", "Start"),
         Binding("ctrl+x", "stop", "Stop"),
-        Binding("ctrl+t", "test_llm", "Test LLM"),
-        Binding("ctrl+e", "test_run", "Test run"),
-        Binding("ctrl+o", "view_test", "View test data"),
         Binding("f2", "join", "Join"),
-        Binding("f3", "lead", "Lead tools"),
-        Binding("f4", "open_store", "Open store"),
-        Binding("ctrl+g", "show_split", "Show split"),
-        Binding("ctrl+k", "audit", "Audit data"),
-        Binding("ctrl+l", "clear_log", "Clear log"),
-        Binding("ctrl+y", "copy_log", "Copy log"),
-        Binding("ctrl+n", "skip_repo", "Skip repo"),
-        Binding("ctrl+b", "open_dashboard", "Web view / QR"),
+        Binding("f3", "lead", "Lead"),
+        Binding("f4", "open_store", "Store"),
+        Binding("ctrl+g", "show_split", "Split"),
+        Binding("ctrl+b", "open_dashboard", "Web view"),
         Binding("ctrl+q", "quit", "Quit"),
+        # still work, but the footer keeps to the keys people use (each has a button or is in the docs)
+        Binding("ctrl+t", "test_llm", "Test LLM", show=False),
+        Binding("ctrl+e", "test_run", "Test run", show=False),
+        Binding("ctrl+o", "view_test", "View test data", show=False),
+        Binding("ctrl+k", "audit", "Audit data", show=False),
+        Binding("ctrl+l", "clear_log", "Clear log", show=False),
+        Binding("ctrl+y", "copy_log", "Copy log", show=False),
+        Binding("ctrl+n", "skip_repo", "Skip repo", show=False),
     ]
 
     def __init__(self):
@@ -723,90 +740,96 @@ class RiffleTUI(App):
         self.lead_argv: list[str] | None = None    # the lead's flags + this PC's --shard, to keep the form in line
         self.sync_info: dict | None = None         # the miner's last "sync" event
         self._quitting = False
+        self._hint_shown = False
 
     # ---------------------------------------------------------------- layout
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
-            with VerticalScroll(id="form"):
-                yield Static("", id="token_warn")
-                yield Static("", id="store_line")
-                yield Label("Join code from the lead (riffle1.…)")
-                yield Input("", id="join_code", placeholder="paste it here, then Join (F2)", password=True,
-                            compact=True)
-                yield Button("Join", id="join", variant="primary")
-                yield Button("Lead tools (F3)", id="lead_btn")
-                yield Button("Open the store (F4)", id="store_btn")
-                yield Label("Repos file")
-                yield Input("repos.txt", id="repos_file", compact=True)
-                yield Label("Output dataset")
-                yield Input("dataset.parquet", id="out", compact=True)
-                yield Label("Name prefix / postfix (blank = auto pc tag; {pc} {n} {host} {date})")
-                yield Input("", id="out_prefix", placeholder="prefix", compact=True)
-                yield Input("", id="out_postfix", placeholder="postfix", compact=True)
-                yield Label("Number of PCs (1 = mine everything here)")
-                yield Input("1", id="pcs", type="integer", compact=True)
-                yield Label("This PC # (1..PCs)")
-                yield Input("1", id="pc_index", type="integer", compact=True)
-                yield Label("Clone dir")
-                yield Input("cloned_repos", id="clone_dir", compact=True)
-                yield Checkbox("Full repo: every closed PR, no cap or window", False, id="full_repo",
-                               compact=True)
-                yield Label("Max PRs per repo (blank = all)")
-                yield Input("100", id="max_prs", type="integer", compact=True)
-                yield Label("Skip PRs merged in last N days (mature labels)")
-                yield Input("90", id="min_age", type="integer", compact=True)
-                yield Label("Date window from (YYYY-MM-DD; blank = newest-N mode)")
-                yield Input("", id="window_from", placeholder="2023-07-01", compact=True)
-                yield Label("Date window to (YYYY-MM-DD)")
-                yield Input("", id="window_to", placeholder="2026-07-31", compact=True)
-                yield Checkbox("Max PRs counts training PRs only (window)", False, id="cap_training",
-                               compact=True)
-                yield Label("History lead-in days (window; 0 = off)")
-                yield Input("180", id="lead_in", type="integer", compact=True)
-                yield Label("Only repos tagged [domain: NAME] (blank = all)")
-                yield Input("", id="only_domain", placeholder="web-ts", compact=True)
-                yield Label("PR workers")
-                yield Input(str(config.default_workers()), id="workers", type="integer", compact=True)
-                yield Label("LLM concurrency")
-                yield Input("4", id="llm_conc", type="integer", compact=True)
-                yield Label("Re-mine repos (owner/name, comma-separated)")
-                yield Input("", id="remine", placeholder="e.g. rust-lang/cargo", compact=True)
-                yield Label("Test repo (Test run only)")
-                yield Input("https://github.com/pallets/flask", id="test_repo", compact=True)
-                yield Label("Test PRs")
-                yield Input("10", id="test_prs", type="integer", compact=True)
-                yield Label("LLM model")
-                yield Select(MODELS, value="haiku", allow_blank=False, id="llm_model", compact=True)
-                yield Checkbox("LLM flags (claude -p)", True, id="llm", compact=True)
-                yield Checkbox("LLM on training PRs only", True, id="llm_training", compact=True)
-                yield Checkbox("Close reason: LLM only when rules are unsure", True,
-                               id="close_other_only", compact=True)
-                yield Checkbox("Wait for Claude plan reset (don't fail calls)", True,
-                               id="quota_wait", compact=True)
-                yield Checkbox("PR snapshots (capture while mining, tables built at the end)", True,
-                               id="snapshots",
-                               compact=True)
-                yield Checkbox("SZZ label", True, id="szz", compact=True)
-                yield Checkbox("CI history", True, id="ci_history", compact=True)
-                yield Checkbox("Merge outcome (+ unmerged PRs)", True, id="merge_outcome",
-                               compact=True)
-                yield Checkbox("Scanners (lizard/semgrep)", True, id="scanners", compact=True)
-                yield Checkbox("API contract diff", True, id="api_contract", compact=True)
-                yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
-                yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
-                yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
-                yield Checkbox("Auto re-mine broken repos", False, id="auto_remine", compact=True)
-                yield Checkbox("Skip big repos (quick test run)", False, id="skip_big", compact=True)
-                yield Label("Big = more than N commits")
-                yield Input("100000", id="big_n", type="integer", compact=True)
-                with Horizontal(id="buttons"):
-                    yield Button("Show split", id="split", variant="default")
-                    yield Button("Audit", id="audit", variant="default")
-                    yield Button("Test LLM", id="test", variant="primary")
-                    yield Button("Test run", id="testrun", variant="warning")
-                    yield Button("Start", id="start", variant="success")
-                    yield Button("Stop", id="stop", variant="error", disabled=True)
+            with Vertical(id="side"):
+                with VerticalScroll(id="form"):
+                    yield Static("", id="token_warn")
+                    yield Static("", id="store_line")
+                    yield Label("Join code from the lead (riffle1.…)")
+                    yield Input("", id="join_code", placeholder="paste it here, then Join (F2)", password=True,
+                                compact=True)
+                    yield Static("", id="join_msg")
+                    with Horizontal(id="storerow"):
+                        yield Button("Join · F2", id="join", variant="primary", compact=True)
+                        yield Button("Lead · F3", id="lead_btn", compact=True)
+                        yield Button("Store · F4", id="store_btn", compact=True)
+                    yield Label("Repos file")
+                    yield Input("repos.txt", id="repos_file", compact=True)
+                    yield Label("Output dataset")
+                    yield Input("dataset.parquet", id="out", compact=True)
+                    yield Label("Name prefix / postfix (blank = auto pc tag; {pc} {n} {host} {date})")
+                    yield Input("", id="out_prefix", placeholder="prefix", compact=True)
+                    yield Input("", id="out_postfix", placeholder="postfix", compact=True)
+                    yield Label("Number of PCs (1 = mine everything here)")
+                    yield Input("1", id="pcs", type="integer", compact=True)
+                    yield Label("This PC # (1..PCs)")
+                    yield Input("1", id="pc_index", type="integer", compact=True)
+                    yield Label("Clone dir")
+                    yield Input("cloned_repos", id="clone_dir", compact=True)
+                    yield Checkbox("Full repo: every closed PR, no cap or window", False, id="full_repo",
+                                   compact=True)
+                    yield Label("Max PRs per repo (blank = all)")
+                    yield Input("100", id="max_prs", type="integer", compact=True)
+                    yield Label("Skip PRs merged in last N days (mature labels)")
+                    yield Input("90", id="min_age", type="integer", compact=True)
+                    yield Label("Date window from (YYYY-MM-DD; blank = newest-N mode)")
+                    yield Input("", id="window_from", placeholder="2023-07-01", compact=True)
+                    yield Label("Date window to (YYYY-MM-DD)")
+                    yield Input("", id="window_to", placeholder="2026-07-31", compact=True)
+                    yield Checkbox("Max PRs counts training PRs only (window)", False, id="cap_training",
+                                   compact=True)
+                    yield Label("History lead-in days (window; 0 = off)")
+                    yield Input("180", id="lead_in", type="integer", compact=True)
+                    yield Label("Only repos tagged [domain: NAME] (blank = all)")
+                    yield Input("", id="only_domain", placeholder="web-ts", compact=True)
+                    yield Label("PR workers")
+                    yield Input(str(config.default_workers()), id="workers", type="integer", compact=True)
+                    yield Label("LLM concurrency")
+                    yield Input("4", id="llm_conc", type="integer", compact=True)
+                    yield Label("Re-mine repos (owner/name, comma-separated)")
+                    yield Input("", id="remine", placeholder="e.g. rust-lang/cargo", compact=True)
+                    yield Label("Test repo (Test run only)")
+                    yield Input("https://github.com/pallets/flask", id="test_repo", compact=True)
+                    yield Label("Test PRs")
+                    yield Input("10", id="test_prs", type="integer", compact=True)
+                    yield Label("LLM model")
+                    yield Select(MODELS, value="haiku", allow_blank=False, id="llm_model", compact=True)
+                    yield Checkbox("LLM flags (claude -p)", True, id="llm", compact=True)
+                    yield Checkbox("LLM on training PRs only", True, id="llm_training", compact=True)
+                    yield Checkbox("Close reason: LLM only when rules are unsure", True,
+                                   id="close_other_only", compact=True)
+                    yield Checkbox("Wait for Claude plan reset (don't fail calls)", True,
+                                   id="quota_wait", compact=True)
+                    yield Checkbox("PR snapshots (capture while mining, tables built at the end)", True,
+                                   id="snapshots",
+                                   compact=True)
+                    yield Checkbox("SZZ label", True, id="szz", compact=True)
+                    yield Checkbox("CI history", True, id="ci_history", compact=True)
+                    yield Checkbox("Merge outcome (+ unmerged PRs)", True, id="merge_outcome",
+                                   compact=True)
+                    yield Checkbox("Scanners (lizard/semgrep)", True, id="scanners", compact=True)
+                    yield Checkbox("API contract diff", True, id="api_contract", compact=True)
+                    yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
+                    yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
+                    yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
+                    yield Checkbox("Auto re-mine broken repos", False, id="auto_remine", compact=True)
+                    yield Checkbox("Skip big repos (quick test run)", False, id="skip_big", compact=True)
+                    yield Label("Big = more than N commits")
+                    yield Input("100000", id="big_n", type="integer", compact=True)
+                with Vertical(id="actions"):
+                    with Horizontal(id="mainbtns"):
+                        yield Button("Start  ^r", id="start", variant="success")
+                        yield Button("Stop  ^x", id="stop", variant="error", disabled=True)
+                    with Horizontal(id="morebtns"):
+                        yield Button("Split", id="split", compact=True)
+                        yield Button("Audit", id="audit", compact=True)
+                        yield Button("Test LLM", id="test", compact=True)
+                        yield Button("Test run", id="testrun", compact=True)
             with Vertical(id="main"):
                 yield Static("Idle. Configure on the left, then Start (ctrl+r).", id="stats")
                 yield ProgressBar(id="overall", show_eta=False)
@@ -1005,14 +1028,14 @@ class RiffleTUI(App):
     def _show_store(self, r: dict) -> None:
         self.store_state = r
         if r.get("unset"):
-            text = "[yellow]Team store: not joined.[/] Paste the join code the lead sent you below, then press Join."
+            text = "[b]Team store[/b]\n[yellow]not joined[/] · paste the lead's code below"
         elif r["ok"]:
-            text = (f"[green]Team store: joined as {r['name']}[/] (split {r.get('split') or 'any'}). "
-                    f"Your output is uploaded after each repo and when you stop.")
+            text = (f"[b]Team store[/b]\n[green]✓ joined as {r['name']}[/]\n"
+                    f"[dim]split {r.get('split') or 'any'} · uploads each repo and on Stop[/]")
         elif r.get("unreachable"):
-            text = f"[yellow]Team store: {r['why']}.[/] The run still saves everything here and uploads when it can."
+            text = f"[b]Team store[/b]\n[yellow]unreachable[/] · {r['why']}\n[dim]everything saves here, uploads when it can[/]"
         else:
-            text = f"[red]Team store: {r['why']}.[/] Ask the lead for a new code and paste it below."
+            text = f"[b]Team store[/b]\n[red]✗ {r['why']}[/]\n[dim]ask the lead for a new code and paste it below[/]"
         self.query_one("#store_line", Static).update(text)
 
     @on(Button.Pressed, "#join")
@@ -1055,16 +1078,16 @@ class RiffleTUI(App):
         if not code:
             if self.joined and self.lead_argv:
                 self._apply_form(form_values(self.lead_argv))
-                self.notify("The form is back to the lead's settings.")
+                self._join_msg("The form is back to the lead's settings.", "ok")
             else:
-                self.notify("Paste the join code the lead sent you first.", severity="warning")
+                self._join_msg("Paste the join code the lead sent you first.", "warn")
             return
         try:
             doc = join.decode(code)
         except ValueError as e:
-            self.notify(str(e), severity="error")
+            self._join_msg(str(e), "bad")
             return
-        self.notify("Checking the code with the store…")
+        self._join_msg("Checking the code with the store…")
 
         def work() -> None:
             import sync
@@ -1075,14 +1098,30 @@ class RiffleTUI(App):
             self.call_from_thread(self._joined, doc, r)
         self.run_worker(work, thread=True, group="join", exclusive=True)
 
+    def _join_msg(self, text: str, level: str = "") -> None:
+        """A message under the join box that stays until the next action (a toast disappears too soon to read)."""
+        color = {"bad": "red", "ok": "green", "warn": "yellow"}.get(level)
+        self._hint_shown = False
+        self.query_one("#join_msg", Static).update(f"[{color}]{text}[/]" if color else text)
+
+    @on(Input.Changed, "#join_code")
+    def _join_typed(self, event: Input.Changed) -> None:
+        n = len(event.value.strip())
+        if n:
+            self._join_msg(f"{n} characters pasted. Press Join (F2).")
+            self._hint_shown = True
+        elif self._hint_shown:                       # emptied by hand: drop our hint, but never wipe a result
+            self._join_msg("")
+
     def _joined(self, doc: dict, r: dict) -> None:
         if not r["ok"]:
-            self.notify(f"Not saved: {r['why']}. Ask the lead for a new code.", severity="error", timeout=10)
+            self._join_msg(f"Not saved: {r['why']}. Ask the lead for a new code.", "bad")
             return
         self.joined = doc
         self.lead_argv = list(doc.get("a", [])) + ["--shard", f"{doc['k']}/{doc['n']}"]
         self.query_one("#join_code", Input).value = ""          # the code is a secret: do not leave it on screen
         self._show_store(r)
+        self._join_msg("Joined. The form now has the lead's settings.", "ok")
         try:
             self._apply_form(form_values(self.lead_argv))
         except ValueError as e:
