@@ -127,3 +127,24 @@ def test_unreachable_store_never_raises(run_dir, monkeypatch):
 def test_time_budget_ends_a_sync(store, run_dir):
     r = _sync(run_dir, budget_s=0)
     assert r["stopped"] == "out of time" and r["sent"] == 0
+
+
+def test_status_reports_per_repo_progress(tmp_path, monkeypatch):
+    import types
+    import build_dataset as bd
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "ci_cache").mkdir()
+    (tmp_path / "ci_cache" / "o_big.selection.json").write_text(
+        json.dumps({"merged": [1] * 70, "unmerged": [1] * 20, "stale": [1] * 10}))
+    out = tmp_path / "d_pc1of2.jsonl"
+    (tmp_path / "d_pc1of2.jsonl.partial.jsonl").write_text('{"repo":"o/big"}\n' * 40)
+    monkeypatch.setattr(bd, "_SYNC", {"args": types.SimpleNamespace(out=str(out), shard="1/2"),
+                                      "counts": {}, "repos": {}})
+    entries = [("o", "a", ""), ("o", "big", ""), ("o", "later", "")]
+    bd._sync_begin(entries, {"o/a": 25})
+    bd._sync_mark("o/big", "mining")
+    st = bd._sync_status("heartbeat")
+    assert (st["repos_total"], st["repos_done"], st["repos_pending"]) == (3, 1, 1)
+    assert st["current"] == "o/big"
+    assert st["repos"]["o/big"]["selected"] == 100 and st["repos"]["o/big"]["rows"] == 40
+    assert st["prs_done"] == 25 + 40 and st["prs_remaining"] == 60

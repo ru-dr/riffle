@@ -197,6 +197,22 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
     return result
 
 
+def put_status(prefix: str, status: dict) -> bool:
+    """Send only run.json (no files): the cheap heartbeat between syncs, so the
+    store's per-PC progress is never hours stale during a long repo. Never raises."""
+    cfg = settings()
+    if not cfg:
+        return False
+    doc = dict(status, host=socket.gethostname(),
+               synced_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    body = json.dumps(doc, indent=2).encode()
+    try:
+        _put(cfg[0], cfg[1], f"{prefix}/run.json", body, len(body), None, CONNECT_S)
+        return True
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return False
+
+
 def report(r: dict, why: str) -> None:
     """One log line for a finished sync."""
     if r["stopped"] == "off":

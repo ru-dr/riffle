@@ -375,6 +375,7 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
             # process group), then let main() end the batch quietly
             _stop_child(proc, signal)
             raise
+        _sync_beat()
         if _skip_requested(repo):
             print(f"[skip] {repo}: skip requested; stopping it", flush=True)
             _stop_child(proc, signal)
@@ -382,9 +383,74 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
 
 
 # --- central sync (ADR 0014) ---------------------------------------------------
-# Set once the run's output name is final; run() reads it on a Stop. The counts
-# are as of the last repo boundary.
+# Set once the run's output name is final; run() reads it on a Stop. "repos" is
+# each repo's state for the store's progress page: pending, mining, done, failed
+# or skipped, with its finished rows and, once selected, how many PRs it has.
 _SYNC: dict | None = None
+HEARTBEAT_S = 900          # status-only update while a long repo mines
+
+
+def _sync_begin(entries: list, done_repos: dict) -> None:
+    if _SYNC is None:
+        return
+    _SYNC["repos"] = {f"{o}/{n}": ({"state": "done", "rows": done_repos[f"{o}/{n}".lower()]}
+                                   if f"{o}/{n}".lower() in done_repos else {"state": "pending"})
+                      for o, n, _ in entries}
+    _SYNC["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _SYNC["beat"] = time.monotonic()
+
+
+def _sync_mark(repo: str, state: str, args=None) -> None:
+    """Record a repo's state; for a finished one also its row count, read from
+    the dataset (the repo column only)."""
+    if _SYNC is None or repo not in _SYNC.get("repos", {}):
+        return
+    rec = {"state": state}
+    if state == "done" and args is not None:
+        rec["rows"] = _mined_repos(args.out).get(repo.lower(), 0)
+    _SYNC["repos"][repo] = rec
+
+
+def _selected_count(repo: str) -> int | None:
+    """PRs a started repo selected, from its pinned selection (None: not yet)."""
+    owner, _, name = repo.partition("/")
+    try:
+        with open(os.path.join("ci_cache", f"{owner}_{name}.selection.json"), encoding="utf-8") as fh:
+            sel = json.load(fh)
+        return sum(len(sel.get(k) or []) for k in ("merged", "unmerged", "stale"))
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+        return None
+
+
+def _sync_status(why: str) -> dict:
+    """The run.json body: counts per repo and totals. PRs of repos not yet
+    started are unknown (their selection does not exist yet), so `prs_remaining`
+    covers the started repos only and `repos_pending` says how many are left."""
+    args = _SYNC["args"]
+    repos = _SYNC.get("repos", {})
+    out_partial = args.out + ".partial.jsonl"
+    for repo, rec in repos.items():
+        if rec["state"] == "mining":
+            rec["selected"] = _selected_count(repo)
+            try:
+                with open(out_partial, "rb") as fh:
+                    rec["rows"] = sum(1 for line in fh if line.strip())
+            except OSError:
+                rec["rows"] = 0
+    states = [r["state"] for r in repos.values()]
+    mining = next(((k, r) for k, r in repos.items() if r["state"] == "mining"), None)
+    prs_done = sum(r.get("rows", 0) for r in repos.values())
+    remaining = (max(0, (mining[1].get("selected") or 0) - mining[1].get("rows", 0)) if mining else 0)
+    return dict(_SYNC["counts"], reason=why, pc=args.shard, split_id=getattr(args, "split_id", None),
+                miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:],
+                started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining else None,
+                repos_total=len(repos), repos_done=states.count("done"), repos_failed=states.count("failed"),
+                repos_skipped=states.count("skipped"), repos_pending=states.count("pending"),
+                prs_done=prs_done, prs_remaining=remaining)
+
+
+def _sync_prefix(status: dict) -> str:
+    return f"{__version__}/{status['split_id'] or 'nosplit'}"
 
 
 def _sync_now(why: str, **counts) -> None:
@@ -393,14 +459,26 @@ def _sync_now(why: str, **counts) -> None:
     if _SYNC is None:
         return
     _SYNC["counts"].update(counts)
-    args = _SYNC["args"]
-    status = dict(_SYNC["counts"], reason=why, pc=args.shard, split_id=getattr(args, "split_id", None),
-                  miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:])
     try:
-        prefix = f"{__version__}/{status['split_id'] or 'nosplit'}"
-        sync.report(sync.sync(args.out, prefix, status, health_dir=getattr(args, "health_dir", "health")), why)
+        status = _sync_status(why)
+        args = _SYNC["args"]
+        sync.report(sync.sync(args.out, _sync_prefix(status), status,
+                              health_dir=getattr(args, "health_dir", "health")), why)
+        _SYNC["beat"] = time.monotonic()
     except Exception as e:                                  # noqa: BLE001
         print(f"[sync] failed ({type(e).__name__}: {e}); the run is unaffected", file=sys.stderr, flush=True)
+
+
+def _sync_beat() -> None:
+    """Called while a child runs: a status-only update every HEARTBEAT_S."""
+    if _SYNC is None or time.monotonic() - _SYNC.get("beat", 0) < HEARTBEAT_S:
+        return
+    _SYNC["beat"] = time.monotonic()
+    try:
+        status = _sync_status("heartbeat")
+        sync.put_status(_sync_prefix(status), status)
+    except Exception:                                       # noqa: BLE001
+        pass
 
 
 def _write_shard_manifest(args, entries: list, ok: int, failed: list) -> None:
@@ -707,6 +785,7 @@ def main():
 
     print(f"[batch] {len(entries)} repos -> {args.out}\n", flush=True)
     progress.emit("batch_start", repos=[f"{o}/{n}" for o, n, _ in entries], out=args.out)
+    _sync_begin(entries, done_repos)
     attempts = max(1, args.repo_retries + 1)
     ok, failed, skipped = 0, [], []
     if args.skip_big and not args.test:
@@ -734,7 +813,9 @@ def main():
             skipped.append(f"{owner}/{name} ({why})")
             progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped",
                           skip=why, commits=commits)
+            _sync_mark(f"{owner}/{name}", "skipped")
             continue
+        _sync_mark(f"{owner}/{name}", "mining")
         progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="clone")
 
         # --- clone (retried) — one clone kept across mine retries -------------
@@ -870,6 +951,7 @@ def main():
             print(f"[clone] keeping {target} so a rerun resumes without re-cloning",
                   flush=True)
         print(flush=True)
+        _sync_mark(f"{owner}/{name}", "done" if mined else "failed", args)
         _sync_now("repo done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
 
     if args.test and os.path.isfile(TEST_OUT):
