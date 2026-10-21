@@ -23,19 +23,23 @@ import urllib.request
 import config  # noqa: F401  (loads .env)
 
 
+class AdminError(Exception):
+    """A readable reason an admin call failed (the CLI prints it, the TUI shows it)."""
+
+
 def call(method: str, path: str, body: dict | None = None) -> dict:
     url, token = (os.environ.get("RIFFLE_SYNC_URL") or "").rstrip("/"), os.environ.get("RIFFLE_ADMIN_TOKEN") or ""
     if not url or not token:
-        sys.exit("set RIFFLE_SYNC_URL and RIFFLE_ADMIN_TOKEN in .env (the admin token comes from `manage.py add-admin`)")
+        raise AdminError("set RIFFLE_SYNC_URL and RIFFLE_ADMIN_TOKEN in .env (the admin token comes from `manage.py add-admin`)")
     req = urllib.request.Request(url + path, method=method, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
-        sys.exit(f"the store said HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}")
+        raise AdminError(f"the store said HTTP {e.code}: {e.read()[:200].decode('utf-8', 'replace')}") from None
     except (urllib.error.URLError, OSError) as e:
-        sys.exit(f"cannot reach the store: {e}")
+        raise AdminError(f"cannot reach the store: {e}") from None
 
 
 def ago(ts: float | None) -> str:
@@ -53,6 +57,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("revoke").add_argument("name")
     sub.add_parser("revoke-split").add_argument("split_id")
     args = ap.parse_args(argv)
+    try:
+        return run(args)
+    except AdminError as e:
+        sys.exit(str(e))
+
+
+def run(args) -> int:
     if args.cmd == "whoami":
         me = call("GET", "/v1/whoami")
         print(f"{me['kind'].rstrip('s')} token '{me['name']}'" + ("" if me["kind"] == "admins" else "  (this is NOT an admin token)"))

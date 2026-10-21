@@ -78,6 +78,28 @@ SHAPING = ("repos_file", "only_domain", "max_prs", "min_age_days", "window_from"
            "no_api_contract", "no_scanners", "no_review_history", "pr_discovery", "shard")
 
 
+# what a join code carries: the shaping settings plus where the file goes. Machine settings (workers, clone
+# dir, resume switches) and the PC number are left out; each PC picks its own.
+SHARED_DESTS = {k for k in SHAPING if k != "shard"} | {"out", "out_prefix", "out_postfix"}
+
+
+def shared_argv(argv: list[str]) -> list[str]:
+    """The part of a command line every PC should run with: the TUI's whole command, filtered."""
+    import build_dataset
+    actions = build_dataset.build_parser()._option_string_actions
+    out, i = [], 0
+    while i < len(argv):
+        tok = argv[i]
+        name = tok.split("=", 1)[0]
+        action = actions.get(name)
+        takes_value = bool(action and action.nargs != 0)
+        step = 1 + (1 if takes_value and "=" not in tok else 0)
+        if action is not None and action.dest in SHARED_DESTS:
+            out += argv[i:i + step]
+        i += step
+    return out
+
+
 def shaping(argv: list[str]) -> dict:
     """The dataset-shaping settings a command line means, parsed the way the miner parses it."""
     import build_dataset

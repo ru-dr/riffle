@@ -385,6 +385,279 @@ class QRScreen(ModalScreen):
         self.app.pop_screen()
 
 
+class LeadScreen(ModalScreen):
+    """The lead's tools, without a terminal: issue one join code per PC for the settings in the form, copy
+    them, and see or revoke the PC tokens on the store. Needs the store URL and an admin token in .env."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Close")]
+    CSS = """
+    LeadScreen { align: center middle; }
+    #lead { width: 130; max-width: 98%; height: 94%; border: round $primary; background: $surface; padding: 1 2; }
+    #lead Label { color: $text-muted; margin-top: 1; }
+    #lead .row { height: 3; }
+    #lead .row Input { width: 40; }
+    #lead .row Button { margin-right: 1; }
+    #lead DataTable { height: 8; margin-top: 1; }
+    #lead_msg { margin-top: 1; }
+    """
+
+    def __init__(self, tui_app):
+        super().__init__()
+        self.tui = tui_app
+        self.codes: list[tuple[str, str]] = []          # (label, join code) from the last Issue
+        self.split_id = ""
+        self.pending: str | None = None                  # a revoke waiting for its second press
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="lead"):
+            yield Static("[b]Lead tools[/b]   (escape closes)")
+            yield Static("", id="lead_status")
+            yield Label("Admin token (from manage.py add-admin on the store; saved to .env)")
+            with Horizontal(classes="row"):
+                yield Input("", id="adm_token", password=True, placeholder="ad_…", compact=True)
+                yield Button("Save", id="adm_save")
+            yield Label("Join codes: one per PC, for the settings in the form on the left")
+            with Horizontal(classes="row"):
+                yield Input("30", id="adm_days", type="integer", compact=True)
+                yield Button("Issue codes", id="adm_issue", variant="primary")
+                yield Static("  days until the tokens expire (0 = never)")
+            yield DataTable(id="codes", cursor_type="row")
+            with Horizontal(classes="row"):
+                yield Button("Copy selected", id="code_copy")
+                yield Button("Copy all", id="code_all")
+                yield Button("Save to a private file", id="code_save")
+            yield Label("PC tokens on the store")
+            yield DataTable(id="pcs_tbl", cursor_type="row")
+            with Horizontal(classes="row"):
+                yield Button("Refresh", id="pc_refresh")
+                yield Button("Revoke selected PC", id="pc_revoke", variant="error")
+                yield Button("Revoke its whole split", id="split_revoke", variant="error")
+            yield Static("", id="lead_msg")
+
+    def on_mount(self) -> None:
+        self.query_one("#codes", DataTable).add_columns("PC", "Join code (copy it; send it only to that PC's owner)")
+        self.query_one("#pcs_tbl", DataTable).add_columns("PC", "Split", "Expires", "Last upload")
+        self._status()
+        if self._admin_ready():
+            self._refresh()
+
+    # -- helpers ---------------------------------------------------------
+    def _admin_ready(self) -> bool:
+        return bool(os.environ.get("RIFFLE_SYNC_URL") and os.environ.get("RIFFLE_ADMIN_TOKEN"))
+
+    def _status(self) -> None:
+        url = os.environ.get("RIFFLE_SYNC_URL") or "(not set)"
+        ok = bool(os.environ.get("RIFFLE_ADMIN_TOKEN"))
+        self.query_one("#lead_status", Static).update(
+            f"Store: [b]{url}[/b]   ·   admin token: " + ("[green]saved[/]" if ok else "[yellow]not saved: paste it below[/]")
+            + f"\nPCs in the form: [b]{self.tui._val('pcs') or '1'}[/b]  ·  repos file: [b]{self.tui._val('repos_file')}[/b]")
+
+    def _msg(self, text: str, level: str = "") -> None:
+        color = {"bad": "red", "ok": "green", "warn": "yellow"}.get(level)
+        self.query_one("#lead_msg", Static).update(f"[{color}]{text}[/]" if color else text)
+
+    def _bg(self, fn) -> None:
+        self.run_worker(fn, thread=True, group="lead", exclusive=False)
+
+    # -- buttons ---------------------------------------------------------
+    @on(Button.Pressed, "#adm_save")
+    def _save_token(self) -> None:
+        token = self.query_one("#adm_token", Input).value.strip()
+        if not token.startswith("ad_"):
+            self._msg("An admin token starts with ad_. (Read tokens start with rd_ and cannot issue codes.)", "bad")
+            return
+        self._msg("Checking the token with the store…")
+
+        def work() -> None:
+            import admin
+            import join
+            saved = {k: os.environ.get(k) for k in ("RIFFLE_ADMIN_TOKEN",)}
+            os.environ["RIFFLE_ADMIN_TOKEN"] = token
+            try:
+                me = admin.call("GET", "/v1/whoami")
+                if me.get("kind") != "admins":
+                    raise admin.AdminError(f"that is a {str(me.get('kind')).rstrip('s')} token, not an admin token")
+                join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_ADMIN_TOKEN": token})
+            except admin.AdminError as e:
+                if saved["RIFFLE_ADMIN_TOKEN"] is None:
+                    os.environ.pop("RIFFLE_ADMIN_TOKEN", None)
+                else:
+                    os.environ["RIFFLE_ADMIN_TOKEN"] = saved["RIFFLE_ADMIN_TOKEN"]
+                self.app.call_from_thread(self._msg, f"Not saved: {e}", "bad")
+                return
+            self.app.call_from_thread(self._token_saved)
+        self._bg(work)
+
+    def _token_saved(self) -> None:
+        self.query_one("#adm_token", Input).value = ""
+        self._status()
+        self._msg("Admin token saved to .env.", "ok")
+        self._refresh(keep_msg=True)
+
+    @on(Button.Pressed, "#adm_issue")
+    def _issue(self) -> None:
+        if not self._admin_ready():
+            self._msg("Save the store URL (RIFFLE_SYNC_URL in .env) and an admin token first.", "bad")
+            return
+        pcs = self.tui._val("pcs")
+        if not pcs.isdigit() or int(pcs) < 2:
+            self._msg("Set \"Number of PCs\" in the form to 2 or more, then issue codes.", "bad")
+            return
+        if not self.tui._shard_ok() or not self.tui._window_ok():
+            return
+        days = self.query_one("#adm_days", Input).value.strip() or "0"
+        n = int(pcs)
+        try:
+            import join
+            flags = join.shared_argv(self.tui._build_cmd()[3:])
+        except ValueError as e:
+            self._msg(str(e), "bad")
+            return
+        self._msg(f"Planning the split over {n} PCs and asking the store for {n} tokens…")
+
+        def work() -> None:
+            import subprocess
+            fd, path = tempfile.mkstemp(prefix="riffle-codes-")          # mkstemp files are private (600)
+            os.close(fd)
+            try:
+                cmd = [sys.executable, BUILD, *flags, "--shard-plan", str(n), "--issue-tokens",
+                       "--token-days", days, "--tokens-out", path]
+                r = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True, timeout=180, env=dict(os.environ))
+                with open(path, encoding="utf-8") as fh:
+                    rows = [ln.rstrip("\n").split("\t", 1) for ln in fh if "\t" in ln]
+            except (subprocess.TimeoutExpired, OSError) as e:
+                self.app.call_from_thread(self._msg, f"Could not issue codes: {e}", "bad")
+                return
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            sid = next((ln.split("split ID ")[1].split(":")[0] for ln in r.stdout.splitlines() if "split ID " in ln), "")
+            if r.returncode != 0 or not rows:
+                tail = (r.stderr.strip().splitlines() or r.stdout.strip().splitlines() or ["no output"])[-1]
+                self.app.call_from_thread(self._msg, f"Could not issue codes: {tail}", "bad")
+                return
+            self.app.call_from_thread(self._show_codes, sid, [(a, b) for a, b in rows])
+        self._bg(work)
+
+    def _show_codes(self, sid: str, rows: list[tuple[str, str]]) -> None:
+        self.codes, self.split_id = rows, sid
+        t = self.query_one("#codes", DataTable)
+        t.clear()
+        for label, code in rows:
+            t.add_row(label, code[:22] + "…" + code[-8:], key=label)
+        self._msg(f"Split {sid}: {len(rows)} codes. Copy each one and send it only to that PC's owner. "
+                  f"Issuing again for this split replaces these codes.", "ok")
+        self._refresh(keep_msg=True)
+
+    def _selected_code(self) -> tuple[str, str] | None:
+        t = self.query_one("#codes", DataTable)
+        if not self.codes or t.cursor_row is None or t.cursor_row >= len(self.codes):
+            return None
+        return self.codes[t.cursor_row]
+
+    @on(Button.Pressed, "#code_copy")
+    def _copy_one(self) -> None:
+        sel = self._selected_code()
+        if not sel:
+            self._msg("Issue codes first, then pick a row.", "warn")
+            return
+        ok = self.tui._copy(sel[1])
+        self._msg(f"Copied the code for {sel[0]}." if ok else "No clipboard here; use Save to a private file.", "ok" if ok else "warn")
+
+    @on(Button.Pressed, "#code_all")
+    def _copy_all(self) -> None:
+        if not self.codes:
+            self._msg("Issue codes first.", "warn")
+            return
+        ok = self.tui._copy("\n".join(f"{a}\t{b}" for a, b in self.codes))
+        self._msg("Copied all codes, one per line." if ok else "No clipboard here; use Save to a private file.", "ok" if ok else "warn")
+
+    @on(Button.Pressed, "#code_save")
+    def _save_codes(self) -> None:
+        if not self.codes:
+            self._msg("Issue codes first.", "warn")
+            return
+        path = os.path.join(HERE, f"join_codes_{self.split_id or 'split'}.txt")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(f"{a}\t{b}" for a, b in self.codes) + "\n")
+        self._msg(f"Saved to {path} (readable only by you). Delete it once the codes are sent.", "ok")
+
+    # -- PC tokens ---------------------------------------------------------
+    @on(Button.Pressed, "#pc_refresh")
+    def _refresh_btn(self) -> None:
+        self._refresh()
+
+    def _refresh(self, keep_msg: bool = False) -> None:
+        """Reload the PC table. keep_msg leaves the message line alone (the caller just wrote one)."""
+        if not self._admin_ready():
+            return
+
+        def work() -> None:
+            import admin
+            try:
+                rows = admin.call("GET", "/v1/admin/pcs")["pcs"]
+            except admin.AdminError as e:
+                self.app.call_from_thread(self._msg, f"Could not list PCs: {e}", "bad")
+                return
+            self.app.call_from_thread(self._show_pcs, rows, keep_msg)
+        self._bg(work)
+
+    def _show_pcs(self, rows: list[dict], keep_msg: bool = False) -> None:
+        import admin
+        t = self.query_one("#pcs_tbl", DataTable)
+        t.clear()
+        for r in rows:
+            exp = time.strftime("%Y-%m-%d", time.gmtime(r["expires"])) if r.get("expires") else "never"
+            t.add_row(r["pc"], r.get("split") or "-", exp, admin.ago(r.get("last_upload")), key=r["pc"])
+        self._pcs = rows
+        if not rows and not keep_msg:
+            self._msg("No PC tokens issued yet.")
+
+    def _selected_pc(self) -> dict | None:
+        t = self.query_one("#pcs_tbl", DataTable)
+        rows = getattr(self, "_pcs", [])
+        if not rows or t.cursor_row is None or t.cursor_row >= len(rows):
+            return None
+        return rows[t.cursor_row]
+
+    def _revoke(self, what: str, body: dict, label: str) -> None:
+        if self.pending != what:                              # two presses: the first only asks
+            self.pending = what
+            self._msg(f"Press the same button again to revoke {label}. It stops that PC at once.", "warn")
+            return
+        self.pending = None
+
+        def work() -> None:
+            import admin
+            try:
+                gone = admin.call("POST", "/v1/admin/revoke", body)["revoked"]
+            except admin.AdminError as e:
+                self.app.call_from_thread(self._msg, f"Not revoked: {e}", "bad")
+                return
+            self.app.call_from_thread(self._msg, "Revoked: " + (", ".join(gone) or "nothing"), "ok")
+            self.app.call_from_thread(self._refresh)
+        self._bg(work)
+
+    @on(Button.Pressed, "#pc_revoke")
+    def _revoke_pc(self) -> None:
+        pc = self._selected_pc()
+        if not pc:
+            self._msg("Pick a PC in the table first.", "warn")
+            return
+        self._revoke("pc:" + pc["pc"], {"name": pc["pc"]}, pc["pc"])
+
+    @on(Button.Pressed, "#split_revoke")
+    def _revoke_split(self) -> None:
+        pc = self._selected_pc()
+        if not pc or not pc.get("split"):
+            self._msg("Pick a PC of that split in the table first.", "warn")
+            return
+        self._revoke("split:" + pc["split"], {"split_id": pc["split"]}, f"every PC of split {pc['split']}")
+
+
 class RiffleTUI(App):
     TITLE = "Riffle miner"
     SUB_TITLE = f"build_dataset · v{__version__}"
@@ -411,6 +684,7 @@ class RiffleTUI(App):
         Binding("ctrl+e", "test_run", "Test run"),
         Binding("ctrl+o", "view_test", "View test data"),
         Binding("f2", "join", "Join"),
+        Binding("f3", "lead", "Lead tools"),
         Binding("ctrl+g", "show_split", "Show split"),
         Binding("ctrl+k", "audit", "Audit data"),
         Binding("ctrl+l", "clear_log", "Clear log"),
@@ -460,6 +734,7 @@ class RiffleTUI(App):
                 yield Input("", id="join_code", placeholder="paste it here, then Join (F2)", password=True,
                             compact=True)
                 yield Button("Join", id="join", variant="primary")
+                yield Button("Lead tools (F3)", id="lead_btn")
                 yield Label("Repos file")
                 yield Input("repos.txt", id="repos_file", compact=True)
                 yield Label("Output dataset")
@@ -741,6 +1016,14 @@ class RiffleTUI(App):
     @on(Button.Pressed, "#join")
     def _join_btn(self) -> None:
         self.action_join()
+
+    @on(Button.Pressed, "#lead_btn")
+    def _lead_btn(self) -> None:
+        self.action_lead()
+
+    def action_lead(self) -> None:
+        """Issue join codes and manage PC tokens (the lead's side)."""
+        self.push_screen(LeadScreen(self))
 
     def action_join(self) -> None:
         """Join with the pasted code (checks it with the store, saves .env, fills the form from the

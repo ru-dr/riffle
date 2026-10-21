@@ -178,7 +178,8 @@ def test_settings_come_from_dot_env_alone(tmp_path):
     """join.py writes .env, and a run must see it without any exported variable."""
     import subprocess
     (tmp_path / ".env").write_text("RIFFLE_SYNC_URL=https://store.example/\nRIFFLE_SYNC_TOKEN=rw_x\n")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("RIFFLE_SYNC")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("RIFFLE_SYNC") and k != "RIFFLE_NO_DOTENV"}
+    env["RIFFLE_DOTENV"] = str(tmp_path / ".env")
     code = f"import sys; sys.path.insert(0, {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))!r}); import sync; print(sync.settings())"
     out = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True).stdout.strip()
     assert out == "('https://store.example', 'rw_x')"
