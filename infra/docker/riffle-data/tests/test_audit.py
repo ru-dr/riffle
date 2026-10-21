@@ -305,13 +305,11 @@ def test_pages_name_their_assets_by_content_so_a_deploy_is_not_hidden_by_the_bro
     assert code == 200 and b".selbtn" in body
 
 
-def test_overview_and_admin_have_a_big_picture_host_and_the_reader_pages_poll_only_while_mining():
-    import ui
-    for page in ("overview", "admin"):
-        assert 'id="bigpic"' in ui.shell(page, page)
+def test_overview_and_admin_have_a_big_picture_and_the_reader_pages_poll_only_while_mining():
     js = open(os.path.join(os.path.dirname(store_app.__file__), "static", "app.js"), encoding="utf-8").read()
     assert "setInterval(draw" not in js and "setInterval(load" not in js, "a fixed timer polls even when nothing is mining"
-    assert "liveLoop(draw, { big: true })" in js and "liveLoop(load)" in js
+    assert 'liveLoop(draw, { big: true, kind: "overview" })' in js and 'liveLoop(draw, { big: true, kind: "admin" })' in js and "liveLoop(load)" in js
+    assert "bigpic" not in js and "bvOverview" in js and "bvAdmin" in js
 
 
 def test_the_whole_log_can_be_opened_and_exported_with_or_without_a_filter(store):
@@ -391,3 +389,25 @@ def test_the_admin_overview_carries_each_pcs_settings_and_the_splits_model(store
     p1 = [p for p in d["pcs"] if p["pc"].startswith("pc1")][0]
     assert p1["settings"]["llm_model"] == "haiku" and p1["argv"][-1] == "haiku" and d["splits"][0]["models"] == ["haiku"]
     assert "retention" not in d, "nothing in the store deletes run logs on a timer"
+
+
+def test_log_search_filters_by_level_with_or_without_text(store):
+    pc = tokens.issue(store.tp, "pcs", "pcl")
+    rdr = tokens.issue(store.tp, "readers", "r")
+    log = (b"2026-10-21 10:00:00 ERROR [mine] boom\n2026-10-21 10:00:01 WARN [sync] slow\n2026-10-21 10:00:02 INFO [mine] ok\n"
+           b"2026-10-21 10:00:03 DEBUG [git] fetch\n[ci] plain\n")
+    assert req(store, "PUT", "/v1/files/6.0.0/abc/logs/run.log", pc, log)[0] == 200
+
+    def hits(qs):
+        code, body = req(store, "GET", "/api/search?" + qs, rdr)
+        assert code == 200, body
+        return [(h["level"], h["line"]) for h in json.loads(body)["hits"]]
+    assert hits("level=error") == [("error", 1)]                                   # a level alone is a search
+    assert hits("level=warn") == [("error", 1), ("warn", 2)]                       # warnings and errors
+    assert hits("level=info") == [("info", 3)] and hits("level=debug") == [("debug", 4)]
+    assert hits("q=mine&level=warn") == [("error", 1)]                             # text and level together
+    assert [h[1] for h in hits("q=plain")] == [5] and hits("q=plain")[0][0] is None
+    code, body = req(store, "GET", "/api/search?level=nonsense", rdr)              # an unknown level means any
+    assert code == 200
+    code, raw = req(store, "GET", "/api/raw?key=pcl/6.0.0/abc/logs/run.log&level=error", rdr)
+    assert code == 200 and raw.decode().count("\n") == 1 and "ERROR" in raw.decode()

@@ -88,6 +88,7 @@
       } else if (k === "ArrowDown" || k === "ArrowUp") { open(); e.preventDefault(); }
     };
     sel.addEventListener("change", sync);
+    sel.addEventListener("riffle-sync", sync);                  // a script that sets select.value fires this so the label follows
     new MutationObserver(sync).observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
     // a script sets select.value without an event: look again whenever the page is used
     root.addEventListener("pointerenter", sync);

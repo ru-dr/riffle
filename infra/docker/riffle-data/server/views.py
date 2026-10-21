@@ -182,13 +182,40 @@ def _check_size(path: str) -> int:
 
 
 LEVEL = re.compile(r"\b(WARN|WARNING|ERROR|CRITICAL|Traceback)\b|\[(warn|error|llm-breaker)", re.I)
+_ERR = re.compile(r"\b(ERROR|CRITICAL|Traceback|FAILED)\b|\[(error|llm-breaker)", re.I)
+_WARN = re.compile(r"\bWARN(ING)?\b|\[warn", re.I)
+_INFO = re.compile(r"\bINFO\b")
+_DEBUG = re.compile(r"\b(DEBUG|TRACE)\b")
+LEVEL_CHOICES = ("error", "warn", "info", "debug")
 
 
-def lines(path: str, offset=0, limit=200, q: str | None = None, tail: bool = False, levels: bool = False) -> dict:
+def line_level(text: str) -> str | None:
+    """error, warn, info or debug for a log or trace line, None when it names none."""
+    if _ERR.search(text):
+        return "error"
+    if _WARN.search(text):
+        return "warn"
+    if _INFO.search(text):
+        return "info"
+    if _DEBUG.search(text):
+        return "debug"
+    return None
+
+
+def level_ok(text: str, want: str) -> bool:
+    """`want` is "" (any), error, warn (warnings and errors), info or debug."""
+    if not want:
+        return True
+    lv = line_level(text)
+    return lv == "error" if want == "error" else lv in ("warn", "error") if want == "warn" else lv == want
+
+
+def lines(path: str, offset=0, limit=200, q: str | None = None, tail: bool = False, levels: bool | str = False) -> dict:
     """A page of lines (or the last `limit` lines), optionally only those containing q, or only warnings and errors."""
     _check_size(path)
     limit = max(1, min(int(limit), 2000))
     needle = (q or "").lower()
+    want = "warn" if levels is True else (levels if levels in LEVEL_CHOICES else "")
     out, total = [], 0
     if tail:
         keep = collections.deque(maxlen=limit)
@@ -196,14 +223,14 @@ def lines(path: str, offset=0, limit=200, q: str | None = None, tail: bool = Fal
             for n, raw in enumerate(fh, 1):
                 total = n
                 text = raw.decode("utf-8", "replace")
-                if (not needle or needle in text.lower()) and (not levels or LEVEL.search(text)):
+                if (not needle or needle in text.lower()) and level_ok(text, want):
                     keep.append((n, text.rstrip("\n")[:2000]))
         out = list(keep)
     else:
         with open(path, "rb") as fh:
             for n, raw in enumerate(fh, 1):
                 s = raw.decode("utf-8", "replace")
-                if (needle and needle not in s.lower()) or (levels and not LEVEL.search(s)):
+                if (needle and needle not in s.lower()) or not level_ok(s, want):
                     continue
                 if total >= offset and len(out) < limit:
                     out.append((n, s.rstrip("\n")[:2000]))
@@ -211,14 +238,15 @@ def lines(path: str, offset=0, limit=200, q: str | None = None, tail: bool = Fal
     return {"total": total, "offset": offset, "limit": limit, "lines": out}
 
 
-def matching_lines(path: str, q: str | None = None, levels: bool = False):
+def matching_lines(path: str, q: str | None = None, levels: bool | str = False):
     """Every line (as bytes, with its newline) that contains q and, with `levels`, is a warning or error. For exports."""
     needle = (q or "").lower()
+    want = "warn" if levels is True else (levels if levels in LEVEL_CHOICES else "")
     with open(path, "rb") as fh:
         for raw in fh:
-            if needle or levels:
+            if needle or want:
                 s = raw.decode("utf-8", "replace")
-                if (needle and needle not in s.lower()) or (levels and not LEVEL.search(s)):
+                if (needle and needle not in s.lower()) or not level_ok(s, want):
                     continue
             yield raw if raw.endswith(b"\n") else raw + b"\n"
 

@@ -290,11 +290,12 @@ class Service:
         return 200, "ok"
 
     # -- reading ---------------------------------------------------------
-    def search(self, q: str, pc: str, regex: bool) -> tuple[list[dict], str]:
+    def search(self, q: str, pc: str, regex: bool, level: str = "") -> tuple[list[dict], str]:
         if regex and (len(q) > 200 or NESTED_QUANTIFIER.search(q)):
             return [], "bad regex: that pattern can take for ever on a long line (a repeat inside a repeat); simplify it"
+        level = level if level in views.LEVEL_CHOICES else ""
         try:
-            pat = re.compile(q if regex else re.escape(q), re.I)
+            pat = re.compile(q if regex else re.escape(q), re.I) if q else None      # no text: every line of the chosen level
         except re.error as e:
             return [], f"bad regex: {e}"
         hits, scanned, note = [], 0, ""
@@ -313,8 +314,8 @@ class Service:
                     if time.monotonic() > deadline:
                         return hits, "Search stopped at its time limit; narrow it to one PC or a simpler pattern."
                     line = raw[:SEARCH_LINE * 4].decode("utf-8", "replace").rstrip()
-                    if pat.search(line[:SEARCH_LINE]):
-                        hits.append({"key": f["key"], "line": n, "text": line[:400]})
+                    if (pat is None or pat.search(line[:SEARCH_LINE])) and views.level_ok(line, level):
+                        hits.append({"key": f["key"], "line": n, "text": line[:400], "level": views.line_level(line)})
                         if len(hits) >= SEARCH_MAX_HITS:
                             return hits, f"Showing the first {SEARCH_MAX_HITS} matches."
         return hits, note
@@ -726,7 +727,7 @@ def make_handler(svc: Service):
             """The whole file as plain text, inline or as a download, optionally only the lines that match q / warnings."""
             key = q.get("key", "")
             path = svc.text_path(key)
-            needle, levels = (q.get("q") or "")[:200], q.get("lvl") == "1"
+            needle, levels = (q.get("q") or "")[:200], (q.get("level") if q.get("level") in views.LEVEL_CHOICES else q.get("lvl") == "1")
             filtered = bool(needle) or levels
             base = os.path.basename(key)
             name = f"{key.split('/')[0]}_{base}" if not filtered else f"{key.split('/')[0]}_{base}.filtered.txt"
@@ -799,7 +800,8 @@ def make_handler(svc: Service):
                     raise LookupError("no such run")
                 return self._json(d)
             if route == "search":
-                hits, note = svc.search(q.get("q", ""), q.get("pc", ""), q.get("regex") == "1") if q.get("q") else ([], "")
+                hits, note = (svc.search(q.get("q", ""), q.get("pc", ""), q.get("regex") == "1", q.get("level", ""))
+                              if q.get("q") or q.get("level") else ([], ""))
                 return self._json({"hits": hits, "note": note, "pcs": sorted({r["pc"] for r in svc.index.runs()})})
             if route in ("meta", "lines", "jsonl", "json", "trace"):
                 key = q.get("key", "")
@@ -809,7 +811,8 @@ def make_handler(svc: Service):
                     return self._json({"key": key, "kind": views.kind_of(key), "size": f["size"], "updated": f["updated"],
                                        "uri": svc.store.uri(key), "sha256": f["sha256"]})
                 if route == "lines":
-                    return self._json(views.lines(path, _int(q, "offset", 0), _int(q, "limit", 200), q.get("q"), q.get("tail") == "1", q.get("lvl") == "1"))
+                    return self._json(views.lines(path, _int(q, "offset", 0), _int(q, "limit", 200), q.get("q"), q.get("tail") == "1",
+                                                  q.get("level") if q.get("level") in views.LEVEL_CHOICES else q.get("lvl") == "1"))
                 if route == "jsonl":
                     return self._json(views.jsonl_rows(path, _int(q, "offset", 0), _int(q, "limit", 50), q.get("q")))
                 if route == "json":

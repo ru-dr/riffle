@@ -89,7 +89,7 @@
     return rows.length ? w : el("div", "empty", opts.emptyText || "No rows.");
   }
   function link(text, href) { var a = h("a"); a.href = href; a.textContent = text; return a; }
-  function viewHref(key) { return "/view?key=" + encodeURIComponent(key); }
+  function viewHref(key, line) { return "/view?key=" + encodeURIComponent(key) + (line ? "&line=" + line : ""); }
 
 
   /* ---------------- live refresh and big picture ----------------
@@ -97,92 +97,181 @@
      When nothing is mining it stays idle: no timer, no requests, until the tab is shown again or Refresh is pressed.
      load() returns a promise of true when something is mining. */
   var POLL_MS = 15000;
-  function bigPref() {
-    try { var u = new URLSearchParams(location.search).get("view"); if (u) return u === "big"; return localStorage.getItem("riffle-big") === "1"; } catch (e) { return false; }
-  }
-  function setBig(on) {
-    document.body.classList.toggle("big", on);
-    try { localStorage.setItem("riffle-big", on ? "1" : "0"); } catch (e) { /* private window: the choice just is not remembered */ }
-  }
   /* a slim strip under the header holds the page's live status and its buttons, so the header stays just logo, menu, sign out */
   function strip() {
     var st = document.querySelector(".strip");
     if (!st) { st = h("div", "rule strip"); var hd = document.querySelector("header.top"); if (hd) hd.after(st); }
     return st;
   }
+
+  /* ---------------- big picture ----------------
+     One full-screen view for a wall or a second monitor, read from across the room (the layout of the miner's own big picture):
+     a status word, the team's progress as one huge number with a bar, four facts, what is being mined now, one line per PC.
+     Always dark. Keys: b opens or closes it, d dims it, Esc closes it. The screen stays awake while it is open. */
+  var BV = { on: false, dim: false, model: null, lastOk: 0, lock: null, root: null, f: {}, kind: null, refresh: null, latest: {} };
+  try { BV.dim = localStorage.getItem("riffle-big-dim") === "1"; } catch (e) { /* not remembered */ }
+  function bvBuild() {
+    var r = h("div"), f = BV.f; r.id = "bigview"; r.setAttribute("role", "region"); r.setAttribute("aria-label", "Big picture");
+    var head = h("div", "bh"), left = h("div", "bhl"), right = h("div", "bhr");
+    f.state = h("span", "bstate", "CONNECTING"); f.sub = h("span", "cap", "Riffle data · team store"); left.append(f.state, f.sub);
+    f.clock = h("span", "bclock", "--:--"); f.seen = h("span", "cap", "connecting"); right.append(f.clock, f.seen); head.append(left, right);
+    f.kpis = h("div", "bk"); f.alert = h("div", "balert"); f.table = h("div", "bt");
+    var foot = h("div", "bf"); f.hint = h("span", "cap", "b or click to exit · d dim · Esc closes"); foot.append(f.hint);
+    r.append(head, f.kpis, f.alert, f.table, foot);
+    if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) {
+      var dim = h("button", "bpbtn", "Dim"), exit = h("button", "bpbtn", "Exit"); dim.type = exit.type = "button";
+      dim.onclick = function (e) { e.stopPropagation(); bvDim(); }; exit.onclick = function (e) { e.stopPropagation(); bvToggle(false); };
+      f.hint.replaceChildren(dim, exit);
+    } else r.onclick = function () { bvToggle(false); };
+    document.body.append(r); BV.root = r;
+  }
+  function bvWake(on) {
+    try {
+      if (on && "wakeLock" in navigator && document.visibilityState === "visible") navigator.wakeLock.request("screen").then(function (l) { BV.lock = l; }, function () { BV.lock = null; });
+      else if (!on && BV.lock) { BV.lock.release(); BV.lock = null; }
+    } catch (e) { BV.lock = null; }
+  }
+  function bvDim() {
+    BV.dim = !BV.dim; if (BV.root) BV.root.classList.toggle("dim", BV.dim);
+    try { localStorage.setItem("riffle-big-dim", BV.dim ? "1" : "0"); } catch (e) { /* not remembered */ }
+  }
+  function bvToggle(on) {
+    if (!BV.kind) return;
+    BV.on = on === undefined ? !BV.on : on;
+    if (!BV.root) bvBuild();
+    BV.root.classList.toggle("on", BV.on); BV.root.classList.toggle("dim", BV.dim);
+    document.body.style.overflow = BV.on ? "hidden" : "";
+    try { history.replaceState(null, "", BV.on ? "#big" : location.pathname + location.search); } catch (e) { /* ignore */ }
+    bvWake(BV.on); if (BV.on && BV.refresh) BV.refresh(); bvRender();
+  }
+  document.addEventListener("visibilitychange", function () { if (BV.on) bvWake(true); });
+  function bvRender() {
+    if (!BV.on || !BV.root) return;
+    var f = BV.f, m = BV.model || { word: "CONNECTING", cls: "", kpis: [], headers: [], rows: [], cols: "1fr", alert: ["", ""] };
+    var stale = BV.lastOk && Date.now() - BV.lastOk > 3 * POLL_MS + 5000, word = stale ? "OFFLINE" : m.word, cls = stale ? "bad" : m.cls;
+    f.state.textContent = word; f.state.className = "bstate " + cls;
+    f.clock.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    var ago = BV.lastOk ? Math.round((Date.now() - BV.lastOk) / 1000) : null;
+    f.seen.textContent = ago === null ? "connecting" : stale ? "OFFLINE · no update for " + ago + " s" : "updated " + ago + " s ago";
+    f.kpis.replaceChildren(); f.kpis.style.gridTemplateColumns = "repeat(" + Math.max(1, (m.kpis || []).length) + ",1fr)";
+    (m.kpis || []).forEach(function (k) {
+      var box = h("div", "bki"); box.append(h("div", "cap", k.l), h("div", "bv", k.v), h("div", "bh2" + (k.c ? " " + k.c : ""), k.h || "")); f.kpis.append(box);
+    });
+    f.alert.textContent = (m.alert || [""])[0]; f.alert.className = "balert" + ((m.alert || [])[1] === "bad" ? " bad" : "");
+    f.table.replaceChildren();
+    var hd = h("div", "btr bth"); hd.style.gridTemplateColumns = m.cols;
+    (m.headers || []).forEach(function (t, i) { hd.append(h("div", "btc" + ((m.right || []).indexOf(i) >= 0 ? " n" : ""), t)); }); f.table.append(hd);
+    var rank = { bad: 0, warn: 1 }, rows = (m.rows || []).slice().sort(function (a, b) { return (rank[a.cls] == null ? 2 : rank[a.cls]) - (rank[b.cls] == null ? 2 : rank[b.cls]); });
+    rows.forEach(function (rw) {                                           // what needs attention first
+      var tr = h("div", "btr"); tr.style.gridTemplateColumns = m.cols;
+      rw.cells.forEach(function (c, i) {
+        var td = h("div", "btc" + ((m.right || []).indexOf(i) >= 0 ? " n" : ""));
+        if (c.t === "name") td.append(h("b", "", c.v));
+        else if (c.t === "state") td.append(h("span", "btag " + (rw.cls || ""), c.v));
+        else if (c.t === "bar") { var bar = h("div", "bbar"), fl = h("i"); fl.style.width = Math.round(100 * (c.f || 0)) + "%"; bar.append(fl); td.append(bar, h("span", "bsub", c.v)); }
+        else if (c.t === "upt") { var u = h("div", "bupt"); u.style.gridTemplateColumns = "repeat(" + c.b.length + ",1fr)"; c.b.forEach(function (b) { u.append(h("i", "b-" + b)); }); td.append(u); }
+        else td.textContent = c.v == null ? "—" : c.v;
+        tr.append(td);
+      });
+      f.table.append(tr);
+    });
+    var cut = 0;                                                           // whole rows only; the healthy ones drop off the end
+    while (f.table.children.length > 2 && f.table.lastChild.getBoundingClientRect().bottom > f.table.getBoundingClientRect().bottom + 1) { f.table.lastChild.remove(); cut++; }
+    if (cut) { var more = h("div", "bmore", "+ " + cut + " more PC" + (cut === 1 ? "" : "s") + " not shown"); f.table.append(more); }
+  }
+  setInterval(bvRender, 1000);
+  function bvFeed(kind) {
+    var d = BV.latest;
+    try { BV.model = kind === "admin" ? bvAdmin(d.admin) : bvOverview(d.runs || [], d.act); } catch (e) { BV.model = null; }
+    BV.lastOk = Date.now(); bvRender();
+  }
+  function bvOverview(runs, act) {
+    var n = runs.length, st = runs.map(function (r) { return runState(r)[0]; }), count = function (s) { return st.filter(function (x) { return x === s; }).length; };
+    var active = count("mining"), sum = function (k) { return runs.reduce(function (a, r) { return a + (r.status[k] || 0); }, 0); };
+    var total = sum("repos_total"), got = 0, failed = sum("repos_failed"), now = Date.now() / 1000;
+    function share(r) {                                                   // one PC's progress: finished repos plus the part of the one in progress
+      var m = r.status.repos || {}, ks = Object.keys(m), tot = r.status.repos_total || ks.length, g = 0;
+      if (!ks.length) return tot ? (r.status.repos_done || 0) / tot : 0;
+      ks.forEach(function (k) { var x = m[k]; g += x.state === "done" ? 1 : x.state === "mining" && x.selected ? Math.min(1, (x.rows || 0) / x.selected) : 0; });
+      return g;
+    }
+    runs.forEach(function (r) { got += share(r); });
+    var frac = total ? got / total : 0, word = "WAITING", cls = "";
+    if (n) { if (active) { word = "MINING"; cls = "run"; } else if (count("done") === n) { word = "FINISHED"; cls = "done"; } else if (count("silent")) { word = "OFFLINE"; cls = "bad"; } else if (count("stopped")) { word = "STOPPED"; cls = "warn"; } else word = "IDLE"; }
+    var starts = runs.map(function (r) { return Date.parse(r.status.started_at || ""); }).filter(function (t) { return t > 0; }), elapsed = starts.length ? now - Math.min.apply(null, starts) / 1000 : null;
+    var blocksOf = {}, rate = null;
+    if (act && act.pcs) { rate = 0; act.pcs.forEach(function (p) { blocksOf[p.pc] = p; rate += p.blocks.slice(-4).reduce(function (a, b) { return a + (b[1] || 0); }, 0) / 60; }); }    // the last hour of 15-minute blocks
+    var eta = word === "FINISHED" ? "done" : active && frac > 0.005 && elapsed ? "~" + span(elapsed * (1 - frac) / frac) : "—";
+    var silent = runs.filter(function (r, i) { return st[i] === "silent"; });
+    var alert = failed ? [failed + " repo" + (failed === 1 ? "" : "s") + " failed", "bad"] : silent.length ? [silent.map(function (r) { return r.pc.replace(/-.*/, ""); }).join(", ") + " offline · last seen " + ago(silent[0].updated), ""] : ["", ""];
+    return { word: word, cls: cls, alert: alert,
+      kpis: [{ l: "Progress", v: n ? (100 * frac).toFixed(frac < 0.1 ? 1 : 0) + "%" : "—", h: "of all repositories" }, { l: "PRs mined", v: sum("prs_done").toLocaleString(), h: "rows written" },
+             { l: "Repositories", v: sum("repos_done") + " / " + total, h: failed ? failed + " failed" : "none failed", c: failed ? "bad" : "" }, { l: "PCs mining", v: active + " / " + n, h: count("done") + " finished" },
+             { l: "PRs per minute", v: rate == null ? "—" : rate.toFixed(rate < 10 ? 1 : 0), h: "last hour, all PCs" }, { l: "Time left", v: eta, h: elapsed ? "elapsed " + span(elapsed) : "" }],
+      headers: ["PC", "State", "Progress", "PRs mined", "PRs/min", "Now mining", "Last 24 hours"], right: [3, 4], cols: "1.1fr .9fr 1.5fr .9fr .7fr 2.3fr 2.4fr",
+      rows: runs.map(function (r, i) {
+        var s = st[i], c = r.status, p = blocksOf[r.pc], cur = c.current && s === "mining" ? c.current + (((c.repos || {})[c.current] || {}).selected ? "  " + (c.repos[c.current].rows || 0) + "/" + c.repos[c.current].selected : "") : s === "done" ? "finished" : "last seen " + ago(r.updated);
+        var rcls = s === "silent" ? "bad" : s === "stopped" ? "warn" : s === "done" ? "done" : "run";
+        return { cls: rcls, cells: [{ t: "name", v: r.pc.replace(/-.*/, "") }, { t: "state", v: s === "silent" ? "OFFLINE" : s.toUpperCase() },
+          { t: "bar", f: (c.repos_total ? share(r) / c.repos_total : 0), v: (c.repos_done || 0) + " / " + (c.repos_total || 0) + " repos" }, { v: (c.prs_done || 0).toLocaleString() },
+          { v: p ? (p.blocks.slice(-4).reduce(function (a, b) { return a + (b[1] || 0); }, 0) / 60).toFixed(1) : "—" }, { v: cur },
+          p ? { t: "upt", b: p.blocks.map(function (b) { return b[0]; }) } : { v: "" }] };
+      }) };
+  }
+  function bvAdmin(d) {
+    var pcs = d.pcs || [], by = function (s) { return pcs.filter(function (p) { return p.state === s; }).length; };
+    var up = pcs.filter(function (p) { return p.last_upload; }).length, mining = by("mining"), never = by("never"), bad = by("silent") + by("expired");
+    var soon = Date.now() / 1000 + 3 * 86400, expiring = pcs.filter(function (p) { return p.expires && p.expires < soon && p.expires > Date.now() / 1000; }).length;
+    var word = !pcs.length ? "NO PCS" : mining ? "UPLOADING" : bad ? "OFFLINE" : by("done") === pcs.length ? "FINISHED" : never === pcs.length ? "WAITING FOR PCS" : "IDLE";
+    var cls = word === "UPLOADING" ? "run" : word === "FINISHED" ? "done" : word === "OFFLINE" ? "bad" : "warn";
+    var alert = bad ? [bad + " PC" + (bad === 1 ? "" : "s") + " silent or expired", "bad"] : expiring ? [expiring + " token" + (expiring === 1 ? "" : "s") + " expire within 3 days", ""] : never ? [never + " PC" + (never === 1 ? "" : "s") + " have not uploaded yet", ""] : ["", ""];
+    var models = {}; (d.splits || []).forEach(function (x) { (x.models || []).forEach(function (m) { models[m] = 1; }); });
+    return { word: word, cls: cls, alert: alert,
+      kpis: [{ l: "PC tokens", v: String(pcs.length), h: (d.splits || []).length + " split" + ((d.splits || []).length === 1 ? "" : "s") }, { l: "Uploaded", v: up + " / " + pcs.length, h: "have sent something" },
+             { l: "Mining now", v: String(mining), h: by("done") + " finished" }, { l: "Never uploaded", v: String(never), h: "token issued, nothing sent", c: never ? "warn" : "" },
+             { l: "Expiring in 3 days", v: String(expiring), h: "rotate to extend", c: expiring ? "warn" : "" }, { l: "LLM model", v: Object.keys(models).join(", ") || "—", h: (d.readers || []).length + " reader" + ((d.readers || []).length === 1 ? "" : "s") + " · " + (d.admins || []).length + " admin" + ((d.admins || []).length === 1 ? "" : "s") }],
+      headers: ["PC", "State", "Progress", "PRs mined", "Last upload", "Expires", "Host"], right: [3], cols: "1.3fr .9fr 1.6fr .9fr 1.2fr 1.1fr 1.4fr",
+      rows: pcs.map(function (p) {
+        var rcls = p.state === "silent" || p.state === "expired" ? "bad" : p.state === "stopped" ? "warn" : p.state === "done" ? "done" : p.state === "mining" ? "run" : "warn";
+        return { cls: rcls, cells: [{ t: "name", v: p.pc.replace(/-.*/, "") }, { t: "state", v: p.state.toUpperCase() },
+          { t: "bar", f: p.repos_total ? (p.repos_done || 0) / p.repos_total : 0, v: p.repos_total ? (p.repos_done || 0) + " / " + p.repos_total + " repos" : "no status yet" }, { v: p.prs_done == null ? "—" : p.prs_done.toLocaleString() },
+          { v: ago(p.last_upload) }, { v: p.expires ? new Date(p.expires * 1000).toISOString().slice(0, 10) : "never" }, { v: p.host || "—" }] };
+      }) };
+  }
+  document.addEventListener("keydown", function (e) {
+    var t = e.target, typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "b" && BV.kind) bvToggle(); else if (e.key === "d" && BV.on) bvDim(); else if (e.key === "Escape" && BV.on) bvToggle(false);
+  });
+
+  /* a page polls only while some PC is mining (or the big picture is open); idle otherwise, until the tab is shown again or Refresh is pressed */
   function liveLoop(load, opts) {
     opts = opts || {};
     var timer = null, chip = el("span", "livechip", "…"), busy = false;
-    var refresh = el("button", "btn", "Refresh"), bigBtn = el("button", "btn", "Big picture"), full = el("button", "btn", "Fullscreen");
-    refresh.type = bigBtn.type = full.type = "button";
-    strip().append.apply(strip(), opts.big ? [chip, refresh, bigBtn, full] : [chip, refresh]);
+    var refresh = el("button", "btn", "Refresh"), bigBtn = el("button", "btn", [el("span", "", "Big picture "), el("kbd", "", "b")]);
+    refresh.type = bigBtn.type = "button";
+    strip().append.apply(strip(), opts.big ? [chip, refresh, bigBtn] : [chip, refresh]);
     function chipText(active, err) {
       chip.className = "livechip" + (active ? " on" : "");
       chip.textContent = err ? "Could not refresh" : active ? "Live · every " + POLL_MS / 1000 + " s" : "Idle · nothing is mining";
     }
+    var baseTitle = document.title.replace(/^● /, "");
     function tick() {
       clearTimeout(timer);
       if (busy) return; busy = true; refresh.disabled = true;
       Promise.resolve(load()).then(function (active) {
         busy = false; refresh.disabled = false; chipText(!!active, false);
-        if (active && !document.hidden) timer = setTimeout(tick, POLL_MS);
-      }, function () { busy = false; refresh.disabled = false; chipText(false, true); });
+        document.title = (active ? "● " : "") + baseTitle;                  // a tab left in the background shows when something is mining
+        if ((active || BV.on) && !document.hidden) timer = setTimeout(tick, POLL_MS);
+      }, function () { busy = false; refresh.disabled = false; chipText(false, true); if (BV.on) timer = setTimeout(tick, POLL_MS); });
     }
-    function paint() {
-      var on = document.body.classList.contains("big");
-      bigBtn.textContent = on ? "Normal view" : "Big picture"; bigBtn.setAttribute("aria-pressed", String(on)); full.hidden = !on;
-    }
-    bigBtn.onclick = function () { setBig(!document.body.classList.contains("big")); paint(); };
-    full.onclick = function () { if (document.fullscreenElement) document.exitFullscreen(); else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); };
+    bigBtn.onclick = function () { bvToggle(); };
     refresh.onclick = tick;
     document.addEventListener("visibilitychange", function () { if (document.hidden) clearTimeout(timer); else tick(); });
-    if (opts.big) setBig(bigPref());
-    paint(); tick();
+    if (opts.big) { BV.kind = opts.kind; BV.refresh = tick; }
+    tick();
+    if (opts.big && location.hash === "#big") bvToggle(true);
   }
-  function bigNum(label, value, cls) { return el("div", "bignum", [el("div", "cap", label), el("b", cls || "", String(value))]); }
-  function bigBar(pct, text) { var b = el("div", "bigbar"), f = h("i"); f.style.width = Math.max(0, Math.min(100, pct)) + "%"; b.append(f, el("span", "", text)); return b; }
-  function bigOverview(runs) {
-    var sum = function (k) { return runs.reduce(function (a, r) { return a + (r.status[k] || 0); }, 0); };
-    var total = sum("repos_total"), done = sum("repos_done"), pct = total ? Math.round(100 * done / total) : 0;
-    var active = runs.filter(function (r) { return runState(r)[0] === "mining"; }).length;
-    var cards = runs.map(function (r) {
-      var s = r.status, st = runState(r), p = s.repos_total ? Math.round(100 * (s.repos_done || 0) / s.repos_total) : 0;
-      return el("div", "bigcard", [
-        el("div", "bigcardhead", [el("b", "", r.pc), tag(st[0], st[1])]),
-        bigBar(p, (s.repos_done || 0) + " of " + (s.repos_total || 0) + " repos"),
-        el("div", "bigrow", [el("span", "cap", "PRs mined"), el("b", "", (s.prs_done || 0).toLocaleString())]),
-        el("div", "bigrow", [el("span", "cap", "Now"), el("span", "", s.current || "–")]),
-        el("div", "bigrow", [el("span", "cap", "Last sync"), el("span", "", ago(r.updated))])]);
-    });
-    $("#bigpic").replaceChildren(
-      el("div", "bigtop", [bigNum("PRs mined", sum("prs_done").toLocaleString(), "good"), bigNum("Repos done", done + " / " + total),
-        bigNum("PCs mining", active + " / " + runs.length, active ? "good" : ""), bigNum("PRs left", sum("prs_remaining").toLocaleString())]),
-      el("div", "bigwide", [bigBar(pct, pct + "% of all assigned repos")]),
-      cards.length ? el("div", "bigcards", cards) : el("div", "empty", "No PC has synced yet."));
-  }
-  function bigAdmin(d) {
-    var by = function (st) { return d.pcs.filter(function (p) { return p.state === st; }).length; };
-    var soon = Date.now() / 1000 + 3 * 86400, expiring = d.pcs.filter(function (p) { return p.expires && p.expires < soon && p.expires > Date.now() / 1000; }).length;
-    var splits = d.splits.map(function (x) {
-      return el("div", "bigcard", [el("div", "bigcardhead", [el("b", "", "Split " + x.split_id), tag(x.tokens + " PCs", "")]),
-        bigBar(x.tokens ? Math.round(100 * x.uploaded / x.tokens) : 0, x.uploaded + " of " + x.tokens + " have uploaded"),
-        el("div", "bigrow", [el("span", "cap", "Miner"), el("span", "", x.version || "?")]),
-        el("div", "bigrow", [el("span", "cap", "Repos in list"), el("span", "", x.repos_name ? x.repos_name + " (" + (x.n_repos || 0) + ")" : "–")])]);
-    });
-    var pcs = d.pcs.map(function (p) {
-      var color = { mining: "green", done: "green", stopped: "amber", silent: "red", expired: "red", never: "" }[p.state] || "";
-      return el("div", "bigcard", [el("div", "bigcardhead", [el("b", "", p.pc), tag(p.state, color)]),
-        el("div", "bigrow", [el("span", "cap", "Last upload"), el("span", "", ago(p.last_upload))]),
-        el("div", "bigrow", [el("span", "cap", "Progress"), el("span", "", (p.repos_done || 0) + " / " + (p.repos_total || 0) + " repos")]),
-        el("div", "bigrow", [el("span", "cap", "PRs mined"), el("b", "", (p.prs_done || 0).toLocaleString())])]);
-    });
-    $("#bigpic").replaceChildren(
-      el("div", "bigtop", [bigNum("PC tokens", d.pcs.length), bigNum("Mining now", by("mining"), by("mining") ? "good" : ""),
-        bigNum("Never uploaded", by("never"), by("never") ? "warn" : ""), bigNum("Expiring in 3 days", expiring, expiring ? "warn" : "")]),
-      splits.length ? el("div", "bigcards", splits) : null,
-      pcs.length ? el("div", "bigcards", pcs) : el("div", "empty", "No PC tokens yet. Issue codes from the miner's TUI (Lead tools, F3)."));
-  }
-
 
   /* ---------------- activity: who mined when ---------------- */
   var ACT_NOW = { mining: ["mining now", "green"], done: ["done", "green"], stopped: ["stopped", "amber"], offline: ["offline", "red"] };
@@ -222,6 +311,7 @@
   var STATE_RANK = { mining: 0, silent: 1, stopped: 2, done: 3 };
   function overview() {
     var actDays = 7;
+    try { actDays = [1, 7, 30].indexOf(+localStorage.getItem("riffle-act-days")) >= 0 ? +localStorage.getItem("riffle-act-days") : 7; } catch (e) { /* not remembered */ }
     function draw() {
       return api("runs").then(function (runs) {
         var sum = function (k) { return runs.reduce(function (a, r) { return a + (r.status[k] || 0); }, 0); };
@@ -232,8 +322,9 @@
           stat("PRs mined", sum("prs_done").toLocaleString(), "rows written so far"),
           stat("PRs left", sum("prs_remaining").toLocaleString(), "in repos already started"),
           stat("Failed repos", sum("repos_failed").toLocaleString(), sum("repos_pending") + " not started", sum("repos_failed") ? "bad" : ""));
-        bigOverview(runs);
-        api("activity", { days: actDays }).then(function (d) { drawActivity($("#activity"), d, function (v) { actDays = v; draw(); }); });
+        BV.latest.runs = runs; bvFeed("overview");
+        if (BV.on) api("activity", { days: 1 }).then(function (a) { BV.latest.act = a; bvFeed("overview"); });
+        api("activity", { days: actDays }).then(function (d) { drawActivity($("#activity"), d, function (v) { actDays = v; try { localStorage.setItem("riffle-act-days", String(v)); } catch (e) { /* not remembered */ } draw(); }); });
         runs.sort(function (a, b) { return (STATE_RANK[runState(a)[0]] - STATE_RANK[runState(b)[0]]) || a.pc.localeCompare(b.pc); });
         C.hbar($("#c-prs"), runs.map(function (r) { return { l: r.pc, v: r.status.prs_done || 0 }; }).sort(function (a, b) { return b.v - a.v; }),
           { aria: "PRs mined per PC", th: "PC", vh: "PRs mined", ml: 150 });
@@ -263,7 +354,7 @@
         return active > 0;
       }).catch(function (e) { failure($("#pcs"), e); });
     }
-    liveLoop(draw, { big: true });
+    liveLoop(draw, { big: true, kind: "overview" });
   }
 
   /* ---------------- one run ---------------- */
@@ -491,9 +582,10 @@
       if (!DATA.updated) return;
       var now = Date.now() / 1000, wait = DATA.next - now, due = wait <= 0;
       chip.className = "livechip" + (due ? " due" : " on");
-      chip.textContent = "Data from " + mmss(now - DATA.updated) + " ago · " + (due ? "update ready" : "next in " + mmss(wait));
-      chip.title = "Mined data is recomputed at most every " + Math.round((DATA.next - DATA.updated) / 60) + " minutes and shared by everyone.";
+      chip.textContent = due ? "A newer copy of the data is ready" : "Data updated " + mmss(now - DATA.updated) + " ago";
       btn.disabled = !due; btn.textContent = due ? "Refresh" : "Refresh in " + mmss(wait);
+      var pct = Math.max(0, Math.min(100, 100 * (now - DATA.updated) / Math.max(1, DATA.next - DATA.updated)));
+      btn.style.setProperty("--fill", due ? "0%" : pct + "%");                  // the button fills up as the wait runs out
     }
     setInterval(tick, 1000); document.addEventListener("riffle-data", tick);
   }
@@ -539,32 +631,33 @@
     line.append(val); return line;
   }
   function textViewer(root, key, kind) {
-    var st = { offset: 0, limit: 200, q: "", tail: false, lvl: false }, ALL_CAP = 100000, stopAll = false;
+    var st = { offset: 0, limit: 200, q: "", tail: false, level: "" }, ALL_CAP = 100000, stopAll = false, focusLine = +qs.get("line") || 0;
+    if (focusLine) st.offset = Math.floor((focusLine - 1) / st.limit) * st.limit;          // open on the page holding that line
     var box = el("div"); root.replaceChildren(box);
     function rawHref(download) {
       var u = new URL("/api/raw", location.origin); u.searchParams.set("key", key);
-      if (st.q) u.searchParams.set("q", st.q); if (st.lvl) u.searchParams.set("lvl", "1"); if (download) u.searchParams.set("download", "1");
+      if (st.q) u.searchParams.set("q", st.q); if (st.level) u.searchParams.set("level", st.level); if (download) u.searchParams.set("download", "1");
       return u.pathname + u.search;
     }
     function draw() {
       stopAll = true;
-      api("lines", { key: key, offset: st.offset, limit: st.limit, q: st.q, tail: st.tail ? "1" : "", lvl: st.lvl ? "1" : "" }).then(function (d) {
+      api("lines", { key: key, offset: st.offset, limit: st.limit, q: st.q, tail: st.tail ? "1" : "", level: st.level }).then(function (d) {
         var tools = el("div", "toolbar"); tools.style.padding = "16px 24px 0";
         var g1 = el("div", "grp", [el("span", "cap", "Find in this file")]), r1 = el("div", "tools"); r1.style.margin = "0";
         var inp = h("input"); inp.type = "search"; inp.placeholder = "text…"; inp.value = st.q; inp.setAttribute("aria-label", "Filter lines");
         function apply() { st.q = inp.value; st.offset = 0; draw(); }
         inp.onkeydown = function (e) { if (e.key === "Enter") apply(); };
         var go = el("button", "btn solid", "Find"); go.onclick = apply; r1.append(inp, go); g1.append(r1);
-        var g2 = el("div", "grp", [el("span", "cap", "Show")]), seg = el("div", "seg"); seg.style.margin = "0";
-        [["All lines", false], ["Warnings and errors", true]].forEach(function (x) {
-          var b = el("button", "", x[0]); b.setAttribute("aria-pressed", String(st.lvl === x[1])); b.onclick = function () { st.lvl = x[1]; st.offset = 0; draw(); }; seg.append(b);
-        });
+        var g2 = el("div", "grp", [el("span", "cap", "Show")]), seg = el("div", "seg"), lvl = h("select"); seg.style.margin = "0";
+        lvl.setAttribute("aria-label", "Level");
+        [["", "Any level"], ["error", "Errors"], ["warn", "Warnings and errors"], ["info", "Info"], ["debug", "Debug"]].forEach(function (x) { lvl.append(new Option(x[1], x[0])); });
+        lvl.value = st.level; lvl.onchange = function () { st.level = lvl.value; st.offset = 0; focusLine = 0; draw(); }; seg.append(lvl);
         var tl = el("button", "btn", st.tail ? "From the start" : "Jump to the end"); tl.onclick = function () { st.tail = !st.tail; st.offset = 0; draw(); };
         seg.append(tl); g2.append(seg);
         var g3 = el("div", "grp", [el("span", "cap", "Lines per page")]), size = h("select"); size.setAttribute("aria-label", "Lines per page");
         [200, 500, 1000, 2000].forEach(function (n) { size.append(new Option(String(n), n)); }); size.value = st.limit;
         size.onchange = function () { st.limit = +size.value; st.offset = 0; draw(); }; g3.append(size);
-        var filt = st.q || st.lvl, g4 = el("div", "grp", [el("span", "cap", "Whole file")]), row4 = el("div", "tools"); row4.style.margin = "0";
+        var filt = st.q || st.level, g4 = el("div", "grp", [el("span", "cap", "Whole file")]), row4 = el("div", "tools"); row4.style.margin = "0";
         var open = el("a", "btn", filt ? "Open all matching" : "Open full log"); open.href = rawHref(false); open.target = "_blank"; open.rel = "noopener";
         var dl = el("a", "btn solid", filt ? "Download matching" : "Download"); dl.href = rawHref(true);
         var all = el("button", "btn", "Load all here"); row4.append(open, dl, all); g4.append(row4);
@@ -582,17 +675,19 @@
             var row = logLine(l[1], needle);
             if (/\b(ERROR|Traceback)\b|\[error/i.test(l[1])) row.classList.add("e"); else if (/\b(WARN|WARNING)\b|\[warn/i.test(l[1])) row.classList.add("w");
             row.prepend(h("span", "ln", String(l[0])));
+            if (focusLine && l[0] === focusLine) row.classList.add("target");
             pre.append(row, document.createTextNode("\n"));
           });
         }
         addLines(d.lines);
+        if (focusLine) setTimeout(function () { var t = pre.querySelector(".target"); if (t) t.scrollIntoView({ block: "center" }); }, 0);
         all.onclick = function () {                                   // page through the whole file into this view, stoppable
           var next = (d.lines.length ? d.lines[d.lines.length - 1][0] : 0), have = 0, off = st.tail ? 0 : st.offset + d.lines.length, status = el("span", "cap");
           stopAll = false; pre.replaceChildren(); pager.replaceChildren(status); all.disabled = true;
           var stop = el("button", "btn", "Stop"); stop.onclick = function () { stopAll = true; }; pager.append(stop);
           off = 0;
           (function step() {
-            api("lines", { key: key, offset: off, limit: 2000, q: st.q, lvl: st.lvl ? "1" : "" }).then(function (x) {
+            api("lines", { key: key, offset: off, limit: 2000, q: st.q, level: st.level }).then(function (x) {
               addLines(x.lines); have += x.lines.length; off += x.lines.length;
               status.textContent = "Loaded " + have.toLocaleString() + " of " + x.total.toLocaleString() + " lines";
               if (!x.lines.length || have >= x.total || stopAll || have >= ALL_CAP) {
@@ -604,7 +699,7 @@
             }).catch(function (e) { status.textContent = "Stopped: " + e.message; stop.remove(); all.disabled = false; });
           })();
         };
-        box.replaceChildren(tools, pager, d.lines.length ? pre : el("div", "empty", st.lvl ? "No warnings or errors in this file." : "No lines."));
+        box.replaceChildren(tools, pager, d.lines.length ? pre : el("div", "empty", st.level ? "No lines of that level in this file." : "No lines."));
       }).catch(function (e) { failure(box, e); });
     }
     draw();
@@ -699,21 +794,24 @@
 
   /* ---------------- search ---------------- */
   function search() {
-    var f = $("#sform"); f.q.value = qs.get("q") || ""; f.regex.checked = qs.get("regex") === "1";
-    api("search", { q: qs.get("q"), pc: qs.get("pc"), regex: qs.get("regex") === "1" ? "1" : "" }).then(function (d) {
+    var f = $("#sform"); f.q.value = qs.get("q") || ""; f.regex.checked = qs.get("regex") === "1"; f.level.value = qs.get("level") || ""; f.level.dispatchEvent(new Event("riffle-sync"));
+    f.level.onchange = function () { f.requestSubmit(); };                     // a level or PC choice searches at once
+    api("search", { q: qs.get("q"), pc: qs.get("pc"), regex: qs.get("regex") === "1" ? "1" : "", level: qs.get("level") }).then(function (d) {
       var sel = f.pc; sel.append(new Option("All PCs", "")); d.pcs.forEach(function (p) { sel.append(new Option(p, p)); }); sel.value = qs.get("pc") || "";
+      sel.onchange = function () { f.requestSubmit(); };
       $("#note").textContent = d.note || "";
-      if (!qs.get("q")) { $("#hits").replaceChildren(el("div", "empty", "Type a word, such as warn, rate limited or a repo name, and press Search.")); return; }
-      var rows = d.hits.map(function (x) { return [x.key.split("/")[0], x.key.split("/").slice(3).join("/"), x.line, x.text, x.key]; });
-      var needle = qs.get("q"), isRe = qs.get("regex") === "1", re = null;
-      try { re = new RegExp(isRe ? needle : needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"); } catch (e) { re = null; }
+      if (!qs.get("q") && !qs.get("level")) { $("#hits").replaceChildren(el("div", "empty", "Type a word, such as warn, rate limited or a repo name, or pick a level, and press Search.")); return; }
+      var rows = d.hits.map(function (x) { return [x.key.split("/")[0], x.key.split("/").slice(3).join("/"), x.line, x.level || "", x.text, x.key]; });
+      var needle = qs.get("q") || "", isRe = qs.get("regex") === "1", re = null;
+      try { re = needle ? new RegExp(isRe ? needle : needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null; } catch (e) { re = null; }
       $("#note").textContent = (d.note ? d.note + " " : "") + d.hits.length + " match" + (d.hits.length === 1 ? "" : "es");
-      $("#hits").replaceChildren(grid(["PC", "File", "Line", "Text"], rows, {
-        hsm: [1], left: [], emptyText: "No matches. Try fewer words, or tick regex only if you meant one.",
-        go: function (row) { return viewHref(row[4]); },
+      $("#hits").replaceChildren(grid(["PC", "File", "Line", "Level", "Text"], rows, {
+        hsm: [1], left: [3], emptyText: "No matches. Try fewer words, another level, or tick regex only if you meant one.",
+        go: function (row) { return viewHref(row[5], row[2]); },
         cell: function (v, i, row) {
           var td = h("td");
-          if (i === 0) td.append(link(v, viewHref(row[4])));
+          if (i === 0) td.append(link(v, viewHref(row[5], row[2])));
+          else if (i === 3) { if (v) td.append(tag(v, { error: "red", warn: "amber", info: "", debug: "" }[v] || "")); else td.textContent = "–"; }
           else if (i === 1) { td.className = "mut"; td.style.fontFamily = "var(--mono)"; td.style.fontSize = "12px"; td.textContent = v; }
           else if (i === 2) { td.className = "n"; td.textContent = v; }
           else {
@@ -823,7 +921,7 @@
     }
     function draw() {
       return call("GET", "overview").then(function (d) {
-        bigAdmin(d);
+        BV.latest.admin = d; bvFeed("admin");
         var soon = Date.now() / 1000 + 3 * 86400;
         $("#kpis").replaceChildren(
           stat("PC tokens", String(d.pcs.length), d.splits.length + " split" + (d.splits.length === 1 ? "" : "s")),
@@ -902,9 +1000,14 @@
         e.target.reset(); draw();
       }).catch(function (err) { box.hidden = false; box.textContent = err.message; });
     };
-    liveLoop(draw, { big: true });
+    liveLoop(draw, { big: true, kind: "admin" });
   }
 
+  document.addEventListener("keydown", function (e) {                    // "/" jumps to the page's search box, like most sites
+    var t = e.target, typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    if (e.key !== "/" || typing || e.ctrlKey || e.metaKey || e.altKey) return;
+    var box = document.querySelector("input[type=search]"); if (box) { e.preventDefault(); box.focus(); box.select(); }
+  });
   var page = document.body.dataset.page;
   var pages = { overview: overview, run: run, data: data, view: view, search: search, admin: admin };
   if (page === "data") dataClock();
