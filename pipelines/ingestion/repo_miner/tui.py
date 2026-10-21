@@ -536,7 +536,7 @@ class RiffleTUI(App):
             when = ""
             if p.get("resets_at"):
                 left = p["resets_at"] - time.time()
-                at = time.strftime("%-I:%M%p", time.localtime(p["resets_at"])).lower()
+                at = time.strftime("%I:%M%p", time.localtime(p["resets_at"])).lstrip("0").lower()
                 when = f" · resets in {_fmt_secs(left)} ({at})" if left > 0 else " · resetting now"
             elif p.get("resets"):
                 when = f" · resets {p['resets'].split(' (')[0]}"
