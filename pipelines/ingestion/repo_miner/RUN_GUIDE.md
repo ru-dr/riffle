@@ -10,21 +10,29 @@ Run every command from this directory (`pipelines/ingestion/repo_miner/`).
 ## Try it on two PCs
 
 A full dry run of the real flow with four small repos (`repos_test.txt`), about 10 to 20 minutes per PC. PC A is the
-lead; PC B is a volunteer. PC A also mines, so it uses its own code too. Until this branch is merged, both PCs use
-the branch: `git fetch && git checkout infra/riffle-data-server && git pull`.
+lead; PC B is a volunteer. PC A also mines, so it uses its own code too. Both PCs run `main`, and both must be on the same
+miner version (the TUI title shows it; the join code carries the lead's, and a PC on another version is warned and its
+files are refused at merge time).
 
 **Both PCs, once**
 
 ```bash
-cd riffle/pipelines/ingestion/repo_miner
+cd riffle
+git checkout main && git pull
+cd pipelines/ingestion/repo_miner
 pip install -r requirements.txt
 cp .env.example .env              # put your own GITHUB_TOKEN in it (ask python doctor.py to do it for you)
 python doctor.py                  # checks and sets up every token (see below); "Join token: not joined" is expected for now
 ```
 
+Start from a clean folder, so an earlier test run cannot mix into this one. In `pipelines/ingestion/repo_miner`, delete
+or move any of these that exist: `dataset_pc*of2*` (a rerun with the same output name appends to them), `snapshots_raw/`,
+`ci_cache/`, `health/` and `.sync_state.json`. Use a different GitHub account's token on each PC.
+
 **PC A (lead), on the TUI**
 
-1. `python tui.py` (the lead's `.env` also has `RIFFLE_SYNC_URL` and `RIFFLE_ADMIN_TOKEN`).
+1. `python tui.py` (the lead's `.env` also has `RIFFLE_SYNC_URL` and `RIFFLE_ADMIN_TOKEN`). If the left panel still says
+   "joined" from an earlier test, press **Leave**: that token was revoked.
 2. Set the form the way both PCs should run. For this test:
    - Repos file `repos_test.txt`, Only repos tagged `test`, Number of PCs `2`, Max PRs per repo `20`.
    - Untick **LLM flags**, **SZZ label** and **Scanners** (they are slow and need extra setup; a real run keeps them).
@@ -41,11 +49,22 @@ python doctor.py                  # checks and sets up every token (see below); 
 
 **What to watch**
 
-- The store page, https://34-72-217-36.sslip.io (sign in with the read token): **Overview** shows both PCs mining, repos
-  done and PRs mined climbing; each repo uploads when it finishes. **Admin** shows both tokens, their state and last upload.
+- The store page, https://34-72-217-36.sslip.io. Sign in to `/admin` with the admin token and add a reader (**Read tokens**,
+  shown once), then sign in to the main pages with that read token. **Overview** shows both PCs mining, repos done and
+  PRs mined climbing, and the "Who mined when" bars fill in. **Admin** shows both tokens, their state and last upload,
+  each PC's run details (LLM model, SZZ, workers and the exact command) and the Storage panel. Press `b` for the big
+  picture.
 - In each TUI: the stats panel shows `Team store: uploading as pc1of2-…`, then `last upload 1m ago · N files sent`.
 - When both finish: **Data** shows `mined_dataset` over both PCs' files (two files, rows from four repos), and **Log search**
-  finds lines from both PCs.
+  finds lines from both PCs (try the Level filter).
+
+**What a good run looks like**
+
+- Each repo has about 20 merged rows and a few dozen unmerged ones (click: 20 and 38 in a local check), not hundreds. A cap
+  on merged PRs only keeps unmerged PRs closed in the same span.
+- No health file says "N PRs dropped by errors", and the run log has no `NameError`.
+- Each PC's snapshots and commit-feature tables hold only the repos that PC mined. They are built when the PC finishes its
+  batch, so they appear in the store then (the dataset, logs and health files arrive after each repo).
 
 **Things worth trying**
 
@@ -59,6 +78,11 @@ python doctor.py                  # checks and sets up every token (see below); 
 **After the test:** on the Admin page press **Revoke all** for the split. The test files are in the bucket under
 `pc1of2-<split>/` and `pc2of2-<split>/`; delete them with
 `gcloud storage rm -r gs://riffle-data-miner-mined/pc1of2-<split> gs://riffle-data-miner-mined/pc2of2-<split>`.
+The VM keeps an index and small copies of those files, so clear those too, or the pages list files that are gone:
+
+```bash
+gcloud compute ssh riffle-data --project=riffle-data-miner --zone=us-central1-a --command="cd /opt/riffle-data && sudo docker compose exec -T riffle-data python -c \"import sqlite3,shutil,os;d='/data';db=sqlite3.connect(d+'/index.db');pcs=('pc1of2-<split>','pc2of2-<split>');[db.execute(q,(p,)) for p in pcs for q in ('DELETE FROM files WHERE pc=?','DELETE FROM runs WHERE pc=?','DELETE FROM activity WHERE pc=?')];db.commit();[shutil.rmtree(os.path.join(d,s,p),ignore_errors=True) for p in pcs for s in ('store','cache')]\""
+```
 
 ## The four tokens, and `python doctor.py`
 
