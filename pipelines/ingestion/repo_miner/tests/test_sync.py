@@ -141,6 +141,7 @@ def test_status_reports_per_repo_progress(tmp_path, monkeypatch):
     (tmp_path / "d_pc1of2.jsonl.partial.jsonl").write_text('{"repo":"o/big"}\n' * 40)
     monkeypatch.setattr(bd, "_SYNC", {"args": types.SimpleNamespace(out=str(out), shard="1/2"),
                                       "counts": {}, "repos": {}})
+    monkeypatch.setattr(bd.sync, "whoami", lambda *a, **k: {"ok": True, "name": "pc1", "split": None})   # the store check is tested in infra
     entries = [("o", "a", ""), ("o", "big", ""), ("o", "later", "")]
     bd._sync_begin(entries, {"o/a": 25})
     bd._sync_mark("o/big", "mining")
@@ -171,3 +172,13 @@ def test_only_this_runs_logs_are_collected(tmp_path, monkeypatch):
     assert [os.path.basename(p) for p in sync.this_run_logs()] == ["run-1.trace.jsonl"]
     monkeypatch.delenv("RIFFLE_TRACE")
     assert sync.this_run_logs() == []
+
+
+def test_settings_come_from_dot_env_alone(tmp_path):
+    """join.py writes .env, and a run must see it without any exported variable."""
+    import subprocess
+    (tmp_path / ".env").write_text("RIFFLE_SYNC_URL=https://store.example/\nRIFFLE_SYNC_TOKEN=rw_x\n")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("RIFFLE_SYNC")}
+    code = f"import sys; sys.path.insert(0, {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))!r}); import sync; print(sync.settings())"
+    out = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True).stdout.strip()
+    assert out == "('https://store.example', 'rw_x')"

@@ -2,7 +2,11 @@
 app.py — the team store's HTTP service (ADR 0015). Standard library only, apart
 from google-cloud-storage (RIFFLE_BUCKET) and duckdb (the parquet viewer).
 
-  PUT  /v1/files/<key>      a PC's token; stored as <pc>/<key>
+  PUT  /v1/files/<key>      a PC's token; stored as <pc>/<key> (a split-bound token: only under its split)
+  GET  /v1/whoami           any token: who it is, its split and expiry (the miner's join check)
+  POST /v1/admin/splits     admin token: {"split_id", "n", "days"} mints one PC token per PC
+  POST /v1/admin/revoke     admin token: {"name"} or {"split_id"}
+  GET  /v1/admin/pcs        admin token: the PC tokens and when each last uploaded
   GET  /healthz             open
   GET  /login, /logout      the pages' sign-in (the read token, kept in a cookie)
   GET  /, /run, /data, /view, /search     the pages (static/app.js fills them)
@@ -303,10 +307,11 @@ def make_handler(svc: Service):
         def do_PUT(self):
             if svc.throttle.blocked(self.client()):
                 return self._reject(429, "too many failed attempts")
-            who = tokens.who(svc.tokens_path, self._token())
-            if not who or who[0] != "pcs":
+            info = tokens.lookup(svc.tokens_path, self._token())
+            if not info or info["kind"] != "pcs":
                 svc.throttle.fail(self.client())
                 return self._reject(401, "PC token required")
+            who = (info["kind"], info["name"])
             path = urlparse(self.path).path
             if not path.startswith("/v1/files/"):
                 return self._reject(404, "not found")
@@ -314,8 +319,12 @@ def make_handler(svc: Service):
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
                 return self._reject(411, "Content-Length required")
-            code, msg = svc.put(who[1], unquote(path[len("/v1/files/"):]), self.rfile, length,
-                                self.headers.get("X-Content-SHA256"))
+            key = unquote(path[len("/v1/files/"):])
+            parts = key.split("/")
+            if info["split"] and (len(parts) < 2 or parts[1] != info["split"]):
+                return self._reject(403, f"this token is for split {info['split']}; this run's split is "
+                                         f"{parts[1] if len(parts) > 1 else '?'}")
+            code, msg = svc.put(who[1], key, self.rfile, length, self.headers.get("X-Content-SHA256"))
             if code != 200:
                 self.close_connection = True                # the body may not have been read
             self._send(code, msg)
@@ -331,7 +340,10 @@ def make_handler(svc: Service):
                 length = min(int(self.headers.get("Content-Length", "0")), 4096)
             except ValueError:
                 length = 0
-            form = parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+            raw = self.rfile.read(length)
+            if path.startswith("/v1/admin/"):
+                return self._admin_post(path, raw)
+            form = parse_qs(raw.decode("utf-8", "replace"))
             if path != "/login":
                 return self._reject(404, "not found")
             if svc.throttle.blocked(self.client()):
@@ -344,6 +356,46 @@ def make_handler(svc: Service):
             cookie = f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000" + ("; Secure" if self.https() else "")
             self._send(302, "", extra={"Location": "/", "Set-Cookie": cookie})
 
+        # -- admin: token issue and revoke ------------------------------------
+        def _admin(self) -> bool:
+            if svc.throttle.blocked(self.client()):
+                self._send(429, json.dumps({"error": "too many failed attempts"}), "application/json")
+                return False
+            who = tokens.who(svc.tokens_path, self._token())
+            if who and who[0] == "admins":
+                return True
+            svc.throttle.fail(self.client())
+            self._send(401, json.dumps({"error": "admin token required"}), "application/json")
+            return False
+
+        def _admin_post(self, path: str, raw: bytes):
+            if not self._admin():
+                return
+            try:
+                body = json.loads(raw or b"{}")
+                if path == "/v1/admin/splits":
+                    out = tokens.issue_split(svc.tokens_path, str(body.get("split_id", "")), int(body.get("n", 0)),
+                                             float(body["days"]) if body.get("days") else None)
+                    return self._json({"split_id": body["split_id"], "pcs": out})
+                if path == "/v1/admin/revoke":
+                    if body.get("split_id"):
+                        return self._json({"revoked": tokens.revoke_split(svc.tokens_path, str(body["split_id"]))})
+                    ok = tokens.revoke(svc.tokens_path, str(body.get("name", "")))
+                    return self._json({"revoked": [body["name"]] if ok else []})
+            except (ValueError, KeyError, TypeError) as e:
+                return self._json({"error": str(e) or "bad request"}, 400)
+            self._json({"error": "unknown endpoint"}, 404)
+
+        def _admin_pcs(self):
+            if not self._admin():
+                return
+            last = {}
+            for r in svc.index.runs():
+                last[r["pc"]] = max(last.get(r["pc"], 0), r["updated"])
+            rows = [{"pc": n, "split": r.get("split"), "created": r.get("created"), "expires": r.get("expires"),
+                     "last_upload": last.get(n)} for n, r in sorted(tokens.load(svc.tokens_path)["pcs"].items())]
+            self._json({"pcs": rows})
+
         # -- GET ------------------------------------------------------------
         def do_HEAD(self):
             self.do_GET()
@@ -355,6 +407,14 @@ def make_handler(svc: Service):
             html_t = "text/html; charset=utf-8"
             if path == "/healthz":
                 return self._send(200, "ok")
+            if path == "/v1/whoami":
+                info = tokens.lookup(svc.tokens_path, self._token())
+                if not info:
+                    svc.throttle.fail(self.client())
+                    return self._json({"error": "token not accepted (wrong, revoked or expired)"}, 401)
+                return self._json(info)
+            if path == "/v1/admin/pcs":
+                return self._admin_pcs()
             if path.startswith("/static/"):
                 return self._static(path[len("/static/"):])
             if path == "/login":

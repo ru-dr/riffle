@@ -494,6 +494,20 @@ def _path_note(tool: str, added: list[str]) -> str:
 
 
 # -------------------------------------------------------------------- checks
+def _team_store_check() -> tuple[str, str, str]:
+    """(name, status, detail) for the team store: optional, so a problem is a warning, never a failure."""
+    import sync
+    url, token = _env("RIFFLE_SYNC_URL"), _env("RIFFLE_SYNC_TOKEN")
+    if not url or not token:
+        return ("Team store", WARN, "not joined: your output stays on this PC. Paste the lead's code: "
+                                    "python join.py CODE")
+    r = sync.whoami(url, token)
+    if r["ok"]:
+        return ("Team store", OK, f"{r['name']} · split {r.get('split') or 'any'} · output is sent after each repo")
+    return ("Team store", WARN, f"{r['why']}. The run still works and keeps everything locally; "
+                                f"fix it with python join.py CODE (ask the lead for a new code)")
+
+
 def run_checks(plat: Platform | None = None) -> list[Result]:
     plat = plat or detect_platform()
     added = deps.extend_path()      # tools installed to ~/go/bin, ~/.local/bin, npm -g count
@@ -559,6 +573,8 @@ def run_checks(plat: Platform | None = None) -> list[Result]:
     tok = _env("GITHUB_TOKEN")
     st, detail = _github_token_status(tok)
     add("GITHUB_TOKEN", st, detail, fix="token" if st == FAIL else None, group="Credentials")
+
+    add(*_team_store_check(), group="Credentials")
 
     backend = _env("LLM_BACKEND") or "claude_cli"
     if backend == "claude_cli":

@@ -37,6 +37,20 @@ The viewer reads parquet with DuckDB, limited to the store's folders, and only u
 names from the file's own schema. Big files that live only in the bucket are downloaded to
 `<data>/cache` the first time they are opened.
 
+## Tokens: who can do what
+
+| Kind | Made with | Can |
+| --- | --- | --- |
+| **admin** (`ad_…`) | `manage.py add-admin NAME` | issue and revoke PC tokens; reads nothing, writes no files. Lives only in the lead's `.env` as `RIFFLE_ADMIN_TOKEN` |
+| **PC** (`rw_…`) | `build_dataset.py … --shard-plan N --issue-tokens` (or `manage.py issue-split ID N`) | write under its own name, and only under its own split; optionally expires |
+| **reader** (`rd_…`) | `manage.py add-reader NAME` | read the pages and the APIs |
+
+The normal flow: the lead plans the split with `--shard-plan N --issue-tokens`, which calls
+`POST /v1/admin/splits`, and sends each PC its join code privately. A PC runs `python join.py CODE`
+(see the miner's README). Planning the same split again rotates its tokens; `POST /v1/admin/revoke`
+with a `split_id` or a `name` (or `manage.py revoke-split ID`) cuts access at once, and
+`GET /v1/admin/pcs` shows each token's split, expiry and last upload. Only hashes are stored.
+
 ## Run it on a laptop (no GCP)
 
 ```bash
@@ -44,11 +58,13 @@ cd infra/docker/riffle-data
 cp .env.example .env
 docker compose up -d --build
 docker compose exec riffle-data python manage.py add-reader lead   # UI password, shown once
-docker compose exec riffle-data python manage.py add-pc pc1        # that PC's RIFFLE_SYNC_TOKEN
+docker compose exec riffle-data python manage.py add-admin lead    # the lead's RIFFLE_ADMIN_TOKEN, shown once
+# one PC by hand, without a split (rarely needed; --issue-tokens is the normal way):
+docker compose exec riffle-data python manage.py add-pc pc1
 ```
 
-Open http://127.0.0.1:8470 (any username, the reader token as password). On a PC,
-set `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` in the miner's `.env`.
+Open http://127.0.0.1:8470 and paste the reader token. The lead puts `RIFFLE_SYNC_URL` and
+`RIFFLE_ADMIN_TOKEN` in the miner's `.env`, then plans the split with `--issue-tokens`.
 
 ## Run it on GCP
 

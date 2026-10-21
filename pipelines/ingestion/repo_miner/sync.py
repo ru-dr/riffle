@@ -34,6 +34,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import config  # noqa: F401  (loads .env, so RIFFLE_SYNC_* are set whoever imports this first)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(HERE, ".sync_state.json")
 DEFAULT_BUDGET_S = 120.0
@@ -204,6 +206,25 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
             result["failed"].append("run.json")
     _save_state(state_path, all_state)
     return result
+
+
+def whoami(url: str | None = None, token: str | None = None, timeout: float = 15.0) -> dict:
+    """Ask the store who this token is: {"ok": True, "name", "split", "expires", ...} or
+    {"ok": False, "why": ...}. Never raises; the join check, the doctor and a run's start use it."""
+    cfg = settings() if url is None else (url.rstrip("/"), token or "")
+    if not cfg or not cfg[0] or not cfg[1]:
+        return {"ok": False, "why": "not configured (RIFFLE_SYNC_URL and RIFFLE_SYNC_TOKEN)", "unset": True}
+    req = urllib.request.Request(f"{cfg[0]}/v1/whoami", headers={"Authorization": f"Bearer {cfg[1]}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            info = json.loads(r.read())
+        return dict(info, ok=info.get("kind") == "pcs", why=None if info.get("kind") == "pcs" else
+                    f"this is a {str(info.get('kind', '?')).rstrip('s')} token, not a PC token")
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "why": "the store did not accept this token (wrong, revoked or expired)"
+                if e.code == 401 else f"the store answered HTTP {e.code}"}
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as e:
+        return {"ok": False, "why": f"cannot reach the store ({type(e).__name__})", "unreachable": True}
 
 
 def put_status(prefix: str, status: dict) -> bool:

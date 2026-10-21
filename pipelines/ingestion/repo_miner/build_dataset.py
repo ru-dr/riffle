@@ -119,7 +119,7 @@ def _warn_untagged(entries, weights) -> None:
               flush=True)
 
 
-def _print_shard_plan(entries, weights, n: int, prs=None) -> None:
+def _print_shard_plan(entries, weights, n: int, prs=None) -> str:
     _warn_untagged(entries, weights)
     prs = prs or [None] * len(entries)
     shards = balanced_shards(weights, n)
@@ -135,6 +135,60 @@ def _print_shard_plan(entries, weights, n: int, prs=None) -> None:
             if prs[i]:
                 w += f", {prs[i]:,} PRs"
             print(f"    - {entries[i][0]}/{entries[i][1]}  ({w})")
+    return split_id(entries, weights, n)
+
+
+PLAN_ONLY_FLAGS = {"--shard-plan": 1, "--issue-tokens": 0, "--token-days": 1, "--tokens-out": 1}
+
+
+def _run_flags(argv: list[str]) -> list[str]:
+    """This command line without the flags that only make the plan: what every PC should run
+    (join.py adds --shard K/N)."""
+    out, i = [], 0
+    while i < len(argv):
+        name = argv[i].split("=", 1)[0]
+        if name in PLAN_ONLY_FLAGS:
+            i += 1 + (PLAN_ONLY_FLAGS[name] if "=" not in argv[i] else 0)
+            continue
+        out.append(argv[i])
+        i += 1
+    return out
+
+
+def _issue_tokens(args, sid: str, n: int) -> None:
+    """Ask the team store for one write token per PC, bound to this split, and print each
+    PC's join code. Needs RIFFLE_SYNC_URL and RIFFLE_ADMIN_TOKEN (the lead's admin token)."""
+    import urllib.error
+    import urllib.request
+    import join
+    url, admin = (os.environ.get("RIFFLE_SYNC_URL") or "").rstrip("/"), os.environ.get("RIFFLE_ADMIN_TOKEN") or ""
+    if not url or not admin:
+        sys.exit("[tokens] set RIFFLE_SYNC_URL and RIFFLE_ADMIN_TOKEN (an admin token from the store: "
+                 "`manage.py add-admin NAME`) in .env to issue tokens")
+    body = json.dumps({"split_id": sid, "n": n, "days": args.token_days}).encode()
+    req = urllib.request.Request(f"{url}/v1/admin/splits", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {admin}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            pcs = json.loads(r.read())["pcs"]
+    except urllib.error.HTTPError as e:
+        sys.exit(f"[tokens] the store refused: HTTP {e.code} {e.read()[:200].decode('utf-8', 'replace')}")
+    except (urllib.error.URLError, OSError) as e:
+        sys.exit(f"[tokens] cannot reach the store: {e}")
+    flags = _run_flags(sys.argv[1:])
+    print(f"\n[tokens] one write token per PC, valid for split {sid} only"
+          + (f", for {args.token_days:g} days" if args.token_days else "") + ". Send each code ONLY to that PC's owner:")
+    lines = []
+    for p in pcs:
+        code = join.encode(url, p["token"], sid, p["k"], p["n"], flags)
+        lines.append(f"PC {p['k']}/{p['n']}\t{code}")
+        print(f"\n  PC {p['k']} of {p['n']}  ({p['pc']})\n  python join.py {code}")
+    if args.tokens_out:
+        fd = os.open(args.tokens_out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        print(f"\n[tokens] also saved to {args.tokens_out} (private to you). Delete it when the codes are sent.")
+    print("\n[tokens] running this again for the same split issues new tokens and revokes the old ones.")
 
 
 def _mined_repos(out: str) -> dict[str, int]:
@@ -391,8 +445,23 @@ HEARTBEAT_S = 900          # status-only update while a long repo mines
 
 
 def _sync_begin(entries: list, done_repos: dict) -> None:
+    global _SYNC
     if _SYNC is None:
         return
+    me = sync.whoami()
+    sid = getattr(_SYNC["args"], "split_id", None)
+    if not me["ok"]:
+        print(f"[sync] OFF for this run: {me['why']}. Fix it with `python join.py --check`; the run goes on "
+              f"and writes everything locally.", flush=True)
+        _SYNC = None
+        return
+    if me.get("split") and me["split"] != sid:
+        print(f"[sync] OFF for this run: your token is for split {me['split']}, but these flags make split "
+              f"{sid or 'none'}. The repos file, domain, shard count or sizes differ from the lead's plan; "
+              f"use the command join.py printed.", flush=True)
+        _SYNC = None
+        return
+    print(f"[sync] on as {me['name']}: output goes to the team store after each repo and on a Stop", flush=True)
     _SYNC["repos"] = {f"{o}/{n}": ({"state": "done", "rows": done_repos[f"{o}/{n}".lower()]}
                                    if f"{o}/{n}".lower() in done_repos else {"state": "pending"})
                       for o, n, _ in entries}
@@ -626,6 +695,14 @@ def main():
                          "[~N commits] tags), and every PC computes the same split")
     ap.add_argument("--shard-plan", type=int, default=None, metavar="N",
                     help="print how the repos split over N PCs, then exit")
+    ap.add_argument("--issue-tokens", action="store_true",
+                    help="with --shard-plan: also ask the team store for one write token per PC, bound to "
+                         "this split, and print each PC's join code (needs RIFFLE_SYNC_URL and "
+                         "RIFFLE_ADMIN_TOKEN in .env). Give the plan the flags every PC should run with")
+    ap.add_argument("--token-days", type=float, default=None, metavar="D",
+                    help="with --issue-tokens: the tokens stop working after D days")
+    ap.add_argument("--tokens-out", default=None, metavar="FILE",
+                    help="with --issue-tokens: also write the join codes to FILE (kept private to you)")
     ap.add_argument("--remine", action="store_true",
                     help="mine every repo even if it's already in --out (default: "
                          "skip finished repos, so a rerun after a stop resumes)")
@@ -685,7 +762,6 @@ def main():
     global _SYNC
     if args.sync and sync.settings() and not (args.test or args.audit or args.shard_plan):
         _SYNC = {"args": args, "counts": {}}
-        print("[sync] on: output goes to the team store after each repo and on a Stop", flush=True)
     if args.audit:
         _audit(args.out)
         return
@@ -714,7 +790,9 @@ def main():
         size_of = {f"{o}/{n}".lower(): w for (o, n, _), w in zip(entries, weights)}
         domain_of.update({f"{o}/{n}".lower(): d for (o, n, _), d in zip(entries, domains)})
         if args.shard_plan:
-            _print_shard_plan(entries, weights, args.shard_plan, pr_counts)
+            sid = _print_shard_plan(entries, weights, args.shard_plan, pr_counts)
+            if args.issue_tokens:
+                _issue_tokens(args, sid, args.shard_plan)
             return
         if args.shard:
             try:

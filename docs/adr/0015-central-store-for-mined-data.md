@@ -32,7 +32,13 @@ paused run to bring that place up to date. Real-time streaming is not needed.
   warnings, an unreachable store ends that sync early, and a Stop waits at most
   `RIFFLE_SYNC_TIMEOUT` seconds (default 120). Unchanged files are skipped.
 - Tokens are write-only and one per PC, so one can be revoked alone. Only the
-  lead reads.
+  lead reads. When the lead plans a split (`--shard-plan N --issue-tokens`), the
+  store mints one write token per PC, bound to that split's ID and optionally
+  expiring, using a separate admin token that can issue and revoke but not read.
+  Each PC gets a join code (store address, token, PC number, the plan's flags)
+  and runs `join.py CODE`, which checks it with the store and writes `.env`. A
+  token cannot write under another split, and a run turns sync off, saying why,
+  if its token is rejected or its flags compute a different split.
 - The store runs on one GCP VM from a Compose file, following ADR 0013
   (`infra/docker/riffle-data/`): one service for ingest and the pages, with a
   SQLite index on the VM's disk. Logs, health files and `run.json` stay on the
@@ -79,6 +85,7 @@ paused run to bring that place up to date. Real-time streaming is not needed.
   boundary exist only in its local checkpoint.
 - Sync needs the store reachable at stop time; a Stop with no network waits for
   the timeout, then leaves the files for the next sync.
+- The join code is a secret the lead must send privately; anyone holding it can upload as that PC until it is rotated or revoked. The admin token is the most sensitive credential and lives in the lead's `.env`.
 - A public address puts a login page on the internet; a leaked read token exposes all mined data until it is revoked.
 - A shared VM is a new thing to run, patch and back up, and a GCP project with billing is needed before anything runs.
 - The DuckDB views include only finished PCs unless asked (`--include-unfinished`); the BigQuery loader includes all unless given `--only-finished`.

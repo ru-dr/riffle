@@ -117,3 +117,15 @@ def test_checks_crash_becomes_a_warning(monkeypatch):
 
 def test_countdown_is_skipped_without_a_terminal():
     assert doctor.countdown(5) is True        # pytest has no TTY: returns at once
+
+
+def test_team_store_line_reads_dot_env_and_never_fails(monkeypatch):
+    import doctor
+    monkeypatch.delenv("RIFFLE_SYNC_URL", raising=False)
+    monkeypatch.delenv("RIFFLE_SYNC_TOKEN", raising=False)
+    monkeypatch.setattr(doctor, "_read_env_file", lambda: {})
+    name, status, detail = doctor._team_store_check()
+    assert name == "Team store" and status == doctor.WARN and "join.py" in detail
+    monkeypatch.setattr(doctor, "_read_env_file", lambda: {"RIFFLE_SYNC_URL": "http://127.0.0.1:1", "RIFFLE_SYNC_TOKEN": "rw_x"})
+    name, status, detail = doctor._team_store_check()
+    assert status == doctor.WARN and "cannot reach the store" in detail          # a problem is a warning, never a failure

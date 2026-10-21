@@ -234,6 +234,16 @@ health flags. Scale the estimates for the full run from those.
   and `dataset_merged.merge.json`. The three tables stay three: they have one row
   per PR, per snapshot and per head commit, and are joined when training loads
   them (`pipelines/training/frames.py`), not stored merged.
+- Joining a split (ADR 0015): the lead plans the split with
+  `python build_dataset.py <the flags every PC should run> --shard-plan N --issue-tokens [--token-days D]`
+  (needs `RIFFLE_SYNC_URL` and `RIFFLE_ADMIN_TOKEN` in the lead's `.env`). The store mints one
+  write token per PC, bound to that split, and the plan prints one **join code** per PC. Send each
+  code only to its PC's owner. They run `python join.py CODE`: it checks the code with the store,
+  writes `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` into `.env` (mode 600) and prints the exact
+  command to run, which is the lead's flags plus `--shard K/N`. `python join.py --check` and
+  `python doctor.py` report whether the token still works. A token writes only under its own split,
+  so if a PC's flags make a different split the run turns sync off and says why. Running the plan
+  again for the same split issues new tokens and revokes the old ones.
 - Central sync (ADR 0015): with `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` in
   `.env`, the miner sends its logs, traces, `health/*.json`, dataset, snapshot and
   commit-feature tables, `.partial.jsonl` checkpoint and shard manifest to the
@@ -731,6 +741,7 @@ snapshot_capture.py / snapshots.py   PR snapshots: capture while mining, assembl
 naming.py        output names (PC tag, prefix/postfix), run stems
 merge_shards.py  join the PCs' files after checking manifests and consistency.py
 sync.py          send a PC's output to the team store (RIFFLE_SYNC_URL, ADR 0015)
+join.py          join a split with the lead's code: writes .env and checks it
 runlog.py        structured run trace (logs/run-*.trace.jsonl); trace_report.py summarises it
 ```
 
