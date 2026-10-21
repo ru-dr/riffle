@@ -76,7 +76,7 @@ def test_healthz_open_api_and_pages_need_a_reader(srv):
 
 def test_login_sets_a_cookie_that_opens_the_pages(srv):
     code, body = call(srv, "POST", "/login", None, b"token=nope", {"Content-Type": "application/x-www-form-urlencoded"})
-    assert code == 401 and b"not a read token" in body
+    assert code == 401 and b"not accepted" in body
     code, _, hdr = call(srv, "POST", "/login", None, f"token={srv.rd}".encode(), {"Content-Type": "application/x-www-form-urlencoded"}, full=True)
     assert code == 302 and "HttpOnly" in hdr["Set-Cookie"] and "SameSite=Strict" in hdr["Set-Cookie"]
     cookie = hdr["Set-Cookie"].split(";")[0]
@@ -85,6 +85,13 @@ def test_login_sets_a_cookie_that_opens_the_pages(srv):
     assert "script-src 'self'" in hdr["Content-Security-Policy"] and hdr["X-Content-Type-Options"] == "nosniff"
     assert b"<script>" not in page                                  # no inline scripts, so the CSP can stay strict
     assert call(srv, "GET", "/api/runs", None, None, {"Cookie": cookie})[0] == 200
+
+
+def test_login_page_announces_errors_and_has_no_inline_script(srv):
+    page = call(srv, "GET", "/login")[1]
+    assert b'role="alert"' not in page and b"<script>" not in page and b'for="token"' in page
+    bad = call(srv, "POST", "/login", None, b"token=nope", {"Content-Type": "application/x-www-form-urlencoded"})[1]
+    assert b'role="alert"' in bad and b"aria-invalid=true" in bad and b"nope" not in bad     # the token is never echoed back
 
 
 def test_static_files_are_served_and_traversal_is_not(srv):

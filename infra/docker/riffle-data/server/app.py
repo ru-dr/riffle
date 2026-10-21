@@ -335,12 +335,12 @@ def make_handler(svc: Service):
             if path != "/login":
                 return self._reject(404, "not found")
             if svc.throttle.blocked(self.client()):
-                return self._send(429, ui.login("Too many failed sign-ins. Wait a few minutes."), "text/html; charset=utf-8")
+                return self._send(429, ui.login("Too many failed attempts from this address. Wait a few minutes and try again.", True), "text/html; charset=utf-8")
             token = (form.get("token") or [""])[0].strip()
             who = tokens.who(svc.tokens_path, token)
             if not who or who[0] != "readers":
                 svc.throttle.fail(self.client())
-                return self._send(401, ui.login("That token is not a read token."), "text/html; charset=utf-8")
+                return self._send(401, ui.login("That token was not accepted. Check that you copied all of it, and that it is a read token (it starts with rd_)."), "text/html; charset=utf-8")
             cookie = f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000" + ("; Secure" if self.https() else "")
             self._send(302, "", extra={"Location": "/", "Set-Cookie": cookie})
 

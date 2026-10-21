@@ -69,13 +69,33 @@ def shell(page: str, title: str, authed: bool = True) -> str:
             f'</div><script src="/static/charts.js"></script><script src="/static/app.js"></script></body></html>')
 
 
-def login(error: str = "") -> str:
-    err = f'<p class="err">{html.escape(error)}</p>' if error else ""
+def login(error: str = "", throttled: bool = False) -> str:
+    """The sign-in page: the same frame as the others, a short explanation on the left and the
+    form on the right (stacked on a phone). The error is announced to screen readers."""
+    msg = ""
+    if error:
+        msg = (f'<div class="alert{" amber" if throttled else ""}" role="alert"><b>{"Slow down" if throttled else "Not signed in"}</b>'
+               f'<span>{html.escape(error)}</span></div>')
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">'
             f'<title>Sign in · Riffle data</title><link rel="icon" type="image/svg+xml" href="/static/favicon.svg">'
-            f'<link rel="stylesheet" href="/static/riffle.css"></head><body><div class="login">{LOCKUP}'
-            f'<div class="cap" style="margin-top:28px">Team store</div><h1 style="font:500 2rem/1.1 var(--sans);letter-spacing:-.035em;margin:10px 0 0">Sign in</h1>'
-            f'<p style="color:var(--nickel)">Paste the read token the lead gave you.</p>'
-            f'<form method="post" action="/login"><input type="password" name="token" autocomplete="current-password" '
-            f'placeholder="rd_…" aria-label="Read token" required autofocus><button class="btn solid">Sign in</button></form>{err}</div></body></html>')
+            f'<link rel="stylesheet" href="/static/riffle.css"></head><body data-page="login"><div class="wrap">'
+            f'<header class="top"><a class="brand" href="/" aria-label="Riffle data">{LOCKUP}<span class="tag">Data</span></a>'
+            f'<span class="tag">Private</span></header>'
+            f'<main class="rule auth grid g2 stack">'
+            f'<section class="auth-copy"><div class="cap">Team store</div><h1>Sign in to the <span class="of">mined data</span></h1>'
+            f'<p>Progress for every PC, the tables they have mined, and their logs. Read access only: nothing here can start, '
+            f'stop or change a run.</p>'
+            f'<dl class="kv"><dt>Token</dt><dd>The read token starts with <code>rd_</code>. The lead makes one with '
+            f'<code>manage.py add-reader</code>.</dd><dt>Session</dt><dd>It stays in this browser for 30 days as a private cookie. '
+            f'Sign out clears it.</dd></dl></section>'
+            f'<section class="auth-form"><form method="post" action="/login" id="loginform" novalidate>'
+            f'<label class="cap" for="token">Read token</label>'
+            f'<div class="field"><input id="token" name="token" type="password" autocomplete="current-password" autocapitalize="off" '
+            f'spellcheck="false" placeholder="rd_…" required autofocus{" aria-invalid=true aria-describedby=err" if error else ""}>'
+            f'<button type="button" class="btn" id="reveal" aria-pressed="false" aria-controls="token">Show</button></div>'
+            f'{msg.replace("<div ", "<div id=err ", 1) if msg else ""}'
+            f'<button class="btn solid wide" id="go">Sign in <span aria-hidden="true">→</span></button>'
+            f'<p class="fine">Failed attempts are limited per address.</p></form></section></main>'
+            f'<footer class="rule foot">Riffle team store · nothing here is on the scoring path</footer>'
+            f'</div><script src="/static/login.js"></script></body></html>')
