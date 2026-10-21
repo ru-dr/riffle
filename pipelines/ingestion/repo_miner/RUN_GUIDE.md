@@ -7,6 +7,59 @@ For every flag and column, see [`README.md`](README.md) and
 
 Run every command from this directory (`pipelines/ingestion/repo_miner/`).
 
+## Try it on two PCs
+
+A full dry run of the real flow with four small repos (`repos_test.txt`), about 10 to 20 minutes per PC. PC A is the
+lead; PC B is a volunteer. PC A also mines, so it uses its own code too. Until this branch is merged, both PCs use
+the branch: `git fetch && git checkout infra/riffle-data-server && git pull`.
+
+**Both PCs, once**
+
+```bash
+cd riffle/pipelines/ingestion/repo_miner
+pip install -r requirements.txt
+cp .env.example .env              # put your own GITHUB_TOKEN in it (ask python doctor.py to do it for you)
+python doctor.py                  # fix anything marked FAIL; "Team store: not joined" is expected for now
+```
+
+**PC A (lead), on the TUI**
+
+1. `python tui.py` (the lead's `.env` also has `RIFFLE_SYNC_URL` and `RIFFLE_ADMIN_TOKEN`).
+2. Set the form the way both PCs should run. For this test:
+   - Repos file `repos_test.txt`, Only repos tagged `test`, Number of PCs `2`, Max PRs per repo `20`.
+   - Untick **LLM flags**, **SZZ label** and **Scanners** (they are slow and need extra setup; a real run keeps them).
+3. Press **F3** (Lead tools). Set the days (7), press **Issue codes**. Two rows appear: `PC 1/2` and `PC 2/2`.
+4. Select `PC 2/2`, press **Copy selected**, and send it to PC B privately (a message to yourself is fine for a test).
+5. Close Lead tools (Escape). Paste the **PC 1/2** code into the Join box, press **Join** (or F2). The left panel says
+   "joined as pc1of2-…" and the form now shows PC 1. Press **Start**.
+
+**PC B (volunteer), on the TUI**
+
+1. `python tui.py`.
+2. Paste the code into **Join code**, press **Join**. The form fills in by itself: repos file, domain, 2 PCs, "This PC # 2",
+   max PRs 20, LLM and SZZ off. You change nothing. Press **Start**.
+
+**What to watch**
+
+- The store page, https://34-72-217-36.sslip.io (sign in with the read token): **Overview** shows both PCs mining, repos
+  done and PRs mined climbing; each repo uploads when it finishes. **Admin** shows both tokens, their state and last upload.
+- In each TUI: the stats panel shows `Team store: uploading as pc1of2-…`, then `last upload 1m ago · N files sent`.
+- When both finish: **Data** shows `mined_dataset` over both PCs' files (two files, rows from four repos), and **Log search**
+  finds lines from both PCs.
+
+**Things worth trying**
+
+- Press **Stop** on PC B mid-run. It uploads what it has (the log says so); the page shows it `stopped`. Start again: it
+  resumes where it left off.
+- On PC B change **Max PRs per repo** to `100` and press Start. It refuses, lists `--max-prs: lead 20, yours 100`, and F2
+  with the Join box empty puts the lead's settings back.
+- On the **Admin** page press **Rotate** twice. New codes appear and PC B's old token stops working; its next upload says
+  uploads are off and why. Re-join it with the new code.
+
+**After the test:** on the Admin page press **Revoke all** for the split. The test files are in the bucket under
+`pc1of2-<split>/` and `pc2of2-<split>/`; delete them with
+`gcloud storage rm -r gs://riffle-data-miner-mined/pc1of2-<split> gs://riffle-data-miner-mined/pc2of2-<split>`.
+
 ## What you need
 
 - Python 3 with `pip`, and `git`.
