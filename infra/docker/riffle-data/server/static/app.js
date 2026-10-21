@@ -515,6 +515,24 @@
   }
 
   /* ---------------- admin ---------------- */
+  /* the lead's flags as tags: `--max-prs 8000` is one tag, a bare switch is a tag with no value */
+  function flagList(flags) {
+    var groups = [];
+    flags.forEach(function (f) {
+      f = String(f);
+      if (f.slice(0, 2) === "--" || !groups.length) groups.push({ name: f, value: [] }); else groups[groups.length - 1].value.push(f);
+    });
+    var d = h("details", "flags"), n = groups.length;
+    d.append(h("summary", "", n + (n === 1 ? " setting" : " settings")));
+    var box = h("div", "flagbox");
+    groups.forEach(function (g) {
+      var chip = h("span", "flag"); chip.append(h("b", "", g.name));
+      if (g.value.length) chip.append(h("i", "", g.value.join(" ")));
+      box.append(chip);
+    });
+    if (!n) box.append(h("span", "cap", "no flags: the miner's defaults"));
+    d.append(box); return d;
+  }
   function admin() {
     var pending = null;
     function call(method, path, body) {
@@ -586,13 +604,13 @@
             else if (i === 2) td.textContent = x.uploaded + "/" + x.tokens + " uploaded";
             else if (i === 3) td.textContent = x.version || "?";
             else if (i === 4) td.textContent = (x.created || "").slice(0, 10);
-            else if (i === 5) { var dd = h("details"); dd.append(h("summary", "", (x.flags || []).length + " flags")); var pre = h("pre", "log"); pre.textContent = (x.flags || []).join(" "); pre.style.maxHeight = "10rem"; dd.append(pre); td.append(dd); }
+            else if (i === 5) { td.append(flagList(x.flags || [])); }
             else {
               var acts = el("div", "actions");
               acts.append(x.can_rotate ? confirmBtn("Rotate", "rot:" + x.split_id, function () {
-                call("POST", "rotate", { split_id: x.split_id }).then(function (r) { showCodes(r); draw(); }).catch(function (e) { alert(e.message); draw(); });
+                call("POST", "rotate", { split_id: x.split_id }).then(function (r) { showCodes(r); draw(); }).catch(function (e) { window.riffleToast(e.message); draw(); });
               }) : el("span", "cap", "plan it again to rotate"),
-                confirmBtn("Revoke all", "revs:" + x.split_id, function () { call("POST", "revoke", { split_id: x.split_id }).then(draw).catch(function (e) { alert(e.message); draw(); }); }, true));
+                confirmBtn("Revoke all", "revs:" + x.split_id, function () { call("POST", "revoke", { split_id: x.split_id }).then(draw).catch(function (e) { window.riffleToast(e.message); draw(); }); }, true));
               td.append(acts);
             }
             return td;
@@ -611,7 +629,7 @@
             else if (i === 4) { td.className = "n"; td.textContent = v == null ? "–" : v.toLocaleString(); }
             else if (i === 5) td.textContent = v ? new Date(v * 1000).toISOString().slice(0, 10) : "never";
             else if (i === 6) td.textContent = ago(v);
-            else td.append(confirmBtn("Revoke", "rev:" + p.pc, function () { call("POST", "revoke", { name: p.pc, kind: "pcs" }).then(draw).catch(function (e) { alert(e.message); draw(); }); }, true));
+            else td.append(confirmBtn("Revoke", "rev:" + p.pc, function () { call("POST", "revoke", { name: p.pc, kind: "pcs" }).then(draw).catch(function (e) { window.riffleToast(e.message); draw(); }); }, true));
             return td;
           }
         }));
@@ -621,7 +639,7 @@
           cell: function (v, i, row) {
             var td = h("td");
             if (i < 2) td.textContent = v;
-            else td.append(confirmBtn("Revoke", "revr:" + v, function () { call("POST", "revoke", { name: v, kind: "readers" }).then(draw).catch(function (e) { alert(e.message); draw(); }); }, true));
+            else td.append(confirmBtn("Revoke", "revr:" + v, function () { call("POST", "revoke", { name: v, kind: "readers" }).then(draw).catch(function (e) { window.riffleToast(e.message); draw(); }); }, true));
             return td;
           }
         }));
@@ -631,6 +649,11 @@
     $("#rform").onsubmit = function (e) {
       e.preventDefault();
       var name = e.target.name.value.trim(), box = $("#newreader");
+      if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(name)) {
+        window.riffleFieldError(e.target.name, "Use lowercase letters, digits, - or _ (40 characters at most), e.g. maria.");
+        return;
+      }
+      window.riffleFieldError(e.target.name, "");
       call("POST", "readers", { name: name }).then(function (r) {
         box.hidden = false; box.replaceChildren(el("b", "", "Read token for " + r.name + " (shown once): "), el("code", "", r.token), document.createTextNode(" "), copyBtn(r.token));
         e.target.reset(); draw();

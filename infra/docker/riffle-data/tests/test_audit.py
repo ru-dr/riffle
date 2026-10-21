@@ -225,3 +225,71 @@ def test_a_hostile_store_cannot_make_the_miner_read_without_limit(monkeypatch):
     big = b'{"split_id": "abc", "repos_text": "' + b"x" * 5_000_000 + b'"}'
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: Resp(big))
     assert sync.fetch_split("http://x", "rw_t") is None, "a 5 MB answer to a 200 KB question must be refused"
+
+
+# -- second round: the items the first audit left open ----------------------------------------------------
+
+def test_rotating_through_localhost_without_a_public_url_is_refused_and_changes_nothing(store, monkeypatch):
+    monkeypatch.delenv("RIFFLE_PUBLIC_URL", raising=False)
+    pcs = json.loads(req(store, "POST", "/v1/admin/splits", store.adm, {"split_id": "abc", "n": 2})[1])["pcs"]
+    code, body = req(store, "POST", "/v1/admin/rotate", store.adm, {"split_id": "abc"})
+    assert code == 409, body
+    assert tokens.who(store.tp, pcs[0]["token"]) is not None                  # the old tokens still work
+
+
+def test_a_failed_backup_is_retried_recorded_and_cleared_by_the_next_good_one(tmp_path):
+    import backup
+    calls = []
+
+    class Blob:
+        def upload_from_filename(self, path):
+            calls.append(path)
+            if len(calls) < 3:
+                raise OSError("network down")
+
+    class Bucket:
+        def blob(self, key):
+            return Blob()
+
+    class Store:
+        _bucket = Bucket()
+    tp = tmp_path / "tokens.json"
+    tp.write_text("{}")
+    assert backup.push(Store, str(tp), tries=3, wait=0) is True and len(calls) == 3      # two failures, then it lands
+    calls.clear()
+    assert backup.push(Store, str(tp), tries=1, wait=0) is False
+    assert backup.STATE["ok"] is False and "network down" in backup.STATE["error"]
+    calls.extend([1, 2])
+    assert backup.push(Store, str(tp), tries=1, wait=0) is True and backup.STATE["ok"] is True
+
+
+def test_a_machine_rejoined_under_another_token_sends_everything_again(store, tmp_path):
+    a = tokens.issue_split(store.tp, "abc", 2)
+    run = tmp_path / "run"
+    (run / "logs").mkdir(parents=True)
+    (run / "logs" / "r.log").write_text("hello\n")
+    out = tmp_path / "d.parquet"
+    out.write_text("x")
+    kw = dict(health_dir=str(run / "health"), logs=[str(run / "logs" / "r.log")], state_path=str(tmp_path / "state.json"))
+    for k, v in (("RIFFLE_SYNC_URL", store.url), ("RIFFLE_SYNC_TOKEN", a[0]["token"])):
+        os.environ[k] = v
+    try:
+        r1 = sync.sync(str(out), "6.0.0/abc", {"state": "x"}, **kw)
+        assert r1["sent"] == 2 and not r1["failed"], r1
+        assert sync.sync(str(out), "6.0.0/abc", {"state": "x"}, **kw)["sent"] == 0
+        os.environ["RIFFLE_SYNC_TOKEN"] = a[1]["token"]                         # now this machine is PC 2
+        assert sync.sync(str(out), "6.0.0/abc", {"state": "x"}, **kw)["sent"] == 2
+    finally:
+        os.environ.pop("RIFFLE_SYNC_URL", None)
+        os.environ.pop("RIFFLE_SYNC_TOKEN", None)
+
+
+def test_the_whole_sync_has_one_deadline_even_inside_a_file(tmp_path):
+    f = tmp_path / "big"
+    f.write_bytes(b"x" * 100)
+    with open(f, "rb") as fh:
+        p = sync._Prefix(fh, 100, deadline=time.monotonic() - 1)
+        with pytest.raises(sync._OutOfTime):
+            p.read(10)
+    with open(f, "rb") as fh:
+        assert sync._Prefix(fh, 100, deadline=time.monotonic() + 60).read(10) == b"x" * 10

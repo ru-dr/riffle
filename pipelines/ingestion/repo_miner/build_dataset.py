@@ -917,6 +917,7 @@ def main():
         if big:
             print(f"[skip] {len(big)} repos over {args.skip_big:,} commits will be skipped this run: "
                   + ", ".join(big), flush=True)
+    aborted = False
     for i, (owner, name, url) in enumerate(entries, 1):
         target = os.path.join(args.clone_dir, f"{owner}_{name}")
         print(f"=== [{i}/{len(entries)}] {owner}/{name} ===", flush=True)
@@ -970,11 +971,13 @@ def main():
             print(f"[skip] {owner}/{name}: skipped while cloning\n", flush=True)
             skipped.append(f"{owner}/{name} (requested)")
             progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped", skip="requested")
+            _sync_mark(f"{owner}/{name}", "skipped")
             continue
         if not cloned:
             print("[clone] giving up after retries; skipping repo\n", flush=True)
             failed.append(f"{owner}/{name} (clone)")
             progress.emit("repo_failed", repo=f"{owner}/{name}", stage="clone", rc=rc)
+            _sync_mark(f"{owner}/{name}", "failed")
             continue
 
         # --- mine (retried; checkpoint makes a retry resume, not redo) --------
@@ -1045,12 +1048,15 @@ def main():
                   "dataset isn't left with half-populated LLM columns. Fix the LLM, "
                   "then rerun with --skip-existing to resume.", flush=True)
             failed.append(f"{owner}/{name} (llm breaker)")
+            aborted = True
+            _sync_mark(f"{owner}/{name}", "failed")
             break
         if was_skipped:
             print(f"[skip] {owner}/{name}: stopped mid-mine; finished PRs stay in the "
                   f"checkpoint, so a later run resumes it", flush=True)
             skipped.append(f"{owner}/{name} (requested)")
             progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped", skip="requested")
+            _sync_mark(f"{owner}/{name}", "skipped")
             if not args.keep_clones and os.path.isdir(target):
                 print(f"[clone] removing {target} (skipped)", flush=True)
                 _rmtree(target)
@@ -1083,7 +1089,8 @@ def main():
           + (f" ({len(skipped)} skipped)" if skipped else ""))
     _assemble_snapshots(args)
     _write_shard_manifest(args, entries, ok, failed)
-    _sync_now("batch done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
+    # an aborted batch (the LLM breaker) is not "done": the store treats only "batch done" as a finished PC
+    _sync_now("batch aborted" if aborted else "batch done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
     progress.emit("batch_done", ok=ok, n=len(entries), failed=failed, skipped=skipped)
     runlog.info("batch", "done", ok=ok, n=len(entries), failed=failed, skipped=skipped, out=args.out)
     if runlog.enabled("INFO"):

@@ -279,3 +279,16 @@ def test_text_from_the_store_is_shown_as_text_not_as_markup(tmp_path, monkeypatc
         app.sync_info = {"t": 0, "off": "[@click=app.quit]token[/]"}
         assert "[@click=app.quit]" in app._sync_text().replace("\\[", "[")
     _run(go)
+
+
+def test_a_store_that_is_down_at_start_does_not_unlock_the_lead_settings(tmp_path, monkeypatch):
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    join.save_state(str(tmp_path / ".join.json"), {"u": "https://s.example", "t": "rw_good", "s": "abc12345", "k": 2, "n": 3, "a": LEAD})
+
+    async def go(app, pilot):
+        app._show_store({"ok": False, "unreachable": True, "why": "cannot reach the store"})
+        assert app.joined and app.joined["s"] == "abc12345" and app.query_one("#max_prs", Input).disabled
+        app.joined, app.lead_argv = None, None
+        app._show_store({"ok": False, "why": "the store did not accept this token"})      # a real rejection: stays unlocked
+        assert not app.joined
+    _run(go)

@@ -10,19 +10,36 @@ issue or a revoke.
 from __future__ import annotations
 
 import os
+import time
+import threading
 import sys
 
 KEY = "_system/tokens.json"             # a PC name cannot start with "_", so no upload can collide with it
 
 
-def push(store, tokens_path: str) -> bool:
+_LOCK = threading.Lock()                                    # pushes go one at a time, so a stale copy never lands last
+STATE = {"ok": True, "error": None, "at": None}             # shown on the admin overview: a failed copy is not silent
+TRIES = 3
+
+
+def push(store, tokens_path: str, tries: int = TRIES, wait: float = 1.0) -> bool:
+    """Copy tokens.json to the bucket, retrying a few times. The latest file is read inside the lock, so the last
+    writer's tokens are what the bucket ends up with. A final failure is recorded in STATE."""
     if store._bucket is None or not os.path.isfile(tokens_path):
         return False
-    try:
-        store._bucket.blob(KEY).upload_from_filename(tokens_path)
-        return True
-    except Exception as e:                                   # noqa: BLE001
-        print(f"[backup] could not copy tokens.json to the bucket: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    with _LOCK:
+        err = None
+        for attempt in range(tries):
+            try:
+                store._bucket.blob(KEY).upload_from_filename(tokens_path)
+                STATE.update(ok=True, error=None, at=time.time())
+                return True
+            except Exception as e:                           # noqa: BLE001
+                err = f"{type(e).__name__}: {e}"
+                if attempt + 1 < tries:
+                    time.sleep(wait * (attempt + 1))
+        print(f"[backup] could not copy tokens.json to the bucket after {tries} tries: {err}", file=sys.stderr, flush=True)
+        STATE.update(ok=False, error=err, at=time.time())
         return False
 
 

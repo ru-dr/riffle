@@ -910,6 +910,7 @@ class RiffleTUI(App):
         self.query_one("#log", Log).highlighter = _LevelHighlighter()
         self._check_token()
         self._check_store()
+        self.set_interval(60, self._check_store)                # a revoke, rotation or expiry shows within a minute
         self._start_dashboard()
         self.set_interval(0.25, self._poll_events)
         self.set_interval(1.0, self._render_stats)
@@ -1100,7 +1101,7 @@ class RiffleTUI(App):
         else:
             text = f"[b]Team store[/b]\n[red]✗ {esc(str(r['why']))}[/]\n[dim]ask the lead for a new code and paste it below[/]"
         self.query_one("#store_line", Static).update(text)
-        if r.get("ok") and self.lead_argv is None:
+        if (r.get("ok") or r.get("unreachable")) and self.lead_argv is None:     # a store that is down is not a rejection
             self._restore_join(r)
 
     @on(Button.Pressed, "#join")
@@ -1223,7 +1224,7 @@ class RiffleTUI(App):
         store still accepts the token for that split."""
         import join
         doc = join.load_state(os.path.join(HERE, join.STATE_FILE))
-        if not doc or not r.get("ok") or (r.get("split") and r["split"] != doc.get("s")):
+        if not doc or not (r.get("ok") or r.get("unreachable")) or (r.get("split") and r["split"] != doc.get("s")):
             return
         self.joined = doc
         self.lead_argv = list(doc.get("a", [])) + ["--shard", f"{doc['k']}/{doc['n']}"]
@@ -1526,6 +1527,7 @@ class RiffleTUI(App):
         self.action_stop()
 
     def action_start(self, test: bool = False) -> None:
+        self._check_store()                                     # refresh the card; the miner re-checks the token itself
         if self.proc is not None:
             self.notify("A run is already in progress.", severity="warning")
             return

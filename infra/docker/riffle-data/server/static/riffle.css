@@ -171,7 +171,7 @@ table.t.sticky1 tbody tr:hover td:first-child{background:var(--wash)}
 .tabs button:disabled{opacity:.4;cursor:not-allowed}
 .tabs .count{font:11px var(--mono);color:var(--grey)}
 .check{display:inline-flex;align-items:center;gap:8px;height:34px;font:14px var(--sans);color:var(--nickel);cursor:pointer}
-.check input{width:16px;height:16px;accent-color:var(--accent)}
+
 .seg{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 12px}
 .seg button{appearance:none;cursor:pointer;border:0;border-radius:6px;padding:4px 10px;background:transparent;color:var(--nickel);font:13px var(--sans);outline:1px solid transparent}
 .seg button:hover{background:var(--wash)}.seg button[aria-pressed=true]{background:var(--surface);color:var(--ink);outline-color:var(--stroke)}
@@ -207,3 +207,63 @@ table.t tr.sel td+td{box-shadow:none}
 table.t td.clip{max-width:16ch;overflow:hidden;text-overflow:ellipsis}
 .actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
 .prog{min-width:9rem}@media (max-width:48rem){.prog{min-width:6rem}}
+/* controls: the same in every browser (controls.js); nothing here is the browser's own widget */
+select[data-custom]{display:none}
+.sel{position:relative;display:inline-block;min-width:9rem;max-width:100%}
+.selbtn{appearance:none;display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;height:34px;padding:0 10px;cursor:pointer;
+  border:0;border-radius:6px;background:var(--surface);color:var(--ink);outline:1px solid var(--stroke);font:14px var(--sans);text-align:left}
+.selbtn:hover{outline-color:var(--grey)}
+.sel.ph .sellabel{color:var(--grey)}
+.sellabel{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.caret{flex:none;width:14px;height:14px;background:var(--grey);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 6l4 4 4-4' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;transition:transform .15s}
+.selbtn[aria-expanded=true] .caret{transform:rotate(180deg)}
+.selbtn:disabled{opacity:.5;cursor:not-allowed}
+.sellist{position:absolute;z-index:30;left:0;top:calc(100% + 4px);min-width:100%;max-width:min(26rem,90vw);max-height:16rem;overflow:auto;margin:0;padding:4px;list-style:none;
+  background:var(--surface);border-radius:8px;outline:1px solid var(--stroke);box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.sel.up .sellist{top:auto;bottom:calc(100% + 4px)}
+.sellist[hidden]{display:none}
+.opt{display:flex;align-items:center;padding:6px 10px;border-radius:5px;font:14px var(--sans);color:var(--nickel);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.opt.on{background:var(--wash);color:var(--ink)}
+.opt[aria-selected=true]{color:var(--ink);font-weight:500}
+.opt[aria-selected=true]::after{content:"";margin-left:auto;flex:none;width:14px;height:14px;background:var(--accent);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat}
+.opt[aria-disabled=true]{opacity:.4;cursor:not-allowed}
+.toolbar .sel{min-width:9rem}
+@media (max-width:40rem){.toolbar .sel{width:100%}}
+/* checkboxes */
+.check input[type=checkbox],input[type=checkbox]{appearance:none;-webkit-appearance:none;flex:none;width:18px;height:18px;margin:0;border-radius:5px;background:var(--surface);
+  outline:1px solid var(--stroke);cursor:pointer;display:inline-grid;place-content:center;transition:background .12s,outline-color .12s}
+input[type=checkbox]:hover{outline-color:var(--grey)}
+input[type=checkbox]::after{content:"";width:14px;height:14px;background:var(--bg);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;transform:scale(0);transition:transform .12s}
+input[type=checkbox]:checked{background:var(--accent);outline-color:var(--accent)}
+input[type=checkbox]:checked::after{transform:scale(1)}
+input[type=checkbox]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* search boxes: no native clear button or magnifier */
+input[type=search]{appearance:none;-webkit-appearance:none}
+input[type=search]::-webkit-search-cancel-button,input[type=search]::-webkit-search-decoration,input[type=search]::-webkit-search-results-button{-webkit-appearance:none;display:none}
+input::placeholder{color:var(--grey);opacity:1}
+input:-webkit-autofill{-webkit-text-fill-color:var(--ink);box-shadow:0 0 0 40px var(--surface) inset}
+/* inline errors and toasts */
+.ferr{flex-basis:100%;margin-top:6px;padding:8px 12px;border-radius:6px;background:var(--t-red-bg);color:var(--t-red);font:13px/1.45 var(--sans)}
+input[aria-invalid=true]{outline:2px solid var(--t-red)}
+.toasts{position:fixed;z-index:50;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px;max-width:min(26rem,calc(100vw - 32px))}
+.toast{display:flex;align-items:flex-start;gap:12px;padding:10px 12px 10px 14px;border-radius:8px;background:var(--ink);color:var(--bg);font:14px/1.45 var(--sans);box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.toast.ok{background:var(--accent);color:var(--bg)}
+.toast .x{appearance:none;border:0;background:transparent;color:inherit;opacity:.7;cursor:pointer;font:18px/1 var(--sans);padding:0 2px}
+.toast .x:hover{opacity:1}
+@media (prefers-reduced-motion:reduce){.caret,input[type=checkbox],input[type=checkbox]::after{transition:none}}
+/* disclosure arrows (flags, JSON trees): one drawn chevron, not the browser's triangle or a text glyph */
+summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:none}
+summary::before,.json summary::before{content:"";display:inline-block;width:14px;height:14px;margin-right:4px;vertical-align:-3px;background:var(--grey);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 4l4 4-4 4' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 4l4 4-4 4' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;transition:transform .15s}
+details[open]>summary::before,.json details[open]>summary::before{content:"";transform:rotate(90deg)}
+summary:hover::before{background:var(--ink)}
+summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+/* toolbar controls share one height, so labels, fields and buttons sit on one line */
+.toolbar input[type=text],.toolbar input[type=search],.toolbar input[type=password]{height:34px}
+.toolbar>.grp>.btn,.toolbar .btn{height:34px;display:inline-flex;align-items:center}
+@media (prefers-reduced-motion:reduce){summary::before{transition:none}}
+/* the lead's flags, as tags */
+details.flags{min-width:12rem}
+.flagbox{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px;max-width:34rem}
+.flag{display:inline-flex;align-items:baseline;gap:6px;max-width:100%;padding:3px 8px;border-radius:4px;background:var(--surface);outline:1px solid var(--stroke);font:12px var(--mono);color:var(--nickel);overflow-wrap:anywhere}
+.flag b{font-weight:500;color:var(--ink)}
+.flag i{font-style:normal;color:var(--accent)}

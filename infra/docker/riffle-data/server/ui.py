@@ -60,7 +60,7 @@ BODIES = {
 <section><div id="pcs"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Who can read</div><h2>Read tokens</h2>
 <p>A read token signs in to the pages. Add one per person, and revoke it when they leave.</p></div>
-<form class="tools" id="rform"><input type="text" name="name" placeholder="name, e.g. maria" pattern="[a-z0-9][a-z0-9_\\-]{0,39}" size="24" aria-label="Reader name" required><button class="btn solid">Add reader</button></form>
+<form class="tools" id="rform" novalidate><input type="text" name="name" placeholder="name, e.g. maria" size="24" aria-label="Reader name" autocomplete="off" spellcheck="false"><button class="btn solid">Add reader</button></form>
 <div id="newreader" class="alert ok" hidden></div></section>
 <section><div id="readers"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Admins</div><h2>Admin tokens</h2><p>Made on the VM with <code>manage.py add-admin</code>. Listed here for reference.</p></div></section>
@@ -88,7 +88,7 @@ def shell(page: str, title: str, authed: bool = True) -> str:
             f'<header class="top"><a class="brand" href="/" aria-label="Riffle data">{LOCKUP}<span class="tag">Data</span></a>'
             f'<nav class="main" aria-label="Main">{nav}</nav><div>{right}</div></header>'
             f'{BODIES.get(page, "")}<footer class="rule foot">Riffle team store · nothing here is on the scoring path</footer>'
-            f'</div><script src="/static/charts.js"></script><script src="/static/app.js"></script></body></html>')
+            f'</div><script src="/static/controls.js"></script><script src="/static/charts.js"></script><script src="/static/app.js"></script></body></html>')
 
 
 COPY = {

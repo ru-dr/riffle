@@ -106,14 +106,24 @@ def _save_state(path: str, state: dict) -> None:
         pass
 
 
+class _OutOfTime(TimeoutError):
+    """The whole sync's budget (not one socket call's) ran out while a file was going up."""
+
+
+def _out_of_time(e: BaseException) -> bool:
+    return isinstance(e, _OutOfTime) or isinstance(getattr(e, "reason", None), _OutOfTime)
+
+
 class _Prefix:
     """The first `n` bytes of a file, so a log that is still growing is sent as
     exactly the bytes that were hashed and counted (the next sync sends the rest)."""
 
-    def __init__(self, fh, n: int):
-        self.fh, self.left = fh, n
+    def __init__(self, fh, n: int, deadline: float | None = None):
+        self.fh, self.left, self.deadline = fh, n, deadline
 
     def read(self, size: int = -1) -> bytes:
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            raise _OutOfTime("the sync time budget ran out mid-file")
         if size < 0 or size > self.left:
             size = self.left
         data = self.fh.read(size)
@@ -160,9 +170,11 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
             budget_s = DEFAULT_BUDGET_S
     deadline = time.monotonic() + budget_s
     all_state = _load_state(state_path)
-    state = all_state.setdefault(url, {})          # per store: a new URL sends everything again
+    # per store AND per token: a machine re-joined as another PC (or a rotated token) sends everything again
+    state = all_state.setdefault(f"{url}#{hashlib.sha256(token.encode()).hexdigest()[:12]}", {})
     try:
         files = collect(out, health_dir, logs, repos)
+        files.sort(key=lambda f: os.path.getsize(f[0]) if os.path.isfile(f[0]) else 0)   # small first: logs and health never starve behind a big table
     except Exception as e:                                  # noqa: BLE001
         print(f"[sync] could not list files: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         result["stopped"] = "error"
@@ -188,7 +200,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
         try:
             sha = _sha256(path, st.st_size)
             with open(path, "rb") as fh:
-                _put(url, token, key, _Prefix(fh, st.st_size), st.st_size, sha,
+                _put(url, token, key, _Prefix(fh, st.st_size, deadline), st.st_size, sha,
                      min(CONNECT_S + st.st_size / 2e6, left))
             state[key] = sig
             result["sent"] += 1
@@ -199,11 +211,17 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
                 result["stopped"] = f"token rejected (HTTP {e.code})"
                 break
         except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as e:
+            if _out_of_time(e):
+                result["stopped"] = "out of time"
+                break
             # a store that answers early (401, 413) and closes can look like a reset: ask it before blaming the network
             who = whoami(url, token, timeout=8.0)
             result["failed"].append(f"{rel} ({type(e).__name__})")
             result["stopped"] = (f"token rejected ({who['why']})" if not who["ok"] and not who.get("unreachable")
                                  else "store unreachable")
+            break
+        except _OutOfTime:
+            result["stopped"] = "out of time"
             break
         except OSError as e:                                # a local file that vanished or is locked: skip it, go on
             result["failed"].append(f"{rel} (local {type(e).__name__})")
@@ -214,7 +232,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
                    files_sent=result["sent"], files_failed=len(result["failed"]))
         body = json.dumps(doc, indent=2).encode()
         try:
-            _put(url, token, f"{prefix}/run.json", body, len(body), None, CONNECT_S)
+            _put(url, token, f"{prefix}/run.json", body, len(body), None, 10.0)
         except (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException):
             result["failed"].append("run.json")
     _save_state(state_path, all_state)

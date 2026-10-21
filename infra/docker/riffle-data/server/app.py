@@ -149,7 +149,8 @@ class Service:
                                n_repos=sum(1 for ln in (meta.get("repos_text") or "").splitlines() if ln.strip() and not ln.strip().startswith("#"))))
         names = lambda kind: [{"name": n, "created": r.get("created")} for n, r in sorted(data[kind].items())]   # noqa: E731
         return {"pcs": pcs, "splits": splits, "readers": names("readers"), "admins": names("admins"),
-                "bucket": self.store.bucket_name}
+                "bucket": self.store.bucket_name,
+                "backup": dict(backup.STATE) if self.store.bucket_name else None}
 
     # -- uploads ---------------------------------------------------------
     def put(self, pc: str, key: str, rfile, length: int, want_sha: str | None) -> tuple[int, str]:
@@ -500,6 +501,10 @@ def make_handler(svc: Service):
                     meta = tokens.load(svc.tokens_path)["splits"].get(sid)
                     if not meta:
                         return self._json({"error": f"no split {sid}"}, 404)
+                    if not os.environ.get("RIFFLE_PUBLIC_URL") and re.match(r"^(localhost|127\.|\[?::1)", self.headers.get("Host", "localhost")):
+                        # the old tokens would be revoked and the new codes would point at an address no other PC can reach
+                        return self._json({"error": "set RIFFLE_PUBLIC_URL (the address PCs use) before rotating, or open "
+                                                    "the admin page through that address, not through localhost"}, 409)
                     days = float(body["days"]) if body.get("days") not in (None, "") else meta.get("days")
                     out = tokens.issue_split(svc.tokens_path, sid, int(meta["n"]), days or None, meta.get("flags", []), meta.get("version"))
                     # the repos list, name and issuer carry over: issue_split keeps what it is not given

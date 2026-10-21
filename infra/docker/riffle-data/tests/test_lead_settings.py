@@ -83,7 +83,8 @@ def test_validation_and_the_admin_overview_never_leak_the_list(store):
     assert "pallets/flask" not in json.dumps(d)
 
 
-def test_rotating_keeps_the_list_and_who_issued_it(store):
+def test_rotating_keeps_the_list_and_who_issued_it(store, monkeypatch):
+    monkeypatch.setenv("RIFFLE_PUBLIC_URL", "https://data.example.org")
     old = issue(store)
     req = urllib.request.Request(store.url + "/v1/admin/rotate", method="POST", data=json.dumps({"split_id": "706ba187"}).encode(),
                                  headers={"Authorization": f"Bearer {store.adm}", "Content-Type": "application/json", "X-Requested-With": "riffle"})
