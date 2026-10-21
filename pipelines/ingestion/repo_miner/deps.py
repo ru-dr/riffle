@@ -44,15 +44,20 @@ SYSTEM_CLIS = {
 }
 
 
+def pip_clis() -> dict[str, str]:
+    """semgrep has no stable native Windows build; there its columns stay null (use WSL)."""
+    return {} if os.name == "nt" else PIP_CLIS
+
+
 def _all_specs() -> list[str]:
     """Everything, for a fresh venv (it starts empty, so install the lot)."""
-    return [*PY_PACKAGES.values(), *PIP_CLIS.values()]
+    return [*PY_PACKAGES.values(), *pip_clis().values()]
 
 
 def missing() -> list[str]:
     specs = [spec for mod, spec in PY_PACKAGES.items()
              if importlib.util.find_spec(mod) is None]
-    specs += [spec for exe, spec in PIP_CLIS.items() if shutil.which(exe) is None]
+    specs += [spec for exe, spec in pip_clis().items() if shutil.which(exe) is None]
     return specs
 
 
@@ -93,18 +98,79 @@ def use_project_venv() -> None:
 
 
 def create_venv() -> tuple[bool, str]:
-    """Create repo_miner/.venv. Returns (ok, error text). On Debian/Ubuntu this
-    fails without the python3-venv package (no ensurepip)."""
-    proc = subprocess.run([sys.executable, "-m", "venv", VENV_DIR], capture_output=True, text=True)
-    if proc.returncode == 0 and os.path.isfile(venv_python()):
-        return True, ""
-    shutil.rmtree(VENV_DIR, ignore_errors=True)       # a half-made venv would be re-entered
-    return False, (proc.stderr or proc.stdout).strip()
+    """Create repo_miner/.venv with pip in it. Returns (ok, error text). Tries the
+    stdlib venv, then virtualenv if installed. On Debian/Ubuntu the first fails
+    without the python3-venv package (no ensurepip). --clear replaces a stale
+    venv, e.g. one whose Python was upgraded away."""
+    attempts = [[sys.executable, "-m", "venv", "--clear", VENV_DIR]]
+    if importlib.util.find_spec("virtualenv") is not None:
+        attempts.append([sys.executable, "-m", "virtualenv", VENV_DIR])
+    err = ""
+    for cmd in attempts:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if proc.returncode == 0 and os.path.isfile(venv_python()):
+                pip = subprocess.run([venv_python(), "-m", "pip", "--version"],
+                                     capture_output=True, text=True, timeout=60)
+                if pip.returncode == 0:
+                    return True, ""
+                err = "the new virtualenv has no pip"
+            else:
+                err = (proc.stderr or proc.stdout).strip()
+        except (OSError, subprocess.SubprocessError) as e:
+            err = str(e)
+        shutil.rmtree(VENV_DIR, ignore_errors=True)   # a half-made venv would be re-entered
+    return False, err
 
 
 def venv_package_hint() -> str:
     v = f"{sys.version_info.major}.{sys.version_info.minor}"
-    return f"sudo apt install python3-venv  (or python{v}-venv)"
+    if shutil.which("apt-get"):
+        return f"sudo apt install python3-venv  (or python{v}-venv)"
+    if shutil.which("apk"):
+        return "sudo apk add python3 py3-pip"
+    return ("install the venv/ensurepip module for this Python (some distros ship it as a "
+            "separate package), or use a Python from python.org, pyenv or uv")
+
+
+def cmd_output(cmd: list[str]) -> str:
+    """stdout of a quick command, '' if it is missing, fails or hangs."""
+    path = shutil.which(cmd[0])
+    if not path:
+        return ""
+    try:
+        p = subprocess.run([path, *cmd[1:]], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def extra_bin_dirs() -> list[str]:
+    """Where user-level installs put binaries (go install, npm --prefix ~/.local,
+    npm -g) that are often missing from PATH."""
+    home = os.path.expanduser("~")
+    dirs = [os.path.join(home, ".local", "bin"), os.path.join(home, "go", "bin"),
+            os.environ.get("GOBIN", "")]
+    gopath = cmd_output(["go", "env", "GOPATH"])
+    if gopath:
+        dirs.append(os.path.join(gopath.split(os.pathsep)[0], "bin"))
+    prefix = cmd_output(["npm", "prefix", "-g"])
+    if prefix:
+        dirs.append(prefix if os.name == "nt" else os.path.join(prefix, "bin"))
+    return [d for d in dirs if d]
+
+
+def extend_path() -> list[str]:
+    """Append existing user bin dirs that are not on PATH to this process's PATH
+    (child miners inherit it). Returns the dirs added."""
+    have = os.environ.get("PATH", "").split(os.pathsep)
+    added: list[str] = []
+    for d in extra_bin_dirs():
+        if os.path.isdir(d) and d not in have and d not in added:
+            added.append(d)
+    if added:
+        os.environ["PATH"] = os.pathsep.join([*have, *added])
+    return added
 
 
 def ensure(require_textual: bool = True) -> None:

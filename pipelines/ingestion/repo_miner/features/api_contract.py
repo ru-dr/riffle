@@ -158,14 +158,14 @@ def _graphql_inspector(base_content: str, head_content: str) -> str | None:
             ["graphql-inspector", "diff", b, h],
             capture_output=True, text=True,
         )
+        if proc.returncode == 0:
+            return "additive"       # also prints "No breaking changes detected"
+        # Exit 1 means either breaking changes ("Detected 2 breaking changes") or a
+        # tool failure (unparsable schema, crash). A failure has no verdict: null.
         text = (proc.stdout or "") + (proc.stderr or "")
-        low = text.lower()
-        if "breaking" in low:
+        if re.search(r"Detected \d+ breaking change", text):
             return "breaking"
-        # graphql-inspector exits non-zero when breaking changes exist
-        if proc.returncode not in (0,):
-            return "breaking"
-        return "additive"
+        return None
     except Exception:
         return None
     finally:
