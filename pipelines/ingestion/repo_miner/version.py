@@ -5,4 +5,4 @@ MAJOR: a change to the mined output's columns or meaning (a retrain-level change
 MINOR: new features or flags; output for existing columns unchanged.
 PATCH: fixes and speedups that leave output identical.
 """
-__version__ = "6.10.6"
+__version__ = "6.10.7"

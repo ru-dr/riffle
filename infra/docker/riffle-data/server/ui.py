@@ -6,6 +6,7 @@ stay strict, and data is only ever put on the page with textContent.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import os
 
@@ -78,17 +79,32 @@ BODIES = {
 }
 
 
+def _asset_version() -> str:
+    """A short hash of the stylesheet and scripts. It goes in their URLs, so a deploy is picked up at once instead of
+    after the browser's cached copy (an hour) runs out, which showed new scripts with the old stylesheet."""
+    h = hashlib.sha256()
+    folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    for name in sorted(os.listdir(folder)):
+        if name.endswith((".css", ".js")):
+            with open(os.path.join(folder, name), "rb") as fh:
+                h.update(name.encode() + fh.read())
+    return h.hexdigest()[:10]
+
+
+ASSET_V = _asset_version()
+
+
 def shell(page: str, title: str, authed: bool = True) -> str:
     nav = "".join(f'<a href="{href}"{" aria-current=page" if key == page else ""}>{label}</a>' for key, href, label in NAV)
     right = ('<a class="btn" href="/logout">Sign out</a>' if authed else "")
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">'
             f'<title>{html.escape(title)} · Riffle data</title><link rel="icon" type="image/svg+xml" href="/static/favicon.svg">'
-            f'<link rel="stylesheet" href="/static/riffle.css"></head><body data-page="{page}"><div class="wrap">'
+            f'<link rel="stylesheet" href="/static/riffle.css?v={ASSET_V}"></head><body data-page="{page}"><div class="wrap">'
             f'<header class="top"><a class="brand" href="/" aria-label="Riffle data">{LOCKUP}<span class="tag">Data</span></a>'
             f'<nav class="main" aria-label="Main">{nav}</nav><div>{right}</div></header>'
             f'{BODIES.get(page, "")}<footer class="rule foot">Riffle team store · nothing here is on the scoring path</footer>'
-            f'</div><script src="/static/controls.js"></script><script src="/static/charts.js"></script><script src="/static/app.js"></script></body></html>')
+            f'</div><script src="/static/controls.js?v={ASSET_V}"></script><script src="/static/charts.js?v={ASSET_V}"></script><script src="/static/app.js?v={ASSET_V}"></script></body></html>')
 
 
 COPY = {
@@ -115,7 +131,7 @@ def login(error: str = "", throttled: bool = False, admin: bool = False) -> str:
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">'
             f'<title>{"Admin sign in" if admin else "Sign in"} · Riffle data</title><link rel="icon" type="image/svg+xml" href="/static/favicon.svg">'
-            f'<link rel="stylesheet" href="/static/riffle.css"></head><body data-page="login"><div class="wrap">'
+            f'<link rel="stylesheet" href="/static/riffle.css?v={ASSET_V}"></head><body data-page="login"><div class="wrap">'
             f'<header class="top"><a class="brand" href="/" aria-label="Riffle data">{LOCKUP}<span class="tag">Data</span></a>'
             f'<span class="tag">Private</span></header>'
             f'<main class="rule auth grid g2 stack">'
@@ -129,4 +145,4 @@ def login(error: str = "", throttled: bool = False, admin: bool = False) -> str:
             f'<button class="btn solid wide" id="go">Sign in <span aria-hidden="true">→</span></button>'
             f'<p class="fine">Failed attempts are limited per address.</p></form></section></main>'
             f'<footer class="rule foot">Riffle team store · nothing here is on the scoring path</footer>'
-            f'</div><script src="/static/login.js"></script></body></html>')
+            f'</div><script src="/static/login.js?v={ASSET_V}"></script></body></html>')

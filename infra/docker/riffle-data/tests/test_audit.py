@@ -293,3 +293,13 @@ def test_the_whole_sync_has_one_deadline_even_inside_a_file(tmp_path):
             p.read(10)
     with open(f, "rb") as fh:
         assert sync._Prefix(fh, 100, deadline=time.monotonic() + 60).read(10) == b"x" * 10
+
+
+def test_pages_name_their_assets_by_content_so_a_deploy_is_not_hidden_by_the_browser_cache(store):
+    import ui
+    assert len(ui.ASSET_V) == 10
+    html = ui.shell("search", "Search")
+    for f in ("riffle.css", "controls.js", "app.js"):
+        assert f"/static/{f}?v={ui.ASSET_V}" in html, f
+    code, body = req(store, "GET", f"/static/riffle.css?v={ui.ASSET_V}")
+    assert code == 200 and b".selbtn" in body
