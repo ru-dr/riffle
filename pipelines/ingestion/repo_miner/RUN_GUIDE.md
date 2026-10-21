@@ -30,7 +30,7 @@ python doctor.py                  # checks and sets up every token (see below); 
    - Untick **LLM flags**, **SZZ label** and **Scanners** (they are slow and need extra setup; a real run keeps them).
 3. Press **F3** (Lead tools). Set the days (7), press **Issue codes**. Two rows appear: `PC 1/2` and `PC 2/2`.
 4. Select `PC 2/2`, press **Copy selected**, and send it to PC B privately (a message to yourself is fine for a test).
-5. Close Lead tools (Escape). Paste the **PC 1/2** code into the Join box, press **Join** (or F2). The left panel says
+5. With the **PC 1/2** row selected, press **Join this PC as selected** (no pasting; it closes Lead tools and joins), or close Lead tools (Escape), paste the code into the Join box and press **Join** (F2). The left panel says
    "joined as pc1of2-…" and the form now shows PC 1. Press **Start**.
 
 **PC B (volunteer), on the TUI**

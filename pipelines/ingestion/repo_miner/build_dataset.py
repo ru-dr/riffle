@@ -529,6 +529,7 @@ def _selected_count(repo: str) -> int | None:
 
 def _run_settings(args) -> dict:
     """What this PC's run is set to, for the admin's per-run view. Names and switches only: no keys, no paths."""
+    import config
     g = lambda n: getattr(args, n, None)                    # noqa: E731
     llm = bool(g("llm"))
     try:

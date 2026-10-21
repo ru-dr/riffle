@@ -215,3 +215,13 @@ def test_the_status_carries_what_the_run_is_set_to_including_the_model(monkeypat
     assert not any("key" in k or "token" in k for k in st), "no secret belongs in a status"
     off = bd._run_settings(bd.build_parser().parse_args(["--no-llm"]))
     assert off["llm"] is False and off["llm_model"] is None
+
+
+def test_the_status_reports_the_default_model_when_none_is_given(monkeypatch):
+    """The settings helper used `config` without importing it and a blanket except hid the NameError, so a PC started without
+    --llm-model reported no model at all. The default comes from the config."""
+    import build_dataset as bd
+    import config
+    monkeypatch.setenv("LLM_MODEL", "opus-test")
+    st = bd._run_settings(bd.build_parser().parse_args([]))
+    assert st["llm"] is True and st["llm_model"] == config.Settings().llm_model == "opus-test"

@@ -241,7 +241,8 @@ def test_leaving_the_split_unlocks_the_form_and_forgets_the_settings(store, tmp_
         assert (tmp_path / ".join.json").exists()
         app.action_leave()
         await pilot.pause()
-        assert not any(_locked(app, w) for w in tui.LOCKED_IDS) and app.query_one("#leave").display is False
+        assert not any(_locked(app, w) for w in tui.LOCKED_IDS)
+        assert app.query_one("#leave").display is True                      # the PC still holds its store token: Leave again forgets it
         assert app.joined is None and app.lead_argv is None and not (tmp_path / ".join.json").exists()
         assert app._lead_differences() == []                                # with no lead, nothing to differ from
         assert "Unlocked" in _text(app, "join_msg")
@@ -291,4 +292,24 @@ def test_a_store_that_is_down_at_start_does_not_unlock_the_lead_settings(tmp_pat
         app.joined, app.lead_argv = None, None
         app._show_store({"ok": False, "why": "the store did not accept this token"})      # a real rejection: stays unlocked
         assert not app.joined
+    _run(go)
+
+
+def test_leave_shows_when_the_pc_holds_a_store_token_even_without_a_saved_join_code(tmp_path, monkeypatch):
+    """A PC with RIFFLE_SYNC_TOKEN but no .join.json (joined with an older version, or by hand) showed no Leave button and
+    an unlocked form, so there was no way out from the TUI."""
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    monkeypatch.setenv("RIFFLE_SYNC_URL", "https://s.example")
+    monkeypatch.setenv("RIFFLE_SYNC_TOKEN", "rw_held")
+    (tmp_path / ".env").write_text("RIFFLE_SYNC_URL=https://s.example\nRIFFLE_SYNC_TOKEN=rw_held\nGITHUB_TOKEN=keep\n")
+
+    async def go(app, pilot):
+        app._show_store({"ok": True, "name": "pc1of2-abc", "split": "abc12345"})
+        assert app.query_one("#leave").display, "Leave must be reachable"
+        assert "no saved join code" in _text(app, "join_msg")
+        app._check_store = lambda: None                                      # no network in the test
+        app.action_leave()
+        assert not os.environ.get("RIFFLE_SYNC_TOKEN") and not app.query_one("#leave").display
+        env = (tmp_path / ".env").read_text()
+        assert "RIFFLE_SYNC_TOKEN=\n" in env + "\n" and "rw_held" not in env and "GITHUB_TOKEN=keep" in env      # only the store's keys went
     _run(go)

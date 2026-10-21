@@ -147,3 +147,26 @@ def test_it_explains_what_is_missing(lead):
         s._issue(); await _settle(app, pilot)
         assert "Could not issue codes" in _text(s, "lead_msg") and s.codes == []
     _run(go)
+
+
+def test_the_lead_can_join_its_own_pc_from_lead_tools(lead, monkeypatch):
+    """After issuing codes the lead's PC joins as the selected row without pasting the code anywhere."""
+    monkeypatch.setenv("RIFFLE_ADMIN_TOKEN", lead.admin)
+
+    async def go(app, pilot):
+        app.query_one("#pcs", Input).value = "2"
+        app.query_one("#pc_index", Input).value = "1"
+        app.action_lead(); await _settle(app, pilot)
+        s = app.screen
+        s._join_here()                                                          # nothing issued yet: it says so
+        assert "Issue codes first" in _text(s, "lead_msg")
+        s.query_one("#adm_days", Input).value = "7"
+        s._issue(); await _settle(app, pilot)
+        s.query_one("#codes", DataTable).move_cursor(row=0)
+        s._join_here(); await _settle(app, pilot)
+        await pilot.pause(); await app.workers.wait_for_complete(); await pilot.pause()
+        assert app.joined and app.joined["k"] == 1 and app.joined["n"] == 2
+        assert "joined as pc1of2" in str(app.query_one("#store_line", Static).render())
+        assert os.environ.get("RIFFLE_SYNC_TOKEN", "").startswith("rw_")
+        assert app.query_one("#join_code", Input).value == ""                   # the code does not stay on screen
+    _run(go)

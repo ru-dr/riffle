@@ -491,6 +491,7 @@ class LeadScreen(ModalScreen):
                 yield Button("Copy selected", id="code_copy", compact=True)
                 yield Button("Copy all", id="code_all", compact=True)
                 yield Button("Save to a private file", id="code_save", compact=True)
+                yield Button("Join this PC as selected", id="code_join", variant="primary", compact=True)
             yield Static("PC tokens on the store", classes="sec")
             yield DataTable(id="pcs_tbl", cursor_type="row")
             with Horizontal(classes="lrow"):
@@ -630,6 +631,17 @@ class LeadScreen(ModalScreen):
             return
         ok = self.tui._copy(sel[1])
         self._msg(f"Copied the code for {sel[0]}." if ok else "No clipboard here; use Save to a private file.", "ok" if ok else "warn")
+
+    @on(Button.Pressed, "#code_join")
+    def _join_here(self) -> None:
+        """The lead's own PC is one of the PCs: join with the selected code without pasting it (same path as the Join box)."""
+        sel = self._selected_code()
+        if not sel:
+            self._msg("Issue codes first, then pick the row for this PC (PC 1 is the first).", "warn")
+            return
+        self.tui.query_one("#join_code", Input).value = sel[1]
+        self.dismiss()
+        self.tui.action_join()
 
     @on(Button.Pressed, "#code_all")
     def _copy_all(self) -> None:
@@ -1103,6 +1115,10 @@ class RiffleTUI(App):
         self.query_one("#store_line", Static).update(text)
         if (r.get("ok") or r.get("unreachable")) and self.lead_argv is None:     # a store that is down is not a rejection
             self._restore_join(r)
+        if r.get("ok") and self.lead_argv is None:
+            self._join_msg("This PC has a store token but no saved join code, so the lead's settings are not applied. "
+                           "Paste the code again and press Join (F2), or press Leave.", "warn")
+        self._update_leave()
 
     @on(Button.Pressed, "#join")
     def _join_btn(self) -> None:
@@ -1216,8 +1232,15 @@ class RiffleTUI(App):
                 w.tooltip = "Set by the lead. Leave the split to change it." if on else None
             except Exception:                                   # noqa: BLE001
                 continue
-        self.query_one("#leave", Button).display = on
+        self._update_leave()
         self._show_card()
+
+    def _update_leave(self) -> None:
+        """Leave shows whenever this PC is tied to the store: locked to the lead's settings, or just holding a token."""
+        try:
+            self.query_one("#leave", Button).display = bool(self.lead_argv is not None or os.environ.get("RIFFLE_SYNC_TOKEN"))
+        except Exception:                                       # noqa: BLE001
+            pass
 
     def _restore_join(self, r: dict) -> None:
         """A TUI restarted after joining: the lead's settings come back from .join.json and stay locked, as long as the
@@ -1279,7 +1302,15 @@ class RiffleTUI(App):
     def action_leave(self) -> None:
         """Unlock the form: forget the lead's settings on this PC. Uploads stop while your settings make a different split."""
         import join
-        if self.lead_argv is None:
+        if self.lead_argv is None:                              # only a token on this PC (no saved join code): forget the token
+            if not os.environ.get("RIFFLE_SYNC_TOKEN"):
+                return
+            join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": "", "RIFFLE_SYNC_TOKEN": ""})
+            os.environ.pop("RIFFLE_SYNC_URL", None)
+            os.environ.pop("RIFFLE_SYNC_TOKEN", None)
+            self._update_leave()
+            self._check_store()
+            self._join_msg("Left the team store: this PC no longer uploads. Join again with a code from the lead.", "warn")
             return
         self.joined = self.lead_argv = None
         join.clear_state(os.path.join(HERE, join.STATE_FILE))
