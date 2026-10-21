@@ -207,3 +207,27 @@ def test_a_run_turns_sync_off_when_the_token_is_for_another_split(store, monkeyp
     monkeypatch.setattr(bd, "_SYNC", {"args": types.SimpleNamespace(split_id="ab12cd34", out="x"), "counts": {}})
     bd._sync_begin([], {})
     assert bd._SYNC is None and "OFF for this run" in capsys.readouterr().out
+
+
+def test_admin_cli_lists_and_revokes(store, monkeypatch, capsys):
+    import admin
+    monkeypatch.setenv("RIFFLE_SYNC_URL", store.url)
+    monkeypatch.setenv("RIFFLE_ADMIN_TOKEN", store.admin)
+    pcs = issue(store, "ab12cd34", 2)
+    call(store, "PUT", "/v1/files/6.8.0/ab12cd34/run.json", pcs[0]["token"], b'{"reason":"repo done"}')
+    assert admin.main(["whoami"]) == 0 and "admin token" in capsys.readouterr().out
+    admin.main(["list"])
+    out = capsys.readouterr().out
+    assert "pc1of2-ab12cd34" in out and "split ab12cd34" in out and "last upload just now" in out
+    assert out.count("never") >= 2                                   # pc2 never uploaded; expiry "never" too
+    admin.main(["revoke", "pc1of2-ab12cd34"])
+    assert "revoked: pc1of2-ab12cd34" in capsys.readouterr().out
+    assert call(store, "GET", "/v1/whoami", pcs[0]["token"])[0] == 401 and call(store, "GET", "/v1/whoami", pcs[1]["token"])[0] == 200
+    admin.main(["revoke-split", "ab12cd34"])
+    assert "pc2of2-ab12cd34" in capsys.readouterr().out
+    admin.main(["revoke", "nobody"])
+    assert "nothing named nobody" in capsys.readouterr().out
+    monkeypatch.setenv("RIFFLE_ADMIN_TOKEN", store.reader)            # a reader token is refused
+    with pytest.raises(SystemExit) as e:
+        admin.main(["list"])
+    assert "401" in str(e.value)
