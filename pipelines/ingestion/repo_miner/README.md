@@ -285,14 +285,39 @@ The nine columns of `contracts/mined_features.schema.json`
 python tui.py
 ```
 
-Every launch first runs the environment doctor (`doctor.py`). It checks
-Python, git, the Python packages, `GITHUB_TOKEN` (verified against GitHub, so
-the `.env.example` placeholder doesn't count), the LLM setup, optional
-API-diff tools, disk and RAM, and offers fixes: it pip-installs missing
-packages, asks for a token and saves it to `.env` (private, gitignored), and
-offers the install command for git / Claude Code. Run it on its own with
-`python doctor.py`, or `python doctor.py --check` to only report (exit 1 on a
-failure). `RIFFLE_NO_DOCTOR=1` skips it.
+Every launch first runs the environment doctor (`doctor.py`). It detects the
+OS and distro (Ubuntu/Debian and derivatives, Fedora/RHEL, Arch, openSUSE,
+Alpine, macOS, Windows, WSL) and its package manager (`apt`, `dnf`, `pacman`,
+`zypper`, `apk`, `brew`, `winget`, `scoop`, `choco`). It then checks Python,
+git, the Python packages, `GITHUB_TOKEN` (verified against GitHub, so the
+`.env.example` placeholder doesn't count), the LLM setup, the optional
+API-contract tools, disk and RAM, grouped by section, and offers fixes: it
+pip-installs missing packages, asks for a token and saves it to `.env`
+(gitignored, mode 600 where the OS allows), and offers the install command for
+git, Claude Code and the API tools for your OS. Nothing is installed without a
+yes. Run it on its own with `python doctor.py`, or `python doctor.py --check`
+to only report (exit 1 on a failure). `RIFFLE_NO_DOCTOR=1` skips it,
+`NO_COLOR=1` turns colour off. When nothing fails, the TUI opens after a 5-second
+countdown (Enter opens now, Ctrl+C cancels, `RIFFLE_NO_WAIT=1` skips it). The miner
+never starts by itself; you start a run from the TUI.
+
+The API-contract tools are required while "API contract diff" is on (the
+default). A missing one shows as a failure and gets an install offer; it does not
+block launch, but that spec type's `api_contract_change` stays null. Turn the
+option off (or `--no-api-contract`) to not need them. Each diffs one kind of spec: `oasdiff`
+(OpenAPI), `buf` (protobuf), `graphql-inspector` (GraphQL; needs Node/npm).
+
+Installs are fail-safe. If Node or Go is missing, the doctor shows the command that
+installs it first, then the tool. `npm -g` goes to `~/.local` when the system prefix
+needs root, and `~/go/bin`, `~/.local/bin` and the npm bin directory are added to
+PATH for the run (the doctor says when to add them to your shell profile). A failed
+install prints the manual link. A broken or missing venv module is retried with
+`virtualenv`, and a doctor bug never blocks the TUI.
+
+OS notes: on Windows, semgrep has no stable native build (its columns stay
+null; use WSL for them) and the doctor offers `git config --global
+core.longpaths true`. On WSL keep the repo in the Linux home directory, not
+`/mnt/c`. On macOS without Homebrew, git comes from `xcode-select --install`.
 
 On an externally managed Python (Ubuntu/Debian 23.04+, PEP 668) packages go
 into `repo_miner/.venv`, created on first need; later launches re-run inside

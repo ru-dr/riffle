@@ -46,17 +46,26 @@ from version import __version__
 deps.use_project_venv()           # re-run inside repo_miner/.venv if one exists
 if os.getenv("RIFFLE_NO_DOCTOR"):
     deps.ensure()
+    deps.extend_path()            # user-level installs (~/go/bin, ~/.local/bin) still count
 else:
-    import doctor
-    _usable, _results = doctor.run()
+    try:
+        import doctor
+        _usable, _results = doctor.run()
+    except Exception as _e:       # noqa: BLE001 (a doctor bug must not block the TUI)
+        print(f"[doctor] skipped, internal error: {type(_e).__name__}: {_e}", file=sys.stderr)
+        doctor = None
+        _usable, _results = True, []
     if not _usable:
         sys.exit("Fix the items above (or run `python doctor.py`), then start the TUI again.")
-    if any(r.status == doctor.FAIL for r in _results) and sys.stdin.isatty():
+    if doctor and any(r.status == doctor.FAIL for r in _results) and sys.stdin.isatty():
         try:
             input("Press Enter to open the TUI… ")
         except EOFError:
             pass
     deps.ensure()                 # no-op when the doctor already installed everything
+    if doctor and not any(r.status == doctor.FAIL for r in _results):
+        if not doctor.countdown(5):   # time to read the report; Ctrl+C cancels
+            sys.exit("Cancelled.")
 
 import config  # noqa: E402  (loads .env, so GITHUB_TOKEN from it counts)
 import dashboard  # noqa: E402
