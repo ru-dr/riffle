@@ -213,7 +213,8 @@ health flags. Scale the estimates for the full run from those.
   `--max-prs` the API/LLM cost per repo is equal, so commit count is what
   differs (clone, history walk, SZZ). The split is deterministic, so every
   PC computes the same one. `--shard-plan N` prints it. In the TUI: set
-  "Number of PCs" and "This PC #", and "Show split" (ctrl+g) lists them.
+  "Number of PCs" and "This PC #", and "Show split" (ctrl+g) lists them, with
+  each repo's commits and PR count (from its `[N PRs]` tag) and a PR total per PC.
   GitHub rate limits are per account, so use a token from a different
   account on each PC.
 - Output names: a `--shard` run tags its dataset automatically, so

@@ -51,6 +51,7 @@ TEST_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 
 _WEIGHT_RE = re.compile(r"\[~?([\d,]+) commits\]")
+_PRS_RE = re.compile(r"\[~?([\d,]+) PRs\]")
 _DOMAIN_RE = re.compile(r"\[domain:\s*([a-z0-9][a-z0-9-]*)\]")
 
 
@@ -63,6 +64,13 @@ def _parse_domain(line: str) -> str | None:
 def _parse_weight(line: str) -> int | None:
     """Approx. commit count from a repos.txt line's "[~N commits]" tag."""
     m = _WEIGHT_RE.search(line)
+    return int(m.group(1).replace(",", "")) if m else None
+
+
+def _parse_prs(line: str) -> int | None:
+    """Total PR count from a repos.txt line's "[N PRs]" tag. Shown in the shard
+    plan only; the split itself balances on commits."""
+    m = _PRS_RE.search(line)
     return int(m.group(1).replace(",", "")) if m else None
 
 
@@ -110,16 +118,21 @@ def _warn_untagged(entries, weights) -> None:
               flush=True)
 
 
-def _print_shard_plan(entries, weights, n: int) -> None:
+def _print_shard_plan(entries, weights, n: int, prs=None) -> None:
     _warn_untagged(entries, weights)
+    prs = prs or [None] * len(entries)
     shards = balanced_shards(weights, n)
     totals = [sum(weights[i] or 0 for i in sh) for sh in shards]
     print(f"[shard-plan] split ID {split_id(entries, weights, n)}: {len(entries)} repos over {n} PCs "
           f"(heaviest/lightest PC: {max(totals) / max(1, min(totals)):.2f}x)")
     for k, sh in enumerate(shards, 1):
-        print(f"  PC {k}/{n}: {len(sh)} repos, ~{totals[k - 1]:,} commits")
+        pr_total = sum(prs[i] or 0 for i in sh)
+        pr_note = f", {pr_total:,} PRs" if any(prs[i] for i in sh) else ""
+        print(f"  PC {k}/{n}: {len(sh)} repos, ~{totals[k - 1]:,} commits{pr_note}")
         for i in sh:                                  # one repo per line
             w = f"~{weights[i]:,} commits" if weights[i] else "untagged"
+            if prs[i]:
+                w += f", {prs[i]:,} PRs"
             print(f"    - {entries[i][0]}/{entries[i][1]}  ({w})")
 
 
@@ -588,10 +601,11 @@ def main():
             entries, domains = [entries[i] for i in keep], [domains[i] for i in keep]
             print(f"[domain] {len(entries)} repos tagged [domain: {args.only_domain}]", flush=True)
         weights = [_parse_weight(line) for line in lines]
+        pr_counts = [_parse_prs(line) for line in lines]
         size_of = {f"{o}/{n}".lower(): w for (o, n, _), w in zip(entries, weights)}
         domain_of.update({f"{o}/{n}".lower(): d for (o, n, _), d in zip(entries, domains)})
         if args.shard_plan:
-            _print_shard_plan(entries, weights, args.shard_plan)
+            _print_shard_plan(entries, weights, args.shard_plan, pr_counts)
             return
         if args.shard:
             try:
