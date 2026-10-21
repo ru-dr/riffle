@@ -246,7 +246,7 @@ health flags. Scale the estimates for the full run from those.
   again for the same split issues new tokens and revokes the old ones.
 - Managing who may upload (lead only, needs `RIFFLE_ADMIN_TOKEN`): `python admin.py list` shows every PC token with its
   split, expiry and last upload; `python admin.py revoke NAME` and `revoke-split ID` cut access at once;
-  `python admin.py whoami` checks the admin token. The admin token reads no data and has no web page.
+  `python admin.py whoami` checks the admin token. The admin token reads no data. The store also has an admin web page (`/admin`) with the same powers plus rotating a split and adding readers; sign in there with the admin token.
 - Central sync (ADR 0015): with `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` in
   `.env`, the miner sends its logs, traces, `health/*.json`, dataset, snapshot and
   commit-feature tables, `.partial.jsonl` checkpoint and shard manifest to the

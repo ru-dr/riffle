@@ -137,3 +137,10 @@ svg [tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .fine{margin:0;font:12px var(--mono);color:var(--grey)}
 code{font:.9em var(--mono);background:var(--wash);padding:1px 5px;border-radius:4px}
 @media (prefers-reduced-motion:reduce){.field{transition:none}}
+/* admin */
+.btn.bad{color:var(--t-red)}.btn.bad:hover{background:var(--t-red-bg)}
+.alert.ok{background:var(--t-green-bg);color:var(--t-green);margin:12px 24px;flex-direction:row;flex-wrap:wrap;gap:6px;align-items:center}
+@media (min-width:48rem){.alert.ok{margin:12px 40px}}
+.alert.ok code{background:transparent;color:inherit;overflow-wrap:anywhere}
+#rform{padding:0}
+[hidden]{display:none !important}

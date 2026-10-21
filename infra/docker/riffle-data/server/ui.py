@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(HERE, "static", "lockup.svg"), encoding="utf-8") as _fh:
     LOCKUP = _fh.read()
 
-NAV = (("overview", "/", "Overview"), ("data", "/data", "Data"), ("search", "/search", "Log search"))
+NAV = (("overview", "/", "Overview"), ("data", "/data", "Data"), ("search", "/search", "Log search"), ("admin", "/admin", "Admin"))
 
 BODIES = {
     "overview": """
@@ -46,6 +46,25 @@ BODIES = {
     "view": """
 <section class="rule intro"><div class="cap" id="v-cap">File</div><h1 id="v-title">…</h1><p id="v-sub"></p></section>
 <section id="viewer"></section>""",
+    "admin": """
+<section class="rule intro"><div class="cap">Admin</div><h1>Who may <span class="of">upload</span></h1>
+<p>The tokens behind every PC and every reader. Revoke one, rotate a whole split, or add a reader. This page cannot read mined data, and the read pages cannot change tokens.</p></section>
+<section class="rule grid g5" id="kpis"></section>
+<section class="rule section" id="newcodes" hidden><div class="shead"><div class="cap">Shown once</div><h2 id="nc-title">New join codes</h2>
+<p id="nc-note"></p></div><div class="tools" id="nc-tools"></div></section>
+<section id="nc-table" hidden><div class="tablewrap" id="nc-rows"></div></section>
+<section class="rule section"><div class="shead"><div class="cap">Splits</div><h2>Rotate or revoke a whole split</h2>
+<p>Rotating makes new tokens for every PC of the split and stops the old ones at once, then shows the new join codes here, once. New splits are planned from the miner's TUI (Lead tools, F3), because the plan needs the repos file.</p></div></section>
+<section><div class="tablewrap" id="splits"></div></section>
+<section class="rule section"><div class="shead"><div class="cap">PC tokens</div><h2>Every machine that may upload</h2></div></section>
+<section><div class="tablewrap" id="pcs"></div></section>
+<section class="rule section"><div class="shead"><div class="cap">Who can read</div><h2>Read tokens</h2>
+<p>A read token signs in to the pages. Add one per person, and revoke it when they leave.</p></div>
+<form class="tools" id="rform"><input type="text" name="name" placeholder="name, e.g. maria" pattern="[a-z0-9][a-z0-9_\\-]{0,39}" size="24" aria-label="Reader name" required><button class="btn solid">Add reader</button></form>
+<div id="newreader" class="alert ok" hidden></div></section>
+<section><div class="tablewrap" id="readers"></div></section>
+<section class="rule section"><div class="shead"><div class="cap">Admins</div><h2>Admin tokens</h2><p>Made on the VM with <code>manage.py add-admin</code>. Listed here for reference.</p></div></section>
+<section><div class="tablewrap" id="admins"></div></section>""",
     "search": """
 <section class="rule intro"><div class="cap">Logs and traces</div><h1>Search the <span class="of">logs</span></h1>
 <p>Plain text or a regular expression, over every PC's run logs and traces.</p></section>
@@ -69,7 +88,21 @@ def shell(page: str, title: str, authed: bool = True) -> str:
             f'</div><script src="/static/charts.js"></script><script src="/static/app.js"></script></body></html>')
 
 
-def login(error: str = "", throttled: bool = False) -> str:
+COPY = {
+    "read": ('<section class="auth-copy"><div class="cap">Team store</div><h1>Sign in to the <span class="of">mined data</span></h1>'
+             '<p>Progress for every PC, the tables they have mined, and their logs. Read access only: nothing here can start, '
+             'stop or change a run.</p>'
+             '<dl class="kv"><dt>Token</dt><dd>The read token starts with <code>rd_</code>. The lead makes one with '
+             '<code>manage.py add-reader</code>, or on the Admin page.</dd><dt>Session</dt><dd>It stays in this browser for 30 days as a private '
+             'cookie. Sign out clears it.</dd></dl></section>'),
+    "admin": ('<section class="auth-copy"><div class="cap">Team store · lead only</div><h1>Sign in to <span class="of">admin</span></h1>'
+              '<p>Revoke a PC, rotate a split, or add a reader. An admin token cannot read mined data, and a read token cannot sign in here.</p>'
+              '<dl class="kv"><dt>Token</dt><dd>The admin token starts with <code>ad_</code>. It was made on the VM with '
+              '<code>manage.py add-admin</code>.</dd><dt>Session</dt><dd>It lasts 8 hours in this browser, then asks again.</dd></dl></section>'),
+}
+
+
+def login(error: str = "", throttled: bool = False, admin: bool = False) -> str:
     """The sign-in page: the same frame as the others, a short explanation on the left and the
     form on the right (stacked on a phone). The error is announced to screen readers."""
     msg = ""
@@ -78,21 +111,16 @@ def login(error: str = "", throttled: bool = False) -> str:
                f'<span>{html.escape(error)}</span></div>')
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">'
-            f'<title>Sign in · Riffle data</title><link rel="icon" type="image/svg+xml" href="/static/favicon.svg">'
+            f'<title>{"Admin sign in" if admin else "Sign in"} · Riffle data</title><link rel="icon" type="image/svg+xml" href="/static/favicon.svg">'
             f'<link rel="stylesheet" href="/static/riffle.css"></head><body data-page="login"><div class="wrap">'
             f'<header class="top"><a class="brand" href="/" aria-label="Riffle data">{LOCKUP}<span class="tag">Data</span></a>'
             f'<span class="tag">Private</span></header>'
             f'<main class="rule auth grid g2 stack">'
-            f'<section class="auth-copy"><div class="cap">Team store</div><h1>Sign in to the <span class="of">mined data</span></h1>'
-            f'<p>Progress for every PC, the tables they have mined, and their logs. Read access only: nothing here can start, '
-            f'stop or change a run.</p>'
-            f'<dl class="kv"><dt>Token</dt><dd>The read token starts with <code>rd_</code>. The lead makes one with '
-            f'<code>manage.py add-reader</code>.</dd><dt>Session</dt><dd>It stays in this browser for 30 days as a private cookie. '
-            f'Sign out clears it.</dd></dl></section>'
-            f'<section class="auth-form"><form method="post" action="/login" id="loginform" novalidate>'
-            f'<label class="cap" for="token">Read token</label>'
+            f'{COPY["admin" if admin else "read"]}'
+            f'<section class="auth-form"><form method="post" action="{"/admin/login" if admin else "/login"}" id="loginform" novalidate>'
+            f'<label class="cap" for="token">{"Admin" if admin else "Read"} token</label>'
             f'<div class="field"><input id="token" name="token" type="password" autocomplete="current-password" autocapitalize="off" '
-            f'spellcheck="false" placeholder="rd_…" required autofocus{" aria-invalid=true aria-describedby=err" if error else ""}>'
+            f'spellcheck="false" placeholder="{"ad_…" if admin else "rd_…"}" required autofocus{" aria-invalid=true aria-describedby=err" if error else ""}>'
             f'<button type="button" class="btn" id="reveal" aria-pressed="false" aria-controls="token">Show</button></div>'
             f'{msg.replace("<div ", "<div id=err ", 1) if msg else ""}'
             f'<button class="btn solid wide" id="go">Sign in <span aria-hidden="true">→</span></button>'

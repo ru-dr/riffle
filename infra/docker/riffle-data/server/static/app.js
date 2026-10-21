@@ -411,6 +411,131 @@
     }).catch(function (e) { failure($("#hits"), e); });
   }
 
+
+  /* ---------------- admin ---------------- */
+  function admin() {
+    var pending = null;
+    function call(method, path, body) {
+      return fetch("/v1/admin/" + path, { method: method, credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-Requested-With": "riffle" }, body: body ? JSON.stringify(body) : undefined
+      }).then(function (r) {
+        if (r.status === 401) { location.href = "/admin/login"; return new Promise(function () {}); }
+        return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; });
+      });
+    }
+    function say(node, text) { node.textContent = text; }
+    /* a button that needs a second press: the first press only asks */
+    function confirmBtn(label, what, act, danger) {
+      var b = el("button", "btn" + (danger ? " bad" : ""), label);
+      b.onclick = function () {
+        if (pending && pending.what === what) { pending = null; b.disabled = true; act(); return; }
+        if (pending) pending.btn.textContent = pending.label;
+        pending = { what: what, btn: b, label: label }; b.textContent = "Press again to confirm";
+        setTimeout(function () { if (pending && pending.btn === b) { b.textContent = label; pending = null; } }, 6000);
+      };
+      return b;
+    }
+    function copyBtn(text, label) {
+      var b = el("button", "btn", label || "Copy");
+      b.onclick = function () {
+        (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(
+          function () { b.textContent = "Copied"; setTimeout(function () { b.textContent = label || "Copy"; }, 1500); },
+          function () { b.textContent = "Select and copy by hand"; });
+      };
+      return b;
+    }
+    function stateTag(st) {
+      return tag(st, { mining: "green", done: "green", stopped: "amber", silent: "red", expired: "red", never: "" }[st] || "");
+    }
+    function showCodes(d) {
+      $("#newcodes").hidden = false; $("#nc-table").hidden = false;
+      $("#nc-title").textContent = "New join codes for split " + d.split_id;
+      say($("#nc-note"), "The old tokens stopped working. Send each code only to that PC's owner. This list is not stored: leave the page and it is gone.");
+      var tools = $("#nc-tools"); tools.replaceChildren(copyBtn(d.pcs.map(function (p) { return "PC " + p.k + "/" + p.n + "\t" + p.code; }).join("\n"), "Copy all"));
+      var rows = d.pcs.map(function (p) { return [p.pc, p.code]; });
+      $("#nc-rows").replaceChildren(grid(["PC", "Join code", ""], rows.map(function (r) { return r.concat([r[1]]); }), {
+        cell: function (v, i, row) {
+          var td = h("td");
+          if (i === 0) td.textContent = v;
+          else if (i === 1) { td.className = "wrapc"; td.style.fontFamily = "var(--mono)"; td.textContent = v.slice(0, 26) + "…" + v.slice(-10); }
+          else td.append(copyBtn(row[2]));
+          return td;
+        }
+      }));
+      $("#newcodes").scrollIntoView({ block: "start" });
+    }
+    function draw() {
+      call("GET", "overview").then(function (d) {
+        var soon = Date.now() / 1000 + 3 * 86400;
+        $("#kpis").replaceChildren(
+          stat("PC tokens", String(d.pcs.length), d.splits.length + " split" + (d.splits.length === 1 ? "" : "s")),
+          stat("Uploading", String(d.pcs.filter(function (p) { return p.state === "mining"; }).length), "synced in the last 25 min", "good"),
+          stat("Never uploaded", String(d.pcs.filter(function (p) { return p.state === "never"; }).length), "token issued, nothing sent", d.pcs.some(function (p) { return p.state === "never"; }) ? "warn" : ""),
+          stat("Expiring in 3 days", String(d.pcs.filter(function (p) { return p.expires && p.expires < soon && p.expires > Date.now() / 1000; }).length), "rotate to extend"),
+          stat("Readers", String(d.readers.length), d.admins.length + " admin" + (d.admins.length === 1 ? "" : "s")));
+        // splits
+        var sp = d.splits.map(function (x) { return [x.split_id, x, x, x, x, x, x]; });          // one element per column
+        $("#splits").replaceChildren(sp.length ? grid(["Split", "PCs", "Uploaded", "Miner", "Created", "Flags", ""], sp, {
+          cell: function (v, i, row) {
+            var x = row[1], td = h("td");
+            if (i === 0) td.textContent = x.split_id;
+            else if (i === 1) td.textContent = x.n + " (" + x.tokens + " active)";
+            else if (i === 2) td.textContent = x.uploaded + "/" + x.tokens + " uploaded";
+            else if (i === 3) td.textContent = x.version || "?";
+            else if (i === 4) td.textContent = (x.created || "").slice(0, 10);
+            else if (i === 5) { var dd = h("details"); dd.append(h("summary", "", (x.flags || []).length + " flags")); var pre = h("pre", "log"); pre.textContent = (x.flags || []).join(" "); pre.style.maxHeight = "10rem"; dd.append(pre); td.append(dd); }
+            else {
+              td.append(x.can_rotate ? confirmBtn("Rotate", "rot:" + x.split_id, function () {
+                call("POST", "rotate", { split_id: x.split_id }).then(function (r) { showCodes(r); draw(); }).catch(function (e) { alert(e.message); draw(); });
+              }) : el("span", "cap", "plan it again to rotate"),
+                document.createTextNode(" "),
+                confirmBtn("Revoke all", "revs:" + x.split_id, function () { call("POST", "revoke", { split_id: x.split_id }).then(draw).catch(function (e) { alert(e.message); draw(); }); }, true));
+            }
+            return td;
+          }
+        }) : el("div", "empty", "No split has been planned yet. Plan one from the miner's TUI: Lead tools (F3)."));
+        // PCs
+        $("#pcs").replaceChildren(grid(["PC", "Split", "State", "Progress", "PRs mined", "Expires", "Last upload", ""],
+          d.pcs.map(function (p) { return [p.pc, p.split, p.state, p, p.prs_done, p.expires, p.last_upload, p]; }), {
+          emptyText: "No PC tokens issued yet.",
+          cell: function (v, i, row) {
+            var p = row[3], td = h("td");
+            if (i === 0) { td.append(el("div", "", p.pc), el("div", "cap", p.host || "")); }
+            else if (i === 1) td.textContent = v || "-";
+            else if (i === 2) td.append(stateTag(v));
+            else if (i === 3) td.textContent = p.repos_total ? p.repos_done + "/" + p.repos_total + " repos" : "–";
+            else if (i === 4) { td.className = "n"; td.textContent = v == null ? "–" : v.toLocaleString(); }
+            else if (i === 5) td.textContent = v ? new Date(v * 1000).toISOString().slice(0, 10) : "never";
+            else if (i === 6) td.textContent = ago(v);
+            else td.append(confirmBtn("Revoke", "rev:" + p.pc, function () { call("POST", "revoke", { name: p.pc, kind: "pcs" }).then(draw).catch(function (e) { alert(e.message); draw(); }); }, true));
+            return td;
+          }
+        }));
+        // readers and admins
+        $("#readers").replaceChildren(grid(["Reader", "Created", ""], d.readers.map(function (r) { return [r.name, (r.created || "").slice(0, 10), r.name]; }), {
+          emptyText: "No readers yet.",
+          cell: function (v, i, row) {
+            var td = h("td");
+            if (i < 2) td.textContent = v;
+            else td.append(confirmBtn("Revoke", "revr:" + v, function () { call("POST", "revoke", { name: v, kind: "readers" }).then(draw).catch(function (e) { alert(e.message); draw(); }); }, true));
+            return td;
+          }
+        }));
+        $("#admins").replaceChildren(grid(["Admin", "Created"], d.admins.map(function (r) { return [r.name, (r.created || "").slice(0, 10)]; }), { emptyText: "No admins." }));
+      }).catch(function (e) { failure($("#pcs"), e); });
+    }
+    $("#rform").onsubmit = function (e) {
+      e.preventDefault();
+      var name = e.target.name.value.trim(), box = $("#newreader");
+      call("POST", "readers", { name: name }).then(function (r) {
+        box.hidden = false; box.replaceChildren(el("b", "", "Read token for " + r.name + " (shown once): "), el("code", "", r.token), document.createTextNode(" "), copyBtn(r.token));
+        e.target.reset(); draw();
+      }).catch(function (err) { box.hidden = false; box.textContent = err.message; });
+    };
+    draw(); setInterval(draw, 60000);
+  }
+
   var page = document.body.dataset.page;
-  ({ overview: overview, run: run, data: data, view: view, search: search })[page] && ({ overview: overview, run: run, data: data, view: view, search: search })[page]();
+  var pages = { overview: overview, run: run, data: data, view: view, search: search, admin: admin };
+  if (pages[page]) pages[page]();
 })();

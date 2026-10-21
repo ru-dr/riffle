@@ -49,6 +49,11 @@ paused run to bring that place up to date. Real-time streaming is not needed.
   a private one through an IAP tunnel or Tailscale. Read access is a token in
   an HttpOnly cookie, with a strict Content-Security-Policy and a limit on failed
   sign-ins per address.
+- An admin page (`/admin`, admin token only, its own cookie) shows PC tokens and their state and can revoke, rotate a split
+  (rebuilding its join codes from flags saved when it was planned) and add readers. The read pages cannot change tokens and the
+  admin page cannot read data.
+- The one piece of state only on the VM disk, `tokens.json`, is copied to the bucket on every change and restored by a new VM;
+  `manage.py restore` rebuilds the pages' files and the index from the bucket.
 - The pages on the VM follow the site's design and the miner web view. They show,
   per PC, repos done and total, the repo being mined, PRs mined and PRs left, health
   flags and file lists, with charts, log and trace search, and a file viewer that

@@ -33,6 +33,7 @@ import threading
 import time
 from urllib.parse import parse_qs, unquote, urlparse
 
+import backup
 import index as index_mod
 import store as store_mod
 import tables
@@ -50,6 +51,14 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 COOKIE = "riffle_session"
+ADMIN_COOKIE = "riffle_admin"          # the admin page's own session: an admin token, never a reader's
+
+
+def join_code(url: str, token: str, split: str, k: int, n: int, version: str | None, argv: list[str]) -> str:
+    """A join code, in the format of the miner's join.py (a test keeps the two in step), so the admin
+    page can rebuild a split's codes after a rotation."""
+    doc = {"u": url, "t": token, "s": split, "k": k, "n": n, "v": version, "a": argv}
+    return "riffle1." + base64.urlsafe_b64encode(json.dumps(doc, separators=(",", ":")).encode()).decode().rstrip("=")
 
 
 def valid_key(key: str) -> bool:
@@ -79,10 +88,50 @@ class Service:
         self.data = data_dir
         self.tokens_path = os.path.join(data_dir, "tokens.json")
         self.store = store_mod.Store(data_dir, bucket)
+        backup.pull(self.store, self.tokens_path)             # a new VM with an empty disk gets its tokens back
         self.index = index_mod.Index(os.path.join(data_dir, "index.db"))
         self.spool = os.path.join(data_dir, "spool")
         self.throttle = Throttle()
         os.makedirs(self.spool, exist_ok=True)
+
+    def tokens_changed(self) -> None:
+        backup.push(self.store, self.tokens_path)
+
+    def admin_overview(self) -> dict:
+        """Everything the admin page shows: PC tokens with their state, the splits, and who can read."""
+        data = tokens.load(self.tokens_path)
+        runs = {}
+        for r in self.index.runs():
+            cur = runs.get(r["pc"])
+            if cur is None or r["updated"] > cur["updated"]:
+                runs[r["pc"]] = r
+        now = time.time()
+        pcs = []
+        for name, rec in sorted(data["pcs"].items()):
+            r = runs.get(name)
+            reason = (r or {}).get("status", {}).get("reason")
+            if rec.get("expires") and rec["expires"] < now:
+                state = "expired"
+            elif not r:
+                state = "never"
+            elif reason == "batch done":
+                state = "done"
+            elif reason == "stopped":
+                state = "stopped"
+            else:
+                state = "mining" if now - r["updated"] < 25 * 60 else "silent"
+            st = (r or {}).get("status", {})
+            pcs.append({"pc": name, "split": rec.get("split"), "created": rec.get("created"), "expires": rec.get("expires"),
+                        "last_upload": r["updated"] if r else None, "state": state, "host": st.get("host"),
+                        "repos_done": st.get("repos_done"), "repos_total": st.get("repos_total"), "prs_done": st.get("prs_done")})
+        splits = []
+        for sid, meta in sorted(data["splits"].items()):
+            mine = [p for p in pcs if p["split"] == sid]
+            splits.append(dict(meta, split_id=sid, tokens=len(mine), uploaded=sum(1 for p in mine if p["last_upload"]),
+                               can_rotate=bool(meta.get("flags") is not None)))
+        names = lambda kind: [{"name": n, "created": r.get("created")} for n, r in sorted(data[kind].items())]   # noqa: E731
+        return {"pcs": pcs, "splits": splits, "readers": names("readers"), "admins": names("admins"),
+                "bucket": self.store.bucket_name}
 
     # -- uploads ---------------------------------------------------------
     def put(self, pc: str, key: str, rfile, length: int, want_sha: str | None) -> tuple[int, str]:
@@ -283,6 +332,16 @@ def make_handler(svc: Service):
             cookie = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
             return cookie[COOKIE].value if COOKIE in cookie else None
 
+        def _admin_token(self) -> str | None:
+            """A Bearer admin token (scripts, the miner) or the admin page's own cookie."""
+            if self.headers.get("Authorization"):
+                return self._token()
+            cookie = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
+            return cookie[ADMIN_COOKIE].value if ADMIN_COOKIE in cookie else None
+
+        def _public_url(self) -> str:
+            return (os.environ.get("RIFFLE_PUBLIC_URL") or f"{'https' if self.https() else 'http'}://{self.headers.get('Host', 'localhost')}").rstrip("/")
+
         def _is_reader(self) -> bool:
             who = tokens.who(svc.tokens_path, self._token())
             return bool(who and who[0] == "readers")
@@ -337,13 +396,15 @@ def make_handler(svc: Service):
         def do_POST(self):
             path = urlparse(self.path).path
             try:
-                length = min(int(self.headers.get("Content-Length", "0")), 4096)
+                length = min(int(self.headers.get("Content-Length", "0")), 32768)
             except ValueError:
                 length = 0
             raw = self.rfile.read(length)
             if path.startswith("/v1/admin/"):
                 return self._admin_post(path, raw)
             form = parse_qs(raw.decode("utf-8", "replace"))
+            if path == "/admin/login":
+                return self._admin_login(form)
             if path != "/login":
                 return self._reject(404, "not found")
             if svc.throttle.blocked(self.client()):
@@ -356,35 +417,81 @@ def make_handler(svc: Service):
             cookie = f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000" + ("; Secure" if self.https() else "")
             self._send(302, "", extra={"Location": "/", "Set-Cookie": cookie})
 
+        def _admin_login(self, form: dict):
+            html_t = "text/html; charset=utf-8"
+            if svc.throttle.blocked(self.client()):
+                return self._send(429, ui.login("Too many failed attempts from this address. Wait a few minutes and try again.", True, admin=True), html_t)
+            token = (form.get("token") or [""])[0].strip()
+            who = tokens.who(svc.tokens_path, token)
+            if not who or who[0] != "admins":
+                svc.throttle.fail(self.client())
+                return self._send(401, ui.login("That token was not accepted. The admin page needs an admin token (it starts with ad_), "
+                                                "not a read token.", admin=True), html_t)
+            cookie = f"{ADMIN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" + ("; Secure" if self.https() else "")
+            self._send(302, "", extra={"Location": "/admin", "Set-Cookie": cookie})
+
         # -- admin: token issue and revoke ------------------------------------
         def _admin(self) -> bool:
             if svc.throttle.blocked(self.client()):
                 self._send(429, json.dumps({"error": "too many failed attempts"}), "application/json")
                 return False
-            who = tokens.who(svc.tokens_path, self._token())
+            who = tokens.who(svc.tokens_path, self._admin_token())
             if who and who[0] == "admins":
                 return True
-            svc.throttle.fail(self.client())
+            if self._admin_token():
+                svc.throttle.fail(self.client())
             self._send(401, json.dumps({"error": "admin token required"}), "application/json")
             return False
 
         def _admin_post(self, path: str, raw: bytes):
+            if (not self.headers.get("Authorization") and self._admin_token()
+                    and self.headers.get("X-Requested-With") != "riffle"):               # a cookie call must come from our own page
+                return self._send(403, json.dumps({"error": "missing X-Requested-With"}), "application/json")
             if not self._admin():
                 return
             try:
                 body = json.loads(raw or b"{}")
                 if path == "/v1/admin/splits":
+                    flags = body.get("flags")
                     out = tokens.issue_split(svc.tokens_path, str(body.get("split_id", "")), int(body.get("n", 0)),
-                                             float(body["days"]) if body.get("days") else None)
+                                             float(body["days"]) if body.get("days") else None,
+                                             flags if isinstance(flags, list) else None, body.get("miner_version"))
+                    svc.tokens_changed()
                     return self._json({"split_id": body["split_id"], "pcs": out})
+                if path == "/v1/admin/rotate":
+                    sid = str(body.get("split_id", ""))
+                    meta = tokens.load(svc.tokens_path)["splits"].get(sid)
+                    if not meta:
+                        return self._json({"error": f"no split {sid}"}, 404)
+                    days = float(body["days"]) if body.get("days") not in (None, "") else meta.get("days")
+                    out = tokens.issue_split(svc.tokens_path, sid, int(meta["n"]), days or None, meta.get("flags", []), meta.get("version"))
+                    svc.tokens_changed()
+                    url = self._public_url()
+                    for p in out:
+                        p["code"] = join_code(url, p.pop("token"), sid, p["k"], p["n"], meta.get("version"), meta.get("flags", []))
+                    return self._json({"split_id": sid, "pcs": out})
                 if path == "/v1/admin/revoke":
                     if body.get("split_id"):
-                        return self._json({"revoked": tokens.revoke_split(svc.tokens_path, str(body["split_id"]))})
-                    ok = tokens.revoke(svc.tokens_path, str(body.get("name", "")))
-                    return self._json({"revoked": [body["name"]] if ok else []})
+                        gone = tokens.revoke_split(svc.tokens_path, str(body["split_id"]))
+                    elif body.get("kind"):
+                        gone = [body["name"]] if tokens.revoke_kind(svc.tokens_path, str(body["kind"]), str(body.get("name", ""))) else []
+                    else:
+                        gone = [body["name"]] if tokens.revoke(svc.tokens_path, str(body.get("name", ""))) else []
+                    if gone:
+                        svc.tokens_changed()
+                    return self._json({"revoked": gone})
+                if path == "/v1/admin/readers":
+                    name = str(body.get("name", ""))
+                    token = tokens.issue(svc.tokens_path, "readers", name)
+                    svc.tokens_changed()
+                    return self._json({"name": name, "token": token})
             except (ValueError, KeyError, TypeError) as e:
                 return self._json({"error": str(e) or "bad request"}, 400)
             self._json({"error": "unknown endpoint"}, 404)
+
+        def _admin_overview(self):
+            if self._admin():
+                self._json(svc.admin_overview())
 
         def _admin_pcs(self):
             if not self._admin():
@@ -415,6 +522,17 @@ def make_handler(svc: Service):
                 return self._json(info)
             if path == "/v1/admin/pcs":
                 return self._admin_pcs()
+            if path == "/v1/admin/overview":
+                return self._admin_overview()
+            if path == "/admin/login":
+                return self._send(200, ui.login(admin=True), html_t)
+            if path == "/admin/logout":
+                return self._send(302, "", extra={"Location": "/admin/login", "Set-Cookie": f"{ADMIN_COOKIE}=; Path=/; Max-Age=0"})
+            if path == "/admin":
+                who = tokens.who(svc.tokens_path, self._admin_token())
+                if not who or who[0] != "admins":
+                    return self._send(302, "", extra={"Location": "/admin/login"})
+                return self._send(200, ui.shell("admin", "Admin"), html_t)
             if path.startswith("/static/"):
                 return self._static(path[len("/static/"):])
             if path == "/login":

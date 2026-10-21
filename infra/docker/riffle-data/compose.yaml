@@ -21,6 +21,8 @@ services:
       BQ_LOCATION: ${BQ_LOCATION:-US}
       RIFFLE_MAX_FILE_BYTES: ${RIFFLE_MAX_FILE_BYTES:-2147483648}
       # behind Caddy the client address and https come from its X-Forwarded-* headers
+      # the address join codes made by the admin page point at (https://<RIFFLE_DOMAIN>); blank = the address it was reached on
+      RIFFLE_PUBLIC_URL: ${RIFFLE_PUBLIC_URL:-}
       RIFFLE_TRUST_PROXY: ${RIFFLE_TRUST_PROXY:-0}
       RIFFLE_COOKIE_SECURE: ${RIFFLE_COOKIE_SECURE:-0}
     # Loopback by default: the service speaks plain HTTP, so its tokens must not cross a

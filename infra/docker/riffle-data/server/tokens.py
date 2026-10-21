@@ -33,7 +33,9 @@ def load(path: str) -> dict:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
         data = {}
-    return {k: data.get(k, {}) for k in KINDS}
+    out = {k: data.get(k, {}) for k in KINDS}
+    out["splits"] = data.get("splits", {})                  # split ID -> {n, flags, version, created, days}
+    return out
 
 
 def save(path: str, data: dict) -> None:
@@ -63,13 +65,33 @@ def issue(path: str, kind: str, name: str, *, split: str | None = None, days: fl
     return token
 
 
-def issue_split(path: str, split: str, n: int, days: float | None = None) -> list[dict]:
-    """One token per PC 1..n for a split, named pc<k>of<n>-<split>. Issuing the same
-    split again replaces its tokens, so it also rotates them."""
+def issue_split(path: str, split: str, n: int, days: float | None = None, flags: list[str] | None = None,
+                version: str | None = None) -> list[dict]:
+    """One token per PC 1..n for a split, named pc<k>of<n>-<split>. Issuing the same split
+    again replaces its tokens, so it also rotates them. The split's flags and miner version are
+    kept (not secret) so the admin page can rotate it and rebuild the join codes later."""
     if not SPLIT.match(split) or not 1 <= n <= 200:
         raise ValueError("a split ID and 1 to 200 PCs")
-    return [{"pc": f"pc{k}of{n}-{split}", "k": k, "n": n,
-             "token": issue(path, "pcs", f"pc{k}of{n}-{split}", split=split, days=days)} for k in range(1, n + 1)]
+    out = [{"pc": f"pc{k}of{n}-{split}", "k": k, "n": n,
+            "token": issue(path, "pcs", f"pc{k}of{n}-{split}", split=split, days=days)} for k in range(1, n + 1)]
+    data = load(path)
+    old = data["splits"].get(split, {})
+    data["splits"][split] = {"n": n, "days": days, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                             "flags": [str(f) for f in flags] if flags is not None else old.get("flags", []),
+                             "version": version or old.get("version")}
+    save(path, data)
+    return out
+
+
+def revoke_kind(path: str, kind: str, name: str) -> bool:
+    """Revoke one name of one kind (revoke() removes the name from every kind)."""
+    if kind not in KINDS:
+        return False
+    data = load(path)
+    hit = data[kind].pop(name, None) is not None
+    if hit:
+        save(path, data)
+    return hit
 
 
 def revoke(path: str, name: str) -> bool:

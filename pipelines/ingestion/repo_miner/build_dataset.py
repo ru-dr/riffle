@@ -165,7 +165,8 @@ def _issue_tokens(args, sid: str, n: int) -> None:
     if not url or not admin:
         sys.exit("[tokens] set RIFFLE_SYNC_URL and RIFFLE_ADMIN_TOKEN (an admin token from the store: "
                  "`manage.py add-admin NAME`) in .env to issue tokens")
-    body = json.dumps({"split_id": sid, "n": n, "days": args.token_days}).encode()
+    flags = _run_flags(sys.argv[1:])
+    body = json.dumps({"split_id": sid, "n": n, "days": args.token_days, "flags": flags, "miner_version": __version__}).encode()
     req = urllib.request.Request(f"{url}/v1/admin/splits", data=body, method="POST",
                                  headers={"Authorization": f"Bearer {admin}", "Content-Type": "application/json"})
     try:
@@ -175,7 +176,6 @@ def _issue_tokens(args, sid: str, n: int) -> None:
         sys.exit(f"[tokens] the store refused: HTTP {e.code} {e.read()[:200].decode('utf-8', 'replace')}")
     except (urllib.error.URLError, OSError) as e:
         sys.exit(f"[tokens] cannot reach the store: {e}")
-    flags = _run_flags(sys.argv[1:])
     print(f"\n[tokens] one write token per PC, valid for split {sid} only"
           + (f", for {args.token_days:g} days" if args.token_days else "") + ". Send each code ONLY to that PC's owner:")
     lines = []

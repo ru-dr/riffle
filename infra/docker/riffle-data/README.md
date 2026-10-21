@@ -41,7 +41,7 @@ names from the file's own schema. Big files that live only in the bucket are dow
 
 | Kind | Made with | Can |
 | --- | --- | --- |
-| **admin** (`ad_…`) | `manage.py add-admin NAME` | issue and revoke PC tokens; reads nothing, writes no files. Lives only in the lead's `.env` as `RIFFLE_ADMIN_TOKEN` |
+| **admin** (`ad_…`) | `manage.py add-admin NAME` | issue, rotate and revoke PC tokens, add readers; reads nothing, writes no files. In the lead's `.env` as `RIFFLE_ADMIN_TOKEN`, and the sign-in of the admin page |
 | **PC** (`rw_…`) | `build_dataset.py … --shard-plan N --issue-tokens` (or `manage.py issue-split ID N`) | write under its own name, and only under its own split; optionally expires |
 | **reader** (`rd_…`) | `manage.py add-reader NAME` | read the pages and the APIs |
 
@@ -50,6 +50,28 @@ The normal flow: the lead plans the split with `--shard-plan N --issue-tokens`, 
 (see the miner's README). Planning the same split again rotates its tokens; `POST /v1/admin/revoke`
 with a `split_id` or a `name` (or `manage.py revoke-split ID`) cuts access at once, and
 `GET /v1/admin/pcs` shows each token's split, expiry and last upload. Only hashes are stored.
+
+## The admin page (`/admin`)
+
+A second sign-in, with an **admin** token only (a read token is refused, and an admin token reads no data). It shows every PC token with its state (mining, done, stopped, silent, never uploaded, expired), progress, expiry and last upload, and the splits that were planned. From it the lead can:
+
+- **Revoke** one PC, or **Revoke all** of a split (press twice to confirm).
+- **Rotate** a split: new tokens for every PC, the old ones stop at once, and the new join codes are shown once with Copy buttons. The page rebuilds the codes from the split's saved flags, so it does not need the repos file.
+- **Add or revoke a reader** (the token is shown once).
+- See which admin tokens exist (they are made on the VM with `manage.py add-admin`).
+
+A new split is still planned from the miner (TUI Lead tools, F3), because the plan needs the repos file. The admin session is its own cookie (8 hours), calls from it must carry `X-Requested-With`, and the page has no way to read data.
+
+## Backup and restore
+
+The only state that lives just on the VM disk is `tokens.json` (hashes and each split's saved flags). Every change to it is copied to the bucket as `_system/tokens.json`. Everything else is already in the bucket. To rebuild after losing the disk: create the VM again with `gcp/up.sh` (a new empty disk restores the tokens by itself when the service starts), then
+
+```bash
+gcloud compute ssh riffle-data --project=riffle-data-miner --zone=us-central1-a \
+  --command='cd /opt/riffle-data && sudo docker compose exec -T riffle-data python manage.py restore'
+```
+
+which puts the logs, health files and `run.json` files back on the disk and rebuilds the index. Datasets stay in the bucket and are read from it.
 
 ## Run it on a laptop (no GCP)
 
