@@ -1513,6 +1513,7 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.5.0 | 10-20 | `--full-repo`: mine a repo's whole history instead of a date window or a cap; a missing LLM backend now stops the run instead of nulling the LLM columns; the shard plan (and TUI Show split) also lists PR counts from the `[N PRs]` tags |
 | 6.5.1 | 10-21 | `--test` mines a fixed window (2020-01-01 to 2025-06-30, no age cutoff), so test runs pick the same PRs on every PC and day; before, the cap, `--min-age-days` and the stale-open cutoff moved with today's date and the form |
 | 6.5.2 | 10-21 | TUI only, output identical: the form no longer saves or restores `.tui_settings.json`, so every launch starts from the defaults (everything on except Git PR discovery, Keep clones, Auto re-mine and Skip big repos); the default LLM model in the TUI is now Haiku (the CLI default stays `sonnet`) |
+| 6.5.3 | 10-21 | output identical: the CI-history pre-pass checkpoints its pages (`ci_cache/<repo>.json.pages.json`) so a stopped run resumes at the next page, and a walk that ended on a failed page is no longer cached as complete |
 
 Contract versions: `mined_dataset` 1.0 (2026-10-18, miner 2.2.0) → 1.1 (provenance, `domain`; miner 4.0.0) → 1.2 (`outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer`; miner 5.0.0). `mined_snapshot` 1.0 (miner 3.1.0) → 1.1 → 1.2 → 1.3 (`snapshot_weight`, `moment_bucket`; miner 6.0.0). `mined_commit_features` 1.0 (miner 3.1.0). Full table: `docs/contracts.md`.
 
