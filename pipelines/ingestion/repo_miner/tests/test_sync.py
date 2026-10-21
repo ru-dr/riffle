@@ -183,3 +183,24 @@ def test_settings_come_from_dot_env_alone(tmp_path):
     code = f"import sys; sys.path.insert(0, {os.path.dirname(os.path.dirname(os.path.abspath(__file__)))!r}); import sync; print(sync.settings())"
     out = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=env, capture_output=True, text=True).stdout.strip()
     assert out == "('https://store.example', 'rw_x')"
+
+
+def test_the_store_hears_at_once_when_a_run_and_each_repo_start(monkeypatch):
+    """A PC must show on the store within seconds of Start, not after its first repo or a long timer."""
+    import types
+    import build_dataset as bd
+    sent = []
+    monkeypatch.setattr(bd.sync, "whoami", lambda *a, **k: {"ok": True, "name": "pc1", "split": None})
+    monkeypatch.setattr(bd.sync, "put_status", lambda prefix, status: sent.append((prefix, status["reason"], status.get("current"))) or True)
+    monkeypatch.setattr(bd, "_SYNC", {"args": types.SimpleNamespace(out="d.parquet", shard="1/2", split_id="abc"), "counts": {}, "repos": {}})
+    assert bd.HEARTBEAT_S == 180
+    bd._sync_begin([("o", "a", ""), ("o", "b", "")], {})
+    assert [r for _p, r, _c in sent] == ["started"]                                  # the moment the run begins
+    bd._sync_mark("o/a", "mining")
+    assert sent[-1][1:] == ("repo started", "o/a")                                   # and when a repo begins
+    n = len(sent)
+    bd._sync_beat()                                                                   # inside the 3-minute window: nothing more
+    assert len(sent) == n
+    bd._SYNC["beat"] -= bd.HEARTBEAT_S + 1
+    bd._sync_beat()
+    assert sent[-1][1] == "heartbeat"

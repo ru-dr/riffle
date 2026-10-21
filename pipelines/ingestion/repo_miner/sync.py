@@ -238,7 +238,7 @@ def put_status(prefix: str, status: dict) -> bool:
                synced_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     body = json.dumps(doc, indent=2).encode()
     try:
-        _put(cfg[0], cfg[1], f"{prefix}/run.json", body, len(body), None, CONNECT_S)
+        _put(cfg[0], cfg[1], f"{prefix}/run.json", body, len(body), None, 8.0)     # short: it must never hold a run up
         return True
     except (urllib.error.URLError, OSError, TimeoutError):
         return False

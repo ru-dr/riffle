@@ -136,7 +136,7 @@
   var REPO_RANK = { mining: 0, failed: 1, pending: 2, skipped: 3, done: 4 };
   function run() {
     var pc = qs.get("pc"), prefix = qs.get("prefix"), filter = "all";
-    api("run", { pc: pc, prefix: prefix }).then(function (d) {
+    function load() { api("run", { pc: pc, prefix: prefix }).then(function (d) {
       var r = d.run, s = r.status, st = runState(r);
       $("#r-cap").textContent = "Run · split " + (s.split_id || "none") + " · miner " + (s.miner_version || "?");
       $("#r-title").replaceChildren(document.createTextNode(r.pc + " "), tag(st[0], st[1]));
@@ -193,7 +193,8 @@
           return td;
         }
       }));
-    }).catch(function (e) { $("#r-title").textContent = "Run not found"; $("#r-sub").textContent = e.message; });
+    }).catch(function (e) { $("#r-title").textContent = "Run not found"; $("#r-sub").textContent = e.message; }); }
+    load(); setInterval(load, 30000);                                   // follow a PC that is mining
   }
 
   /* ---------------- parquet explorer ---------------- */

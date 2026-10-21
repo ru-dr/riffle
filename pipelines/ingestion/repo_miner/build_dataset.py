@@ -441,7 +441,7 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
 # each repo's state for the store's progress page: pending, mining, done, failed
 # or skipped, with its finished rows and, once selected, how many PRs it has.
 _SYNC: dict | None = None
-HEARTBEAT_S = 900          # status-only update while a long repo mines
+HEARTBEAT_S = 180          # status-only update (progress, current repo) while a long repo mines
 
 
 def _sync_begin(entries: list, done_repos: dict) -> None:
@@ -470,6 +470,7 @@ def _sync_begin(entries: list, done_repos: dict) -> None:
                       for o, n, _ in entries}
     _SYNC["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     _SYNC["beat"] = time.monotonic()
+    _sync_beat(True, "started")
 
 
 def _sync_mark(repo: str, state: str, args=None) -> None:
@@ -481,6 +482,8 @@ def _sync_mark(repo: str, state: str, args=None) -> None:
     if state == "done" and args is not None:
         rec["rows"] = _mined_repos(args.out).get(repo.lower(), 0)
     _SYNC["repos"][repo] = rec
+    if state == "mining":
+        _sync_beat(True, "repo started")
 
 
 def _selected_count(repo: str) -> int | None:
@@ -541,13 +544,14 @@ def _sync_now(why: str, **counts) -> None:
         print(f"[sync] failed ({type(e).__name__}: {e}); the run is unaffected", file=sys.stderr, flush=True)
 
 
-def _sync_beat() -> None:
-    """Called while a child runs: a status-only update every HEARTBEAT_S."""
-    if _SYNC is None or time.monotonic() - _SYNC.get("beat", 0) < HEARTBEAT_S:
+def _sync_beat(force: bool = False, why: str = "heartbeat") -> None:
+    """A status-only update (no files): every HEARTBEAT_S while a child runs, and at once when `force` (the run
+    started, a repo started), so the store shows a PC the moment it begins instead of after its first repo."""
+    if _SYNC is None or not _SYNC.get("repos") or (not force and time.monotonic() - _SYNC.get("beat", 0) < HEARTBEAT_S):
         return
     _SYNC["beat"] = time.monotonic()
     try:
-        status = _sync_status("heartbeat")
+        status = _sync_status(why)
         sync.put_status(_sync_prefix(status), status)
     except Exception:                                       # noqa: BLE001
         pass
