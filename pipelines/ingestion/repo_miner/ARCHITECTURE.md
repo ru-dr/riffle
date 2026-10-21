@@ -240,7 +240,7 @@ Afterwards `main()` writes the dataset (`_write`), runs the health check, delete
 
 ### 4.3 Choosing which PRs become rows
 
-There are four selection modes. Drafts are always left out (never offered for review).
+There are four selection modes (plus `--full-repo`, below). Drafts are always left out (never offered for review).
 
 **A. Date-window mode** (`--window-from/--window-to`, set both; the recommended mode for dataset runs). `GitHubAPI.window_prs`:
 
@@ -250,6 +250,8 @@ There are four selection modes. Drafts are always left out (never offered for re
 - `--max-prs N` keeps the **newest contiguous block** of that many PRs by creation time. With `--cap-on training` only *training PRs* count toward N (outside non-bot contributors plus the 5% sample, `scope.py`), so `--max-prs 10000 --cap-on training` yields about 10,000 PRs to train on. Maintainer and bot PRs inside the block are still mined (history needs them) but do not count. Maintainers confirmed from history are known only after timelines are read, so the training count can come out slightly below the cap.
 - **History lead-in:** closed PRs created in the `--lead-in-days` (default 180) before the block are collected as **metadata only** (the PR list plus one timeline call each). They are never mined into rows; they give the block's first PRs their merge-signal history (`repo_outside_merge_rate`, first-response times, agent load, similar PRs). Breakage history (`similar_pr_*`, `path_failure_mode_*`) needs mined outcomes, so it still starts empty.
 - The line `[window] ...` reports merged, unmerged, training PRs, block start and lead-in.
+
+**`--full-repo`.** Mode A with the window fixed to `config.FULL_REPO_FROM..FULL_REPO_TO` (2000-01-01 to 9999-12-31), `max_prs` unset and `lead_in_days` 0: every closed, non-draft PR the repo has, merged and unmerged, minus those younger than `--min-age-days`. The dates are fixed, not today's, so a resumed run's pinned selection still matches. Rejects `--window-from/--window-to`, `--max-prs`, `--lead-in-days`, `--cap-on` (and `--test` in `build_dataset.py`).
 
 **B. Legacy mode** (no window). `merged_prs`: fetches closed PRs by creation order, collects merged ones, sorts by `merged_at`, keeps the newest `--max-prs`. Unmerged PRs are taken from the same creation window as the merged ones (created at or after the oldest kept merged PR). A small over-fetch covers created-vs-merged reordering at the boundary.
 
@@ -665,7 +667,7 @@ Fetch statuses: `off`, `skipped`, `empty`, `ok`, `fail`.
 
 - **`claude_cli` (default):** headless Claude Code, `claude -p --output-format json --model <m> --setting-sources "" --tools "" --strict-mcp-config --disable-slash-commands --no-session-persistence --system-prompt ... --json-schema ...`, run from an **empty temp dir** with no tools, MCP, settings or slash commands, so no CLAUDE.md, hook or plugin leaks into the judgement. Uses the local Claude Code login (no API key); model `sonnet` unless `LLM_MODEL`. Timeout 180 s; two quick retries with waits of 10 s × attempt; returns `None` on failure. Token counts and `total_cost_usd` are accumulated per run (on a Pro/Max login that is Claude Code's estimate of API pricing, not a charge).
 - **`api`** (`LLM_BACKEND=api`): any OpenAI-compatible endpoint with the `openai` SDK and `LLM_API_KEY`; default `LLM_BASE_URL` Anthropic's endpoint, default model `claude-sonnet-5`. Transient statuses (408, 409, 425, 429, 5xx) and timeout/connection/rate-limit errors retry up to 6 attempts with back-off and `Retry-After`; permanent errors (bad key/request/unknown model) fail fast so a misconfiguration cannot hang the run. No temperature is sent (newer Claude models reject it).
-- `--llm` is **on by default** and is switched off with a warning when no backend is usable (`unavailable_reason`: no `claude` on PATH, or `api` without a key/SDK), so a box without an LLM still mines.
+- `--llm` is **on by default** and is checked before any repo is mined: when no backend is usable (`unavailable_reason`: no `claude` on PATH, or `api` without a key/SDK) both `build_dataset.py` and `mine_repo.py` stop with an error, so no dataset is silently missing its LLM columns. `--no-llm` is the explicit way to mine without them.
 - `--llm-test` makes one call on a known-risky sample diff (auth check removed, exception swallowed) and reports whether the answer looks sane.
 
 ### 7.5 Never a row without its answer
@@ -1262,7 +1264,7 @@ Defaults shown are the code's. Every stage flag has a `--no-` form (`argparse.Bo
 | `--lead-in-days N` | 180 | history lead-in before the block (0 = off) |
 | `--cap-on {all,training}` | all | what `--max-prs` counts; `training` needs a window |
 | `--domain NAME` | none | written on every row |
-| `--llm / --no-llm` | on | LLM flags and the close-reason classifier; off automatically with a warning if no backend is usable |
+| `--llm / --no-llm` | on | LLM flags and the close-reason classifier; the run stops if no backend is usable, so datasets never silently lack the columns |
 | `--llm-model M` | `LLM_MODEL` or `sonnet` | model |
 | `--llm-test` | | one call on a sample diff, report, exit |
 | `--llm-scope {training,all}` | training | rows that get LLM calls |
@@ -1509,6 +1511,7 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.2.0 | 10-20 | run trace, auto-naming of sharded runs, snapshot assembly at batch end, `merge_shards.py`, revert/hotfix label fixes, semgrep findings compared by relative path (they were overcounted), big picture on phones |
 | 6.3.0 | 10-20 | `label_ci_fail` counts only the merge commit's push-triggered CI; `preview` joins the optional-check denylist |
 | 6.4.0 | 10-20 | environment doctor: OS/distro detection, per-package-manager installs (Node and Go first when missing), user-prefix npm, PATH for user bin dirs, grouped report, 5 s pause before the TUI opens; fixed label: every GraphQL diff was `breaking` (the miner matched "No breaking changes detected"); a `graphql-inspector` failure is now null |
+| 6.5.0 | 10-20 | `--full-repo`: mine a repo's whole history instead of a date window or a cap; a missing LLM backend now stops the run instead of nulling the LLM columns |
 
 Contract versions: `mined_dataset` 1.0 (2026-10-18, miner 2.2.0) → 1.1 (provenance, `domain`; miner 4.0.0) → 1.2 (`outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer`; miner 5.0.0). `mined_snapshot` 1.0 (miner 3.1.0) → 1.1 → 1.2 → 1.3 (`snapshot_weight`, `moment_bucket`; miner 6.0.0). `mined_commit_features` 1.0 (miner 3.1.0). Full table: `docs/contracts.md`.
 

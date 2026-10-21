@@ -95,7 +95,7 @@ flags (the best setup is the default; each stage has a --no- form):
   --append           append rows to --out and dedup by (repo, pr_number);
                      lets one file accumulate across many runs
   --llm              LLM semantic flags + close-reason classifier (default on;
-                     switched off with a warning when no backend is usable)
+                     the run stops if no backend is usable; --no-llm to skip on purpose)
   --ci-history       historical CI-fail-rate features (<=400 API calls, cached; on)
   --szz              label_szz_bug fix-tracing label (windowed, cached; on)
   --declared-labels  declared_hotfix, labels at open (from the timeline; on)
@@ -142,6 +142,12 @@ python build_dataset.py --window-from 2023-07-01 --window-to 2026-07-31 \
   after the timelines are read, so the training count can come out slightly
   below the cap. The `[window]` line says how many training PRs it kept.
 - Without `--window-from` the older selection applies.
+- **`--full-repo`** mines the repo's whole history: every closed PR ever
+  opened, merged and unmerged, with no date window, no `--max-prs` cap and no
+  lead-in. It is a window from 2000-01-01 to 9999-12-31, so everything above
+  about drafts and `--min-age-days` still holds. It can't be combined with
+  `--window-from/--window-to`, `--max-prs`, `--lead-in-days`, `--cap-on` or
+  `--test`. Expect long runs on big repos; use `--shard` to split them.
 
 **Domains (ADR 0011):** tag a line in the repos file with `[domain: web-ts]` in its `#` comment (`https://github.com/o/r  # [~9000 commits] [domain: web-ts]`);
 `--only-domain web-ts` mines just those repos, and every row records its

@@ -104,3 +104,12 @@ def test_status_shows_skips_and_plan_pause():
     assert "LLM ok 1  fail 0  skipped 2" in text
     assert "LLM paused for plan reset until" in text
     assert summary["llm_skipped"] == 2 and summary["llm_paused"].startswith("LLM paused for plan reset")
+
+
+def test_full_repo_drops_the_cap_and_window():
+    def fn(app):
+        _set(app, full_repo=True, max_prs="100", window_from="2023-07-01", window_to="2026-07-31")
+        return app._build_cmd()
+    cmd = _run(fn)
+    assert "--full-repo" in cmd
+    assert "--max-prs" not in cmd and "--window-from" not in cmd

@@ -484,6 +484,9 @@ def main():
     ap.add_argument("--lead-in-days", type=int, default=None, help="history lead-in days (passed through)")
     ap.add_argument("--cap-on", choices=["all", "training"], default=None,
                     help="what --max-prs counts in window mode (passed through)")
+    ap.add_argument("--full-repo", action="store_true",
+                    help="mine each repo's whole history (every closed PR), not a date window or "
+                         "a --max-prs cap (passed through)")
     ap.add_argument("--only-domain", default=None,
                     help="mine only repos tagged [domain: NAME] in the repos file")
     ap.add_argument("--snapshots", action=argparse.BooleanOptionalAction, default=True,
@@ -529,6 +532,18 @@ def main():
                     help="repo used by --test instead of the repos file (default: "
                          "pallets/flask, the smallest repo in the corpus)")
     args = ap.parse_args()
+    if args.llm:
+        import config
+        from features import llm_flags
+        why = llm_flags.unavailable_reason(config.Settings())
+        if why:
+            sys.exit(f"[llm] unavailable: {why}. The LLM flags are part of the default dataset; "
+                     f"fix the backend (python doctor.py), or pass --no-llm to mine without them "
+                     f"on purpose.")
+    if args.full_repo and (args.window_from or args.window_to or args.max_prs is not None
+                           or args.cap_on or args.test):
+        sys.exit("--full-repo mines everything; it can't be combined with --window-from/--window-to, "
+                 "--max-prs, --cap-on or --test")
 
     # a sharded run tags its dataset (dataset_pc1of3.parquet) so PCs' files can't be mixed up
     plain_out = args.out
@@ -739,6 +754,8 @@ def main():
         for opt in ("llm_scope", "llm_sample_pct", "close_reason_llm", "llm_max_diff_chars"):
             if getattr(args, opt) is not None:
                 cmd += ["--" + opt.replace("_", "-"), str(getattr(args, opt))]
+        if args.full_repo:
+            cmd.append("--full-repo")
         if args.window_from:
             cmd += ["--window-from", args.window_from, "--window-to", args.window_to or ""]
         if args.lead_in_days is not None:

@@ -176,3 +176,11 @@ def test_cap_on_training_counts_only_training_prs():
     assert len(train) == 30 and len(kept) > 30      # maintainer PRs are mined too
     st.cap_on = "all"
     assert len(FakeAPI(prs, st).window_prs() + FakeAPI(prs, st).unmerged) <= 60
+
+
+def test_full_repo_window_keeps_every_eligible_pr():
+    st = _st(window_from=config.FULL_REPO_FROM, window_to=config.FULL_REPO_TO, lead_in_days=0)
+    api = FakeAPI(_prs(), st)
+    kept = api.window_prs() + api.unmerged
+    assert len(kept) == sum(1 for p in _prs() if not p["draft"])
+    assert not api.lead_in
