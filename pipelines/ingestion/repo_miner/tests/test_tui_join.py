@@ -256,3 +256,26 @@ def test_the_join_state_helpers_round_trip(tmp_path):
     join.clear_state(p)
     join.clear_state(p)                                                     # clearing twice is fine
     assert join.load_state(p) is None
+
+
+def test_text_from_the_store_is_shown_as_text_not_as_markup(tmp_path, monkeypatch):
+    """A name, file name or reason that comes from a join code or the store may contain [brackets]; Textual markup such
+    as [@click=app.quit] would make the screen act on it."""
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    hostile = "[@click=app.quit]pwn[/] [b]bold[/b]"
+
+    async def go(app, pilot):
+        app._show_store({"ok": True, "name": hostile, "split": "[red]x"})
+        line = str(app.query_one("#store_line", Static).render())
+        assert "[@click=app.quit]" in line and "[b]bold[/b]" in line, line      # shown literally
+        app._show_store({"ok": False, "why": "[@click=app.quit]no[/]"})
+        assert "[@click=app.quit]" in str(app.query_one("#store_line", Static).render())
+        app.joined = {"s": "706ba187", "k": 1, "n": 2, "a": LEAD,
+                      "lead": {"repos_name": "[@click=app.quit]r.txt", "issued_by": "[b]x"}}
+        app._show_card()
+        assert "[@click=app.quit]r.txt" in str(app.query_one("#lead_card", Static).render())
+        app._join_msg("Not saved: [@click=app.quit]x[/]", "bad")
+        assert "[@click=app.quit]x" in str(app.query_one("#join_msg", Static).render())
+        app.sync_info = {"t": 0, "off": "[@click=app.quit]token[/]"}
+        assert "[@click=app.quit]" in app._sync_text().replace("\\[", "[")
+    _run(go)

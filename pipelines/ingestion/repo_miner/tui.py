@@ -82,6 +82,7 @@ from textual import on  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
+from textual.markup import escape as esc  # noqa: E402  (text from a join code or the store is data, never markup)
 from textual.screen import ModalScreen  # noqa: E402
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input,  # noqa: E402
                              Label, Log, ProgressBar, Select, Static)
@@ -417,13 +418,13 @@ class LeadSettingsScreen(ModalScreen):
         same = "same as yours" if ver == self.my_version else f"yours is {self.my_version}: run git pull"
         with VerticalScroll(id="ls"):
             yield Static("The lead's settings   [dim]read-only · Esc closes[/dim]", id="ls_title")
-            yield Static(f"issued by [b]{lead.get('issued_by') or 'the lead'}[/b] on {(lead.get('created') or '?')[:10]} · "
-                         f"split [b]{d['s']}[/b] · you are PC [b]{d['k']}[/b] of [b]{d['n']}[/b]\n"
+            yield Static(f"issued by [b]{esc(str(lead.get('issued_by') or 'the lead'))}[/b] on {(lead.get('created') or '?')[:10]} · "
+                         f"split [b]{esc(str(d['s']))}[/b] · you are PC [b]{d['k']}[/b] of [b]{d['n']}[/b]\n"
                          f"code valid until {exp} · miner {ver} ({same})", id="ls_info")
             yield Static("Settings every PC runs with", classes="sec")
             yield DataTable(id="ls_settings", show_header=False)
             n = len(self.info["repos"])
-            yield Static(f"Repos in {lead.get('repos_name') or 'the list'} ({n}); yours are marked", classes="sec")
+            yield Static(f"Repos in {esc(str(lead.get('repos_name') or 'the list'))} ({n}); yours are marked", classes="sec")
             yield DataTable(id="ls_repos")
 
     def on_mount(self) -> None:
@@ -512,11 +513,12 @@ class LeadScreen(ModalScreen):
         url = os.environ.get("RIFFLE_SYNC_URL") or "(not set)"
         ok = bool(os.environ.get("RIFFLE_ADMIN_TOKEN"))
         self.query_one("#lead_status", Static).update(
-            f"Store [b]{url}[/b]  ·  admin token: " + ("[green]saved[/]" if ok else "[yellow]not saved: paste it below[/]")
-            + f"\nForm: [b]{self.tui._val('pcs') or '1'}[/b] PC(s) · repos file [b]{self.tui._val('repos_file')}[/b]")
+            f"Store [b]{esc(url)}[/b]  ·  admin token: " + ("[green]saved[/]" if ok else "[yellow]not saved: paste it below[/]")
+            + f"\nForm: [b]{self.tui._val('pcs') or '1'}[/b] PC(s) · repos file [b]{esc(str(self.tui._val('repos_file')))}[/b]")
 
     def _msg(self, text: str, level: str = "") -> None:
         color = {"bad": "red", "ok": "green", "warn": "yellow"}.get(level)
+        text = esc(text)
         self.query_one("#lead_msg", Static).update(f"[{color}]{text}[/]" if color else text)
 
     def _bg(self, fn) -> None:
@@ -710,7 +712,7 @@ class LeadScreen(ModalScreen):
         if not pc:
             self._msg("Pick a PC in the table first.", "warn")
             return
-        self._revoke("pc:" + pc["pc"], {"name": pc["pc"]}, pc["pc"])
+        self._revoke("pc:" + pc["pc"], {"name": pc["pc"], "kind": "pcs"}, pc["pc"])
 
     @on(Button.Pressed, "#split_revoke")
     def _revoke_split(self) -> None:
@@ -1091,12 +1093,12 @@ class RiffleTUI(App):
         if r.get("unset"):
             text = "[b]Team store[/b]\n[yellow]not joined[/] · paste the lead's code below"
         elif r["ok"]:
-            text = (f"[b]Team store[/b]\n[green]✓ joined as {r['name']}[/]\n"
-                    f"[dim]split {r.get('split') or 'any'} · uploads each repo and on Stop[/]")
+            text = (f"[b]Team store[/b]\n[green]✓ joined as {esc(str(r['name']))}[/]\n"
+                    f"[dim]split {esc(str(r.get('split') or 'any'))} · uploads each repo and on Stop[/]")
         elif r.get("unreachable"):
-            text = f"[b]Team store[/b]\n[yellow]unreachable[/] · {r['why']}\n[dim]everything saves here, uploads when it can[/]"
+            text = f"[b]Team store[/b]\n[yellow]unreachable[/] · {esc(str(r['why']))}\n[dim]everything saves here, uploads when it can[/]"
         else:
-            text = f"[b]Team store[/b]\n[red]✗ {r['why']}[/]\n[dim]ask the lead for a new code and paste it below[/]"
+            text = f"[b]Team store[/b]\n[red]✗ {esc(str(r['why']))}[/]\n[dim]ask the lead for a new code and paste it below[/]"
         self.query_one("#store_line", Static).update(text)
         if r.get("ok") and self.lead_argv is None:
             self._restore_join(r)
@@ -1167,6 +1169,7 @@ class RiffleTUI(App):
         """A message under the join box that stays until the next action (a toast disappears too soon to read)."""
         color = {"bad": "red", "ok": "green", "warn": "yellow"}.get(level)
         self._hint_shown = False
+        text = esc(text)
         self.query_one("#join_msg", Static).update(f"[{color}]{text}[/]" if color else text)
 
     @on(Input.Changed, "#join_code")
@@ -1251,13 +1254,13 @@ class RiffleTUI(App):
         lead = d.get("lead") or {}
         lines = ["[b]Lead's settings[/b] · locked"]
         name = lead.get("repos_name") or "repos list"
-        lines.append(f"file [b]{name}[/b]" + (f" · {len(info['repos'])} repos" if info and info["repos"] else ""))
+        lines.append(f"file [b]{esc(str(name))}[/b]" + (f" · {len(info['repos'])} repos" if info and info["repos"] else ""))
         if info and info["mine"]:
-            lines.append("yours: " + ", ".join(info["mine"]))
+            lines.append("yours: " + esc(", ".join(info["mine"])))
         if info:
             s = dict(info["settings"])
             lines.append(f"{s['Max PRs per repo']} PRs/repo · LLM {s['LLM flags']} · SZZ {s['SZZ label']}")
-        lines.append(f"[dim]split {d['s']} · PC {d['k']} of {d['n']} · F5 for all[/]")
+        lines.append(f"[dim]split {esc(str(d['s']))} · PC {d['k']} of {d['n']} · F5 for all[/]")
         card.update("\n".join(lines))
         card.display = True
 
@@ -2034,15 +2037,15 @@ class RiffleTUI(App):
         if not si:
             return None
         if si.get("off"):
-            return f"[yellow]uploads OFF for this run[/] · {si['off']}"
+            return f"[yellow]uploads OFF for this run[/] · {esc(str(si['off']))}"
         if si.get("on"):
-            return f"[green]uploading as {si['on']}[/] · after each repo and when you stop"
+            return f"[green]uploading as {esc(str(si['on']))}[/] · after each repo and when you stop"
         ago = _fmt_secs(max(0, time.time() - si["t"]))
         line = f"last upload {ago} ago · {si.get('sent', 0)} files sent"
         if si.get("failed"):
             line += f" · [red]{si['failed']} failed[/]"
         if si.get("stopped"):
-            line += f" · [yellow]{si['stopped']}; the next repo retries[/]"
+            line += f" · [yellow]{esc(str(si['stopped']))}; the next repo retries[/]"
         return line
 
     def _resources(self) -> str | None:

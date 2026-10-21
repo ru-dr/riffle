@@ -75,7 +75,7 @@ def run(args) -> int:
             exp = time.strftime("%Y-%m-%d", time.gmtime(r["expires"])) if r["expires"] else "never"
             print(f"{r['pc']:26} split {r['split'] or '-':10} expires {exp:11} last upload {ago(r['last_upload'])}")
     elif args.cmd == "revoke":
-        gone = call("POST", "/v1/admin/revoke", {"name": args.name})["revoked"]
+        gone = call("POST", "/v1/admin/revoke", {"name": args.name, "kind": "pcs"})["revoked"]
         print("revoked: " + (", ".join(gone) if gone else f"nothing named {args.name}"))
     else:
         gone = call("POST", "/v1/admin/revoke", {"split_id": args.split_id})["revoked"]

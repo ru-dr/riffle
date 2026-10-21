@@ -47,6 +47,13 @@ MAX_FILE = int(os.environ.get("RIFFLE_MAX_FILE_BYTES", 2 * 1024 ** 3))
 TRUST_PROXY = os.environ.get("RIFFLE_TRUST_PROXY") == "1"
 SEARCH_MAX_HITS = 300
 SEARCH_MAX_BYTES = 400 * 1024 ** 2
+SEARCH_BUDGET_S = 5.0
+SEARCH_LINE = 2000                                          # characters of a log line a pattern is tried on
+SOCKET_TIMEOUT_S = 120
+MAX_RUN_JSON = 1024 * 1024
+POST_CAP = {"/v1/admin/splits": 400_000}                    # a repo list is up to tokens.MAX_REPOS_TEXT, JSON-escaped
+POST_CAP_DEFAULT = 32768
+NESTED_QUANTIFIER = re.compile(r"[+*}]\)?[+*{]|\([^)]*[+*][^)]*\)[+*{]")
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -68,6 +75,8 @@ def valid_key(key: str) -> bool:
 class Throttle:
     """At most `limit` failed sign-ins per client address in `window` seconds."""
 
+    MAX_KEYS = 5000
+
     def __init__(self, limit: int = 20, window: int = 300):
         self.limit, self.window, self.fails, self.lock = limit, window, {}, threading.Lock()
 
@@ -75,12 +84,19 @@ class Throttle:
         now = time.time()
         with self.lock:
             hits = [t for t in self.fails.get(who, []) if now - t < self.window]
-            self.fails[who] = hits
+            if hits:
+                self.fails[who] = hits
+            else:
+                self.fails.pop(who, None)                   # no entry for an address that is not failing
             return len(hits) >= self.limit
 
     def fail(self, who: str) -> None:
+        now = time.time()
         with self.lock:
-            self.fails.setdefault(who, []).append(time.time())
+            if len(self.fails) >= self.MAX_KEYS:            # bounded: drop addresses whose failures have all aged out
+                for k in [k for k, v in self.fails.items() if not v or now - v[-1] >= self.window]:
+                    del self.fails[k]
+            self.fails.setdefault(who, []).append(now)
 
 
 class Service:
@@ -139,6 +155,8 @@ class Service:
     def put(self, pc: str, key: str, rfile, length: int, want_sha: str | None) -> tuple[int, str]:
         if not valid_key(key):
             return 400, "bad key"
+        if length < 0:
+            return 400, "bad Content-Length"
         if length > MAX_FILE:
             return 413, "too large"
         full = f"{pc}/{key}"
@@ -162,11 +180,15 @@ class Service:
             status = None
             if key.endswith("/run.json"):
                 try:
+                    if length > MAX_RUN_JSON:
+                        raise ValueError("too large")
                     with open(tmp, encoding="utf-8") as fh:
                         status = json.load(fh)
+                    if not isinstance(status, dict):
+                        raise ValueError("not an object")
                 except (OSError, ValueError):
                     os.remove(tmp)
-                    return 400, "run.json is not JSON"
+                    return 400, "run.json must be a JSON object (at most 1 MB)"
             self.store.put(full, tmp)
         except Exception:                                   # noqa: BLE001
             if os.path.exists(tmp):
@@ -179,11 +201,14 @@ class Service:
 
     # -- reading ---------------------------------------------------------
     def search(self, q: str, pc: str, regex: bool) -> tuple[list[dict], str]:
+        if regex and (len(q) > 200 or NESTED_QUANTIFIER.search(q)):
+            return [], "bad regex: that pattern can take for ever on a long line (a repeat inside a repeat); simplify it"
         try:
             pat = re.compile(q if regex else re.escape(q), re.I)
         except re.error as e:
             return [], f"bad regex: {e}"
         hits, scanned, note = [], 0, ""
+        deadline = time.monotonic() + SEARCH_BUDGET_S
         for f in self.index.files(pc or None, "%/logs/%"):
             fh = self.store.open_local(f["key"])
             if fh is None:
@@ -195,8 +220,10 @@ class Service:
                 break
             with fh:
                 for n, raw in enumerate(fh, 1):
-                    line = raw.decode("utf-8", "replace").rstrip()
-                    if pat.search(line):
+                    if time.monotonic() > deadline:
+                        return hits, "Search stopped at its time limit; narrow it to one PC or a simpler pattern."
+                    line = raw[:SEARCH_LINE * 4].decode("utf-8", "replace").rstrip()
+                    if pat.search(line[:SEARCH_LINE]):
                         hits.append({"key": f["key"], "line": n, "text": line[:400]})
                         if len(hits) >= SEARCH_MAX_HITS:
                             return hits, f"Showing the first {SEARCH_MAX_HITS} matches."
@@ -234,7 +261,7 @@ class Service:
         if (version, split) not in combos:
             version, split = combos[-1]
         finished = {r["pc"] for r in self.index.runs()
-                    if r["prefix"] == f"{version}/{split}" and r["status"].get("reason") == "batch done"}
+                    if r["prefix"] == f"{version}/{split}" and isinstance(r["status"], dict) and r["status"].get("reason") == "batch done"}
         out = []
         for incl in (False, True):
             files, _notes = tables.plan(data, version, split, None if incl else finished)
@@ -287,6 +314,7 @@ def make_handler(svc: Service):
     class Handler(http.server.BaseHTTPRequestHandler):
         server_version = "riffle-data"
         protocol_version = "HTTP/1.1"
+        timeout = SOCKET_TIMEOUT_S                          # an idle or stalled client must not hold a thread for ever
 
         def log_message(self, fmt, *a):
             sys.stderr.write("%s %s\n" % (self.client(), fmt % a))
@@ -295,8 +323,8 @@ def make_handler(svc: Service):
         def client(self) -> str:
             if TRUST_PROXY:
                 fwd = self.headers.get("X-Forwarded-For", "")
-                if fwd:
-                    return fwd.split(",")[0].strip()
+                if fwd:                                     # the proxy appends the real peer last; earlier entries are the client's to forge
+                    return fwd.split(",")[-1].strip()
             return self.client_address[0]
 
         def https(self) -> bool:
@@ -380,6 +408,8 @@ def make_handler(svc: Service):
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:
                 return self._reject(411, "Content-Length required")
+            if length < 0:
+                return self._reject(400, "bad Content-Length")
             key = unquote(path[len("/v1/files/"):])
             parts = key.split("/")
             if info["split"] and (len(parts) < 2 or parts[1] != info["split"]):
@@ -397,10 +427,13 @@ def make_handler(svc: Service):
         # -- POST (sign in) ---------------------------------------------------
         def do_POST(self):
             path = urlparse(self.path).path
+            cap = POST_CAP.get(path, POST_CAP_DEFAULT)
             try:
-                length = min(int(self.headers.get("Content-Length", "0")), 32768)
+                length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
-                length = 0
+                length = -1
+            if length < 0 or length > cap:
+                return self._reject(413 if length > cap else 400, "request body too large" if length > cap else "bad Content-Length")
             raw = self.rfile.read(length)
             if path.startswith("/v1/admin/"):
                 return self._admin_post(path, raw)
@@ -478,10 +511,14 @@ def make_handler(svc: Service):
                 if path == "/v1/admin/revoke":
                     if body.get("split_id"):
                         gone = tokens.revoke_split(svc.tokens_path, str(body["split_id"]))
-                    elif body.get("kind"):
-                        gone = [body["name"]] if tokens.revoke_kind(svc.tokens_path, str(body["kind"]), str(body.get("name", ""))) else []
                     else:
-                        gone = [body["name"]] if tokens.revoke(svc.tokens_path, str(body.get("name", ""))) else []
+                        kind, name = str(body.get("kind") or "pcs"), str(body.get("name", ""))   # a bare name means a PC token
+                        if kind == "admins":
+                            me = tokens.who(svc.tokens_path, self._admin_token())
+                            admins = tokens.load(svc.tokens_path)["admins"]
+                            if (me and me[1] == name) or (name in admins and len(admins) <= 1):
+                                return self._json({"error": "an admin cannot revoke itself or the last admin; add another admin first"}, 409)
+                        gone = [name] if tokens.revoke_kind(svc.tokens_path, kind, name) else []
                     if gone:
                         svc.tokens_changed()
                     return self._json({"revoked": gone})

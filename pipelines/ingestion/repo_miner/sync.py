@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import glob
 import hashlib
+import http.client
 import json
 import os
 import socket
@@ -60,10 +61,12 @@ def this_run_logs() -> list[str]:
     return [p for p in (trace[: -len(".trace.jsonl")] + ".log", trace) if os.path.isfile(p)]
 
 
-def collect(out: str, health_dir: str = "health", logs: list[str] | None = None) -> list[tuple[str, str]]:
+def collect(out: str, health_dir: str = "health", logs: list[str] | None = None,
+            repos: set[str] | None = None) -> list[tuple[str, str]]:
     """The files worth sending, as (local path, key under the run prefix).
     Only files that exist; the dataset's three tables, checkpoint and shard
-    manifest sit beside `out`, and `logs` are this run's log and trace."""
+    manifest sit beside `out`, and `logs` are this run's log and trace. `repos` (owner/name) limits the
+    health files to this run's repos; health/ also holds earlier runs' files."""
     import naming
     snap, commits = naming.snapshot_outs(out)
     stem = os.path.splitext(out)[0]
@@ -72,8 +75,10 @@ def collect(out: str, health_dir: str = "health", logs: list[str] | None = None)
     files = [(p, "data/" + os.path.basename(p)) for p in candidates if os.path.isfile(p)]
     files += [(p, "logs/" + os.path.basename(p)) for p in (this_run_logs() if logs is None else logs)
               if os.path.isfile(p)]
+    mine = None if repos is None else {r.replace("/", "_").lower() + ".json" for r in repos}
     files += [(p, "health/" + os.path.basename(p))
-              for p in sorted(glob.glob(os.path.join(health_dir, "*.json")))]
+              for p in sorted(glob.glob(os.path.join(health_dir, "*.json")))
+              if mine is None or os.path.basename(p).lower() in mine]
     seen, unique = set(), []
     for p, key in files:                    # `out` and its .jsonl twin can be the same path
         if os.path.abspath(p) not in seen:
@@ -138,7 +143,7 @@ def _put(url: str, token: str, key: str, body, size: int, sha256: str | None, ti
 
 def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
          logs: list[str] | None = None, state_path: str = STATE_FILE,
-         budget_s: float | None = None) -> dict:
+         budget_s: float | None = None, repos: set[str] | None = None) -> dict:
     """Send what changed since the last sync under `prefix` (`<miner_version>/<split>`),
     then `run.json` (`status` plus host and time). Returns
     {"sent", "skipped", "failed", "stopped"}; never raises."""
@@ -157,7 +162,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
     all_state = _load_state(state_path)
     state = all_state.setdefault(url, {})          # per store: a new URL sends everything again
     try:
-        files = collect(out, health_dir, logs)
+        files = collect(out, health_dir, logs, repos)
     except Exception as e:                                  # noqa: BLE001
         print(f"[sync] could not list files: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         result["stopped"] = "error"
@@ -187,15 +192,22 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
                      min(CONNECT_S + st.st_size / 2e6, left))
             state[key] = sig
             result["sent"] += 1
+            _save_state(state_path, all_state)              # a Stop mid-sync must not forget what already went
         except urllib.error.HTTPError as e:
             result["failed"].append(f"{rel} (HTTP {e.code})")
             if e.code in (401, 403):
                 result["stopped"] = f"token rejected (HTTP {e.code})"
                 break
-        except (urllib.error.URLError, OSError, TimeoutError) as e:
+        except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException) as e:
+            # a store that answers early (401, 413) and closes can look like a reset: ask it before blaming the network
+            who = whoami(url, token, timeout=8.0)
             result["failed"].append(f"{rel} ({type(e).__name__})")
-            result["stopped"] = "store unreachable"
+            result["stopped"] = (f"token rejected ({who['why']})" if not who["ok"] and not who.get("unreachable")
+                                 else "store unreachable")
             break
+        except OSError as e:                                # a local file that vanished or is locked: skip it, go on
+            result["failed"].append(f"{rel} (local {type(e).__name__})")
+            continue
 
     if result["stopped"] in (None, "out of time"):
         doc = dict(status, host=socket.gethostname(), synced_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -203,10 +215,23 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
         body = json.dumps(doc, indent=2).encode()
         try:
             _put(url, token, f"{prefix}/run.json", body, len(body), None, CONNECT_S)
-        except (urllib.error.URLError, OSError, TimeoutError):
+        except (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException):
             result["failed"].append("run.json")
     _save_state(state_path, all_state)
     return result
+
+
+def _get_json(url: str, token: str, path: str, timeout: float, limit: int):
+    """GET a small JSON document from the store (at most `limit` bytes). Raises HTTPError, URLError, OSError or ValueError."""
+    req = urllib.request.Request(f"{url.rstrip('/')}{path}", headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        raw = r.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("the answer is larger than expected")
+    return json.loads(raw)
+
+
+_NET_ERRORS = (urllib.error.URLError, OSError, TimeoutError, ValueError, http.client.HTTPException)
 
 
 def whoami(url: str | None = None, token: str | None = None, timeout: float = 15.0) -> dict:
@@ -215,28 +240,26 @@ def whoami(url: str | None = None, token: str | None = None, timeout: float = 15
     cfg = settings() if url is None else (url.rstrip("/"), token or "")
     if not cfg or not cfg[0] or not cfg[1]:
         return {"ok": False, "why": "not configured (RIFFLE_SYNC_URL and RIFFLE_SYNC_TOKEN)", "unset": True}
-    req = urllib.request.Request(f"{cfg[0]}/v1/whoami", headers={"Authorization": f"Bearer {cfg[1]}"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            info = json.loads(r.read())
+        info = _get_json(cfg[0], cfg[1], "/v1/whoami", timeout, 64 * 1024)
+        if not isinstance(info, dict):
+            raise ValueError("not an object")
         return dict(info, ok=info.get("kind") == "pcs", why=None if info.get("kind") == "pcs" else
                     f"this is a {str(info.get('kind', '?')).rstrip('s')} token, not a PC token")
     except urllib.error.HTTPError as e:
         return {"ok": False, "why": "the store did not accept this token (wrong, revoked or expired)"
                 if e.code == 401 else f"the store answered HTTP {e.code}"}
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as e:
-        return {"ok": False, "why": f"cannot reach the store ({type(e).__name__})", "unreachable": True}
+    except _NET_ERRORS as e:
+        return {"ok": False, "why": f"cannot reach the store ({type(e).__name__}); check RIFFLE_SYNC_URL", "unreachable": True}
 
 
 def fetch_split(url: str, token: str, timeout: float = 15.0) -> dict | None:
     """What the store keeps about this token's split (the lead's flags and repos list), or None when it cannot
     be had (an older store, no split, unreachable). Never raises; the caller falls back to the code's own contents."""
-    req = urllib.request.Request(f"{url.rstrip('/')}/v1/split", headers={"Authorization": f"Bearer {token}"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            doc = json.loads(r.read())
+        doc = _get_json(url, token, "/v1/split", timeout, 400 * 1024)
         return doc if isinstance(doc, dict) and doc.get("split_id") else None
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+    except _NET_ERRORS:
         return None
 
 
@@ -252,7 +275,7 @@ def put_status(prefix: str, status: dict) -> bool:
     try:
         _put(cfg[0], cfg[1], f"{prefix}/run.json", body, len(body), None, 8.0)     # short: it must never hold a run up
         return True
-    except (urllib.error.URLError, OSError, TimeoutError):
+    except (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException, ValueError):
         return False
 
 

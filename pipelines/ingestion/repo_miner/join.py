@@ -27,6 +27,11 @@ from version import __version__
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFIX = "riffle1."
+# What a code may carry. Values go into .env and the screen, so nothing with a line break or control character gets in.
+URL_OK = re.compile(r"^https?://[^\s\x00-\x1f\x7f]+\Z")
+TOKEN_OK = re.compile(r"^[A-Za-z0-9_-]{4,200}\Z")
+SPLIT_OK = re.compile(r"^[a-z0-9][a-z0-9_-]{0,23}\Z")
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 def encode(url: str, token: str, split: str, k: int, n: int, argv: list[str]) -> str:
@@ -41,8 +46,13 @@ def decode(code: str) -> dict:
     body = code[len(PREFIX):]
     try:
         doc = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-        assert all(k in doc for k in ("u", "t", "s", "k", "n")) and isinstance(doc["k"], int) and isinstance(doc["n"], int)
-        assert 1 <= doc["k"] <= doc["n"] and re.match(r"^https?://", doc["u"]) and isinstance(doc.get("a", []), list)
+        assert isinstance(doc, dict) and all(k in doc for k in ("u", "t", "s", "k", "n"))
+        assert type(doc["k"]) is int and type(doc["n"]) is int and 1 <= doc["k"] <= doc["n"] <= 200
+        assert isinstance(doc["u"], str) and URL_OK.match(doc["u"]) and isinstance(doc["t"], str) and TOKEN_OK.match(doc["t"])
+        assert isinstance(doc["s"], str) and SPLIT_OK.match(doc["s"])
+        argv = doc.get("a", [])
+        assert isinstance(argv, list) and all(isinstance(a, str) and not CONTROL.search(a) for a in argv)
+        assert doc.get("v") is None or (isinstance(doc["v"], str) and not CONTROL.search(doc["v"]))
     except (ValueError, AssertionError, KeyError):
         raise ValueError("the join code is damaged; copy it again, all of it") from None
     return doc
@@ -55,6 +65,8 @@ def write_env(path: str, values: dict[str, str]) -> None:
         with open(path, encoding="utf-8") as fh:
             lines = fh.read().splitlines()
     for key, val in values.items():
+        if CONTROL.search(str(val)):
+            raise ValueError(f"{key} has a line break or control character in it; not written to .env")
         row = f"{key}={val}"
         hit = [i for i, line in enumerate(lines) if re.match(rf"^\s*{re.escape(key)}\s*=", line)]
         if hit:

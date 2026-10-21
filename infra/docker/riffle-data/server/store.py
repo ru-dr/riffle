@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import tempfile
 import shutil
 
 # keys (below the PC's name) the VM keeps a local copy of
@@ -69,9 +70,15 @@ class Store:
             fresh = False
         if not fresh:
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            tmp = dest + ".part"
-            blob.download_to_filename(tmp)
-            os.replace(tmp, dest)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dest), suffix=".part")      # unique: two readers may fetch at once
+            os.close(fd)
+            try:
+                blob.download_to_filename(tmp)
+                os.replace(tmp, dest)
+            except BaseException:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+                raise
             with open(stamp, "w") as fh:
                 fh.write(str(blob.generation))
         return dest

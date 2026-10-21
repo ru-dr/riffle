@@ -452,7 +452,11 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
             # process group), then let main() end the batch quietly
             _stop_child(proc, signal)
             raise
-        _sync_beat()
+        try:
+            _sync_beat()
+        except KeyboardInterrupt:                           # a Stop during the heartbeat stops the miner too
+            _stop_child(proc, signal)
+            raise
         if _skip_requested(repo):
             print(f"[skip] {repo}: skip requested; stopping it", flush=True)
             _stop_child(proc, signal)
@@ -471,7 +475,10 @@ def _sync_begin(entries: list, done_repos: dict) -> None:
     global _SYNC
     if _SYNC is None:
         return
-    me = sync.whoami()
+    try:
+        me = sync.whoami()
+    except Exception as e:                                  # noqa: BLE001  (sync must never stop a run)
+        me = {"ok": False, "why": f"{type(e).__name__}: {e}"}
     sid = getattr(_SYNC["args"], "split_id", None)
     if not me["ok"]:
         print(f"[sync] OFF for this run: {me['why']}. Fix it with `python join.py --check`; the run goes on "
@@ -561,7 +568,8 @@ def _sync_now(why: str, **counts) -> None:
         status = _sync_status(why)
         args = _SYNC["args"]
         sync.report(sync.sync(args.out, _sync_prefix(status), status,
-                              health_dir=getattr(args, "health_dir", "health")), why)
+                              health_dir=getattr(args, "health_dir", "health"),
+                              repos=set(_SYNC.get("repos", {}))), why)
         _SYNC["beat"] = time.monotonic()
     except Exception as e:                                  # noqa: BLE001
         print(f"[sync] failed ({type(e).__name__}: {e}); the run is unaffected", file=sys.stderr, flush=True)
@@ -638,7 +646,8 @@ def _assemble_snapshots(args) -> None:
 def build_parser() -> argparse.ArgumentParser:
     """The command line, on its own so join.py and the TUI can parse a command the way the miner will."""
     ap = argparse.ArgumentParser(
-        description="Clone a list of GitHub repos and mine them into one dataset.")
+        description="Clone a list of GitHub repos and mine them into one dataset.",
+        allow_abbrev=False)                                 # _run_flags and join.py match flags by their full names
     ap.add_argument("--repos-file", default="repos.txt",
                     help="file with one GitHub URL per line (# comments allowed)")
     ap.add_argument("--out", default="dataset.parquet",
