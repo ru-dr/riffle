@@ -545,7 +545,7 @@ def main():
                     help="repo used by --test instead of the repos file (default: "
                          "pallets/flask, the smallest repo in the corpus)")
     args = ap.parse_args()
-    if args.llm:
+    if args.llm and not (args.shard_plan or args.audit):     # plan and audit need no LLM
         import config
         from features import llm_flags
         why = llm_flags.unavailable_reason(config.Settings())

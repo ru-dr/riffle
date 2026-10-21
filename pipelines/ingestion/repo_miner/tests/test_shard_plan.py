@@ -26,3 +26,12 @@ def test_plan_lists_prs_per_repo_and_per_pc(tmp_path):
     assert "a/one  (~2,000 commits, 500 PRs)" in out
     assert "c/three  (~900 commits)" in out                 # untagged PRs: no PR note
     assert "PC 1/2: 2 repos, ~2,900 commits, 500 PRs" in out   # equal repo counts: one + three
+
+
+def test_plan_needs_no_llm_backend(tmp_path):
+    repos = tmp_path / "repos.txt"
+    repos.write_text("https://github.com/a/one  # [~2,000 commits] [500 PRs]\n")
+    env = {**os.environ, "LLM_BACKEND": "api", "LLM_API_KEY": ""}
+    p = subprocess.run([sys.executable, build_dataset.__file__, "--repos-file", str(repos),
+                        "--shard-plan", "1"], capture_output=True, text=True, timeout=60, env=env)
+    assert p.returncode == 0 and "a/one" in p.stdout
