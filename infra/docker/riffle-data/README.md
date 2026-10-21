@@ -23,7 +23,7 @@ started.** A repo that has not started has no PR selection yet (the miner picks
 PRs when it begins a repo), so it counts under "repos waiting" instead. A grand
 total of PRs is unknown until every repo has started. `/run` gives one PC's repos
 with rows, selected PRs, left and health flags, and its files. `/search` greps the
-run logs (traces stay in the bucket, not searched).
+run logs and traces.
 
 ## Run it on a laptop (no GCP)
 

@@ -99,7 +99,7 @@ class Service:
         except re.error as e:
             return [], f"bad regex: {e}"
         hits, scanned, note = [], 0, ""
-        for f in self.index.files(pc or None, "%/logs/%.log"):
+        for f in self.index.files(pc or None, "%/logs/%"):
             fh = self.store.open_local(f["key"])
             if fh is None:
                 continue

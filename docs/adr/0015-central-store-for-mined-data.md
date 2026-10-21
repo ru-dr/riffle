@@ -36,8 +36,8 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 - The store runs on one GCP VM from a Compose file, following ADR 0013
   (`infra/docker/riffle-data/`): one service for ingest and the pages, with a
   SQLite index on the VM's disk. Logs, health files and `run.json` stay on the
-  disk so search is fast; every file is also in a GCS bucket, and datasets and
-  traces live only there. The VM uses its attached service account, not key
+  disk so search is fast; every file is also in a GCS bucket, and datasets live
+  only there. The VM uses its attached service account, not key
   files. The service is reachable only through a tunnel (IAP or Tailscale) or a
   TLS proxy, never as plain HTTP on the internet.
 - The pages on the VM show, per PC, repos done and total, the repo being mined,

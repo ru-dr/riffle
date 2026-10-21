@@ -1,10 +1,10 @@
 """
 store.py — where uploaded files live (ADR 0015).
 
-Small files the viewer reads (run logs, health files, run.json) are always kept
+Small files the viewer reads (run logs and traces, health files, run.json) are always kept
 on the VM's disk under <data>/store, so log search and the pages never wait on
 the network. With a bucket configured (RIFFLE_BUCKET), every file is also in
-GCS, and the big ones (datasets, snapshot tables, traces) live only there, which
+GCS, and the big ones (datasets, snapshot tables) live only there, which
 is where BigQuery loads them from. With no bucket, everything stays on the disk:
 that is the local and test setup.
 """
@@ -15,7 +15,7 @@ import os
 import shutil
 
 # keys (below the PC's name) the VM keeps a local copy of
-MIRRORED = ("*/logs/*.log", "*/health/*.json", "*/run.json")
+MIRRORED = ("*/logs/*.log", "*/logs/*.trace.jsonl", "*/health/*.json", "*/run.json")
 
 
 def is_mirrored(key: str) -> bool:

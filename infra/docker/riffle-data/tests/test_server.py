@@ -105,13 +105,13 @@ def test_run_json_feeds_the_overview_and_run_page(srv):
     assert json.loads(call(srv, "GET", "/api/runs", srv.rd)[1])[0]["status"]["current"] == "o/big"
 
 
-def test_search_scans_logs_and_escapes_html(srv):
+def test_search_scans_logs_and_traces_and_escapes_html(srv):
     put(srv, "6.6.0/abc/logs/run-1.log", b"ok line\n[blame] warning <b>x</b>\n")
     put(srv, "6.6.0/abc/logs/run-1.trace.jsonl", b'{"msg":"blame warning in trace"}\n')
     code, page = call(srv, "GET", "/search?q=blame", srv.rd)
     text = page.decode()
     assert code == 200 and "[blame] warning &lt;b&gt;x&lt;/b&gt;" in text and "<b>x</b>" not in text
-    assert "trace" not in text.split("<pre>")[1]                    # traces are not searched
+    assert "blame warning in trace" in text.split("<pre>")[1]       # command-line runs have only a trace
     assert "ok line" not in text
     assert "bad regex" in call(srv, "GET", "/search?q=(&regex=1", srv.rd)[1].decode()
 
@@ -160,7 +160,7 @@ def test_miner_sync_talks_to_the_server(srv, tmp_path, monkeypatch):
     monkeypatch.setenv("RIFFLE_SYNC_URL", srv.url)
     monkeypatch.setenv("RIFFLE_SYNC_TOKEN", srv.pc)
     r = sync.sync(str(out), "6.6.0/abc", {"reason": "repo done", "repos": {}}, health_dir=str(run / "health"),
-                  log_dir=str(run / "logs"), state_path=str(run / "state.json"))
+                  logs=[str(run / "logs" / "run-1.log")], state_path=str(run / "state.json"))
     assert r["failed"] == [] and r["stopped"] is None and r["sent"] == 3
     keys = {f["key"] for f in srv.service.index.files()}
     assert {"pc1/6.6.0/abc/logs/run-1.log", "pc1/6.6.0/abc/health/o_a.json",

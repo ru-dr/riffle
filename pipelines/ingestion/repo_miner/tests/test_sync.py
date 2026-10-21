@@ -71,7 +71,8 @@ def run_dir(tmp_path):
 
 def _sync(run_dir, **kw):
     return sync.sync(str(run_dir / "dataset_pc1of2.jsonl"), "6.6.0/abc", {"reason": "t"},
-                     health_dir=str(run_dir / "health"), log_dir=str(run_dir / "logs"),
+                     health_dir=str(run_dir / "health"),
+                     logs=[str(run_dir / "logs" / "run-1.log"), str(run_dir / "logs" / "run-1.trace.jsonl")],
                      state_path=str(run_dir / "state.json"), **kw)
 
 
@@ -157,3 +158,16 @@ def test_a_new_store_url_gets_everything_again(store, run_dir, monkeypatch):
     assert _sync(run_dir)["sent"] == 0
     monkeypatch.setenv("RIFFLE_SYNC_URL", os.environ["RIFFLE_SYNC_URL"].replace("127.0.0.1", "localhost"))
     assert _sync(run_dir)["sent"] == 5
+
+
+def test_only_this_runs_logs_are_collected(tmp_path, monkeypatch):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    for n in ("run-1.log", "run-1.trace.jsonl", "run-0.log", "run-0.trace.jsonl"):
+        (logs / n).write_text("x")
+    monkeypatch.setenv("RIFFLE_TRACE", str(logs / "run-1.trace.jsonl"))
+    assert sorted(os.path.basename(p) for p in sync.this_run_logs()) == ["run-1.log", "run-1.trace.jsonl"]
+    (logs / "run-1.log").unlink()                                # a command-line run has a trace only
+    assert [os.path.basename(p) for p in sync.this_run_logs()] == ["run-1.trace.jsonl"]
+    monkeypatch.delenv("RIFFLE_TRACE")
+    assert sync.this_run_logs() == []

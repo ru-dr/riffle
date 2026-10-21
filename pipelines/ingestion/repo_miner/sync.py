@@ -36,7 +36,6 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(HERE, ".sync_state.json")
-LOG_DIR = os.path.join(HERE, "logs")
 DEFAULT_BUDGET_S = 120.0
 CONNECT_S = 30.0
 MAX_FILE_BYTES = 2 * 1024 ** 3          # the store's per-file limit; bigger files are skipped with a warning
@@ -49,18 +48,27 @@ def settings() -> tuple[str, str] | None:
     return (url, token) if url and token else None
 
 
-def collect(out: str, health_dir: str = "health", log_dir: str = LOG_DIR) -> list[tuple[str, str]]:
+def this_run_logs() -> list[str]:
+    """This run's trace (RIFFLE_TRACE) and the .log the TUI writes beside it, if
+    any. logs/ also holds earlier runs' files; those are not this run's output."""
+    trace = os.environ.get("RIFFLE_TRACE") or ""
+    if not trace.endswith(".trace.jsonl"):
+        return [trace] if os.path.isfile(trace) else []
+    return [p for p in (trace[: -len(".trace.jsonl")] + ".log", trace) if os.path.isfile(p)]
+
+
+def collect(out: str, health_dir: str = "health", logs: list[str] | None = None) -> list[tuple[str, str]]:
     """The files worth sending, as (local path, key under the run prefix).
     Only files that exist; the dataset's three tables, checkpoint and shard
-    manifest sit beside `out`."""
+    manifest sit beside `out`, and `logs` are this run's log and trace."""
     import naming
     snap, commits = naming.snapshot_outs(out)
     stem = os.path.splitext(out)[0]
     candidates = [out, out + ".partial.jsonl", snap, commits, naming.manifest_path(out),
                   stem + ".jsonl"]
     files = [(p, "data/" + os.path.basename(p)) for p in candidates if os.path.isfile(p)]
-    for pattern in ("*.log", "*.trace.jsonl"):
-        files += [(p, "logs/" + os.path.basename(p)) for p in sorted(glob.glob(os.path.join(log_dir, pattern)))]
+    files += [(p, "logs/" + os.path.basename(p)) for p in (this_run_logs() if logs is None else logs)
+              if os.path.isfile(p)]
     files += [(p, "health/" + os.path.basename(p))
               for p in sorted(glob.glob(os.path.join(health_dir, "*.json")))]
     seen, unique = set(), []
@@ -126,7 +134,7 @@ def _put(url: str, token: str, key: str, body, size: int, sha256: str | None, ti
 
 
 def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
-         log_dir: str = LOG_DIR, state_path: str = STATE_FILE,
+         logs: list[str] | None = None, state_path: str = STATE_FILE,
          budget_s: float | None = None) -> dict:
     """Send what changed since the last sync under `prefix` (`<miner_version>/<split>`),
     then `run.json` (`status` plus host and time). Returns
@@ -146,7 +154,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
     all_state = _load_state(state_path)
     state = all_state.setdefault(url, {})          # per store: a new URL sends everything again
     try:
-        files = collect(out, health_dir, log_dir)
+        files = collect(out, health_dir, logs)
     except Exception as e:                                  # noqa: BLE001
         print(f"[sync] could not list files: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         result["stopped"] = "error"
