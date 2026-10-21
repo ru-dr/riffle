@@ -1,0 +1,17 @@
+# TLS in front of the store, for a public address (ADR 0015). Caddy gets and renews a
+# Let's Encrypt certificate for RIFFLE_DOMAIN by itself; with no domain it serves a
+# local certificate on https://localhost. Only this container is published; the store
+# itself stays on the Compose network.
+{$RIFFLE_DOMAIN:localhost} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	request_body {
+		max_size 2GB
+	}
+	reverse_proxy riffle-data:8470 {
+		flush_interval -1
+	}
+}

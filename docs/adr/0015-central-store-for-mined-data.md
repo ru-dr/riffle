@@ -38,10 +38,15 @@ paused run to bring that place up to date. Real-time streaming is not needed.
   SQLite index on the VM's disk. Logs, health files and `run.json` stay on the
   disk so search is fast; every file is also in a GCS bucket, and datasets live
   only there. The VM uses its attached service account, not key
-  files. The service is reachable only through a tunnel (IAP or Tailscale) or a
-  TLS proxy, never as plain HTTP on the internet.
-- The pages on the VM show, per PC, repos done and total, the repo being mined,
-  PRs mined and PRs left, health flags and file lists, plus log search. PRs left
+  files. The service is never published as plain HTTP. A public address goes
+  through Caddy with an automatic certificate (the `public` Compose profile);
+  a private one through an IAP tunnel or Tailscale. Read access is a token in
+  an HttpOnly cookie, with a strict Content-Security-Policy and a limit on failed
+  sign-ins per address.
+- The pages on the VM follow the site's design and the miner web view. They show,
+  per PC, repos done and total, the repo being mined, PRs mined and PRs left, health
+  flags and file lists, with charts, log and trace search, and a file viewer that
+  opens parquet as charts, a sortable table and a column list. PRs left
   covers repos already started: the miner selects a repo's PRs when it begins
   it, so a repo that has not started has no PR count.
 - The tables are queried with DuckDB (`server/duck.py`), as ADR 0014 chooses for
@@ -74,6 +79,7 @@ paused run to bring that place up to date. Real-time streaming is not needed.
   boundary exist only in its local checkpoint.
 - Sync needs the store reachable at stop time; a Stop with no network waits for
   the timeout, then leaves the files for the next sync.
+- A public address puts a login page on the internet; a leaked read token exposes all mined data until it is revoked.
 - A shared VM is a new thing to run, patch and back up, and a GCP project with billing is needed before anything runs.
 - The DuckDB views include only finished PCs unless asked (`--include-unfinished`); the BigQuery loader includes all unless given `--only-finished`.
 

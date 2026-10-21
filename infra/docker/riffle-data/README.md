@@ -17,13 +17,25 @@ the logs, and keeps the parquet tables in a bucket, which DuckDB queries (BigQue
 
 ## What the pages show
 
-`/` lists each PC: state (mining, done, stopped, silent), repos done of total, the
-repo it is mining now, PRs mined, and PRs left. **PRs left covers repos already
-started.** A repo that has not started has no PR selection yet (the miner picks
-PRs when it begins a repo), so it counts under "repos waiting" instead. A grand
-total of PRs is unknown until every repo has started. `/run` gives one PC's repos
-with rows, selected PRs, left and health flags, and its files. `/search` greps the
-run logs and traces.
+The pages use the site's design (hairline frame, Geist, the same tokens as the miner web
+view) and draw their charts in SVG with no library. Sign in with a read token (it is kept
+in an HttpOnly cookie); scripts can send it as `Authorization: Bearer`.
+
+| Page | What it shows |
+| --- | --- |
+| `/` | Per PC: state, repos done of total, the repo being mined, PRs mined and left, plus charts of PRs per PC and repo states |
+| `/run` | One PC's run: PRs per repo, health flags, every file it sent |
+| `/data` | The three mined tables over every PC's parquet files, with a version and split picker |
+| `/view?key=…` | **Parquet** as charts (PRs per repo, rows per month, outcome labels, null share), a sortable and filterable table, and a column list where any column can be charted. **JSON** as a tree with a summary for health and run files. **JSONL** as a filterable table. **Traces** with seconds per stage, pace and warnings. **Logs** with line numbers, filtering and jump to end |
+| `/search` | Grep over the run logs and traces of every PC |
+
+**PRs left covers repos already started.** A repo that has not started has no PR selection
+yet (the miner picks PRs when it begins a repo), so it counts under "waiting". A grand total
+of PRs is unknown until every repo has started.
+
+The viewer reads parquet with DuckDB, limited to the store's folders, and only uses column
+names from the file's own schema. Big files that live only in the bucket are downloaded to
+`<data>/cache` the first time they are opened.
 
 ## Run it on a laptop (no GCP)
 
@@ -59,16 +71,30 @@ gcloud compute instances create riffle-data --machine-type=e2-medium --boot-disk
   --image-family=debian-12 --image-project=debian-cloud --service-account=$SA --scopes=cloud-platform
 ```
 
-On the VM: install Docker, clone the repo, `cp .env.example .env`, set
+`gcp/up.sh` does all of this after the bucket and service account exist: it reserves an address, opens ports 80 and 443, creates the VM, copies this folder to it and starts the `public` profile on `https://<address>.sslip.io`. It has not been run yet. By hand, on the VM: install Docker, clone the repo, `cp .env.example .env`, set
 `RIFFLE_BUCKET`, `GOOGLE_CLOUD_PROJECT` and `RIFFLE_BIND_ADDR=0.0.0.0` only if a
 firewall rule or tunnel limits who can connect, then `docker compose up -d --build`
 and issue tokens as above.
 
-**Reaching it.** The service speaks plain HTTP, so tokens would cross the network in clear.
-Do not open port 8470 to the internet. Use one of: an IAP TCP tunnel
-(`gcloud compute start-iap-tunnel riffle-data 8470 --local-port=8470`), Tailscale on the VM
-and the PCs, or a TLS proxy (Caddy) with a firewall rule for your team's addresses. For
-IAP and PCs, point `RIFFLE_SYNC_URL` at the tunnel or Tailscale address.
+**Public address (HTTPS).** The service speaks plain HTTP, so it is never published directly.
+For a public address use the `public` profile, which adds Caddy with an automatic Let's
+Encrypt certificate:
+
+```bash
+# .env: a name that points at the VM (for a bare IP, 34-1-2-3.sslip.io works)
+RIFFLE_DOMAIN=34-1-2-3.sslip.io
+RIFFLE_TRUST_PROXY=1
+RIFFLE_COOKIE_SECURE=1
+RIFFLE_BIND_ADDR=127.0.0.1      # only Caddy is reachable from outside
+docker compose --profile public up -d --build
+```
+
+Open ports 80 and 443 to the internet (for the certificate and the pages) and nothing else.
+PCs set `RIFFLE_SYNC_URL=https://YOUR_DOMAIN`. Protection comes from the tokens (43 random
+characters, hashes only on disk), HTTPS, a strict Content-Security-Policy, and a throttle of
+20 failed sign-ins per address per five minutes. Anyone who learns a read token can read
+everything, so give it to as few people as possible and `manage.py revoke` it if it leaks.
+Prefer an IAP tunnel or Tailscale if only your own team needs access.
 
 ## Query with DuckDB
 

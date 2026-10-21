@@ -26,7 +26,9 @@ def is_mirrored(key: str) -> bool:
 class Store:
     def __init__(self, root: str, bucket: str | None = None):
         self.root = os.path.join(root, "store")
+        self.cache = os.path.join(root, "cache")
         os.makedirs(self.root, exist_ok=True)
+        os.makedirs(self.cache, exist_ok=True)
         self.bucket_name = bucket
         self._bucket = None
         if bucket:
@@ -47,6 +49,32 @@ class Store:
             shutil.move(tmp_path, dest)
         else:
             os.remove(tmp_path)
+
+    def fetch(self, key: str) -> str | None:
+        """A local path for the file: the mirrored copy, or a download from the bucket into
+        <data>/cache (re-downloaded only when the object's generation changes)."""
+        local = self.local_path(key)
+        if os.path.isfile(local):
+            return local
+        if self._bucket is None:
+            return None
+        blob = self._bucket.get_blob(key)
+        if blob is None:
+            return None
+        dest = os.path.join(self.cache, *key.split("/"))
+        stamp = dest + ".gen"
+        try:
+            fresh = open(stamp).read() == str(blob.generation) and os.path.isfile(dest)
+        except OSError:
+            fresh = False
+        if not fresh:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            tmp = dest + ".part"
+            blob.download_to_filename(tmp)
+            os.replace(tmp, dest)
+            with open(stamp, "w") as fh:
+                fh.write(str(blob.generation))
+        return dest
 
     def open_local(self, key: str):
         """The local copy, or None (a big file that lives only in the bucket)."""

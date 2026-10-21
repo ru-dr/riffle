@@ -1,0 +1,416 @@
+/* The pages' behaviour. Data is only ever put on the page with textContent. */
+(function () {
+  var C = window.RFC, h = C.h, nf = C.nf;
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var qs = new URLSearchParams(location.search);
+  var LIVE_S = 25 * 60;
+
+  function el(tag, cls, kids) {
+    var e = h(tag, cls);
+    [].concat(kids == null ? [] : kids).forEach(function (k) { if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k))); });
+    return e;
+  }
+  function api(route, params) {
+    var u = new URL("/api/" + route, location.origin);
+    Object.keys(params || {}).forEach(function (k) { if (params[k] != null && params[k] !== "") u.searchParams.set(k, params[k]); });
+    return fetch(u, { credentials: "same-origin" }).then(function (r) {
+      if (r.status === 401) { location.href = "/login"; return new Promise(function () {}); }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; });
+    });
+  }
+  function bytes(n) { var u = ["B", "KB", "MB", "GB"], i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + " " + u[i]; }
+  function ago(ts) {
+    if (!ts) return "never"; var s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+    return s < 60 ? "just now" : s < 3600 ? Math.floor(s / 60) + " min ago" : s < 86400 ? Math.floor(s / 3600) + " h ago" : Math.floor(s / 86400) + " d ago";
+  }
+  function failure(node, e) { node.replaceChildren(el("div", "empty", "Could not load: " + e.message)); }
+  function stat(label, value, hint, cls) {
+    return el("div", "stat", [el("div", "cap", label), el("div", "v " + (cls || ""), value), hint ? el("div", "h", hint) : null]);
+  }
+  function runState(run) {
+    var reason = run.status.reason, age = Date.now() / 1000 - run.updated;
+    if (reason === "batch done") return ["done", "green"];
+    if (reason === "stopped") return ["stopped", "amber"];
+    return age < LIVE_S ? ["mining", "green"] : ["silent", "red"];
+  }
+  function tag(text, color) { return el("span", "tag " + (color || ""), text); }
+  function cell(v) {
+    var td = h("td");
+    if (v == null) { td.className = "nullc"; td.textContent = "null"; }
+    else if (typeof v === "number") { td.className = "n"; td.textContent = Number.isInteger(v) ? v.toLocaleString() : String(+v.toFixed(4)); }
+    else if (typeof v === "boolean") td.textContent = v ? "true" : "false";
+    else { td.textContent = String(v); if (String(v).length > 60) { td.className = "wrapc"; } }
+    return td;
+  }
+  /* a table from column names and rows; opts.sort = {col, dir, on(col)} makes headers clickable */
+  function grid(cols, rows, opts) {
+    opts = opts || {};
+    var t = h("table", "t"), hr = h("tr");
+    cols.forEach(function (c) {
+      var th = h("th", opts.sort ? "sort" : "", c + (opts.sort && opts.sort.col === c ? (opts.sort.dir === "desc" ? " ↓" : " ↑") : ""));
+      if (opts.sort) { th.tabIndex = 0; th.onclick = function () { opts.sort.on(c); }; th.onkeydown = function (e) { if (e.key === "Enter") opts.sort.on(c); }; }
+      hr.append(th);
+    });
+    var head = h("thead"); head.append(hr); t.append(head);
+    var body = h("tbody");
+    rows.forEach(function (r) { var tr = h("tr"); r.forEach(function (v, i) { var td = opts.cell ? opts.cell(v, i, r) : cell(v); tr.append(td); }); body.append(tr); });
+    t.append(body);
+    var w = h("div", "tablewrap"); w.append(t);
+    return rows.length ? w : el("div", "empty", opts.emptyText || "No rows.");
+  }
+  function link(text, href) { var a = h("a"); a.href = href; a.textContent = text; return a; }
+  function viewHref(key) { return "/view?key=" + encodeURIComponent(key); }
+
+  /* ---------------- overview ---------------- */
+  function overview() {
+    function draw() {
+      api("runs").then(function (runs) {
+        var sum = function (k) { return runs.reduce(function (a, r) { return a + (r.status[k] || 0); }, 0); };
+        var active = runs.filter(function (r) { return runState(r)[0] === "mining"; }).length;
+        $("#kpis").replaceChildren(
+          stat("PCs", runs.length, active + " mining now", active ? "good" : ""),
+          stat("Repos done", sum("repos_done").toLocaleString(), "of " + sum("repos_total").toLocaleString() + " assigned"),
+          stat("PRs mined", sum("prs_done").toLocaleString(), "rows written so far"),
+          stat("PRs left", sum("prs_remaining").toLocaleString(), "in repos already started"),
+          stat("Failed repos", sum("repos_failed").toLocaleString(), sum("repos_pending") + " not started", sum("repos_failed") ? "bad" : ""));
+        C.hbar($("#c-prs"), runs.map(function (r) { return { l: r.pc, v: r.status.prs_done || 0 }; }).sort(function (a, b) { return b.v - a.v; }),
+          { aria: "PRs mined per PC", th: "PC", vh: "PRs mined", ml: 110 });
+        C.stackh($("#c-repos"), runs.map(function (r) {
+          var s = r.status; return { l: r.pc, vals: [s.repos_done || 0, Math.max(0, (s.repos_total || 0) - (s.repos_done || 0) - (s.repos_failed || 0) - (s.repos_pending || 0) - (s.repos_skipped || 0)), s.repos_pending || 0, s.repos_failed || 0] };
+        }), [{ n: "done", c: "var(--s1)" }, { n: "mining", c: "var(--s2)" }, { n: "waiting", c: "var(--dim)" }, { n: "failed", c: "var(--t-red)" }], { aria: "Repos by state per PC", ml: 110, th: "PC" });
+        var rows = runs.map(function (r) { return [r]; });
+        var cols = ["PC", "State", "Progress", "Now mining", "PRs mined", "PRs left", "Waiting", "Failed", "Last sync"];
+        var t = h("table", "t"), tr = h("tr"); cols.forEach(function (c, i) { tr.append(h("th", i > 3 && i < 8 ? "n" : "", c)); });
+        var th = h("thead"); th.append(tr); t.append(th); var tb = h("tbody");
+        runs.forEach(function (r) {
+          var s = r.status, st = runState(r), pct = s.repos_total ? Math.round(100 * (s.repos_done || 0) / s.repos_total) : 0, row = h("tr");
+          var a = link(r.pc, "/run?pc=" + encodeURIComponent(r.pc) + "&prefix=" + encodeURIComponent(r.prefix));
+          var bar = el("span", "bar"); var fill = h("i"); fill.style.width = pct + "%"; bar.append(fill);
+          [el("td", "", [a, el("div", "cap", (s.host || "") + " · miner " + (s.miner_version || "?"))]), el("td", "", tag(st[0], st[1])),
+            el("td", "", [(s.repos_done || 0) + "/" + (s.repos_total || 0) + " repos", bar]), el("td", "", s.current || "–"),
+            el("td", "n", (s.prs_done || 0).toLocaleString()), el("td", "n", (s.prs_remaining || 0).toLocaleString()),
+            el("td", "n", String(s.repos_pending || 0)), el("td", "n", String(s.repos_failed || 0)), el("td", "", ago(r.updated))].forEach(function (c) { row.append(c); });
+          tb.append(row);
+        });
+        t.append(tb); var w = h("div", "tablewrap"); w.append(t);
+        $("#pcs").replaceChildren(runs.length ? w : el("div", "empty", "No PC has synced yet."));
+      }).catch(function (e) { failure($("#pcs"), e); });
+    }
+    draw(); setInterval(draw, 30000);
+  }
+
+  /* ---------------- one run ---------------- */
+  function run() {
+    var pc = qs.get("pc"), prefix = qs.get("prefix");
+    api("run", { pc: pc, prefix: prefix }).then(function (d) {
+      var r = d.run, s = r.status, st = runState(r);
+      $("#r-cap").textContent = "Run · split " + (s.split_id || "none") + " · miner " + (s.miner_version || "?");
+      $("#r-title").replaceChildren(document.createTextNode(r.pc + " "), tag(st[0], st[1]));
+      $("#r-sub").textContent = "Last sync " + ago(r.updated) + " (" + s.reason + ") from " + (s.host || "unknown host") + ".";
+      $("#kpis").replaceChildren(
+        stat("Repos", (s.repos_done || 0) + "/" + (s.repos_total || 0), (s.repos_pending || 0) + " waiting"),
+        stat("PRs mined", (s.prs_done || 0).toLocaleString(), "rows written"),
+        stat("PRs left", (s.prs_remaining || 0).toLocaleString(), s.current ? "in " + s.current : "no repo in progress"),
+        stat("Failed", String(s.repos_failed || 0), (s.repos_skipped || 0) + " skipped", s.repos_failed ? "bad" : ""),
+        stat("Files", String(d.files.length), bytes(d.files.reduce(function (a, f) { return a + f.size; }, 0))));
+      var repos = Object.keys(s.repos || {}).sort();
+      C.hbar($("#c-repos"), repos.filter(function (k) { return (s.repos[k].rows || 0) > 0; }).map(function (k) {
+        return { l: k, v: s.repos[k].rows || 0, n: s.repos[k].selected != null ? "of " + s.repos[k].selected + " selected" : "" };
+      }).sort(function (a, b) { return b.v - a.v; }).slice(0, 20), { aria: "PRs mined per repo", ml: 170, th: "Repo", vh: "PRs mined" });
+      var flagged = repos.map(function (k) { return { l: k, v: ((d.health[k] || {}).flags || []).length }; }).filter(function (x) { return x.v > 0; });
+      if (flagged.length) C.hbar($("#c-health"), flagged, { aria: "Health flags per repo", ml: 170, c: "var(--s2)", th: "Repo", vh: "Flags" });
+      else C.empty($("#c-health"), Object.keys(d.health).length ? "No repo has a health flag." : "No health files yet.");
+      var rows = repos.map(function (k) {
+        var x = s.repos[k], hh = d.health[k], left = x.state === "mining" && x.selected != null ? Math.max(0, x.selected - (x.rows || 0)) : null;
+        return [k, x.state, x.rows, x.selected, left, hh ? (hh.flags || []).join("; ") || "ok" : null];
+      });
+      $("#repos").replaceChildren(grid(["Repo", "State", "PRs mined", "Selected", "Left", "Health"], rows, {
+        cell: function (v, i) {
+          var td = cell(v);
+          if (v == null && i > 1) { td.className = "nullc"; td.textContent = "–"; }
+          if (i === 1) { td = h("td"); td.append(tag(v, v === "done" ? "green" : v === "failed" ? "red" : v === "mining" ? "amber" : "")); }
+          if (i === 5 && v) { td.className = "wrapc"; if (v !== "ok") td.style.color = "var(--t-amber)"; }
+          return td;
+        }
+      }));
+      var files = d.files.map(function (f) { return [f.key.split("/").slice(3).join("/"), f.kind, f.size, f.updated, f]; });
+      var t = grid(["File", "Type", "Size", "Updated", ""], files, {
+        cell: function (v, i, row) {
+          var td = h("td");
+          if (i === 0) td.append(link(v, viewHref(row[4].key)));
+          else if (i === 2) { td.className = "n"; td.textContent = bytes(v); }
+          else if (i === 3) td.textContent = ago(v);
+          else if (i === 4) td.textContent = row[4].uri || "";
+          else td.textContent = v;
+          return td;
+        }
+      });
+      $("#files").replaceChildren(t);
+    }).catch(function (e) { $("#r-title").textContent = "Run not found"; $("#r-sub").textContent = e.message; });
+  }
+
+  /* ---------------- parquet explorer ---------------- */
+  function explorer(root, src, opts) {
+    opts = opts || {};
+    var tabs = el("div", "tabs"), body = el("div"), panes = {}, state = { sort: null, dir: "asc", offset: 0, limit: 50, fcol: "", fq: "" }, schema = null;
+    var tabNames = [["charts", "Charts"], ["table", "Table"], ["schema", "Columns"]];
+    function open(name) {
+      tabNames.forEach(function (t) { panes[t[0]].hidden = t[0] !== name; });
+      [].forEach.call(tabs.children, function (b) { b.setAttribute("aria-pressed", String(b.dataset.t === name)); });
+      if (!panes[name].dataset.loaded) { panes[name].dataset.loaded = "1"; loaders[name](); }
+    }
+    tabNames.forEach(function (t) {
+      var b = el("button", "", t[1]); b.dataset.t = t[0]; b.onclick = function () { open(t[0]); }; tabs.append(b);
+      panes[t[0]] = el("div"); panes[t[0]].hidden = true; body.append(panes[t[0]]);
+    });
+    var head = el("div", "section"); head.append(tabs); var meta = el("div", "cap"); meta.style.marginTop = "12px"; head.append(meta);
+    root.replaceChildren(head, body);
+    var params = function (extra) { return Object.assign({}, src, extra || {}); };
+
+    var loaders = {
+      charts: function () {
+        var p = panes.charts; p.replaceChildren(el("div", "empty", "Reading the file…"));
+        api("parquet/charts", params()).then(function (c) {
+          var box = el("section", "rule grid g2 stack"); p.replaceChildren(box);
+          function panel(cap, title, note) { var d = el("div", "panel", [el("div", "cap", cap), el("h3", "", title)]); var ch = el("div", "chart"); d.append(ch); if (note) d.append(el("p", "note", note)); box.append(d); return ch; }
+          if (c.repos && c.repos.length) C.hbar(panel("Rows", "PRs per repo (top 15)"), c.repos, { ml: 170, aria: "PRs per repo", th: "Repo", vh: "Rows" });
+          if (c.months && c.months.items.length > 1) C.line(panel("Time", "Rows per month, by " + c.months.column), c.months.items.map(function (i) { return i.l; }), [{ n: "rows", c: "var(--s1)", v: c.months.items.map(function (i) { return i.v; }) }], { aria: "Rows per month", th: "Month" });
+          if (c.labels && c.labels.length) C.stackh(panel("Labels", "Outcome labels", "Unobserved stays null. It is never counted as a pass."), c.labels, [{ n: "true", c: "var(--s2)" }, { n: "false", c: "var(--s1)" }, { n: "unobserved (null)", c: "var(--dim)" }], { ml: 150, aria: "Label balance", th: "Label" });
+          if (c.nulls && c.nulls.length) C.hbar(panel("Quality", "Null share by column (top 12)"), c.nulls.map(function (i) { return { l: i.l, v: i.v }; }), { ml: 230, max: 100, fv: function (v) { return v.toFixed(1) + "%"; }, c: "var(--s3)", aria: "Null share per column", th: "Column", vh: "Null share" });
+          if (c.files && c.files.length > 1) C.hbar(panel("Source", "Rows per file"), c.files, { ml: 170, aria: "Rows per file", th: "File", vh: "Rows" });
+          if (!box.children.length) p.replaceChildren(el("div", "empty", "No default charts for this file. Open Columns and chart any column."));
+        }).catch(function (e) { failure(p, e); });
+      },
+      table: function () { drawTable(); },
+      schema: function () {
+        var p = panes.schema; p.replaceChildren(el("div", "empty", "Reading the file…"));
+        api("parquet/schema", params()).then(function (s) {
+          schema = s;
+          var pr = el("div", "panel"); var prof = el("div", "chart");
+          pr.append(el("div", "cap", "Column chart"), el("h3", "", "Pick a column"), prof);
+          var cols = s.columns.filter(function (c) { return c.name !== "filename"; });
+          var rows = cols.map(function (c) { return [c.name, c.type, c.null_pct, c.distinct, c.min, c.max, c.name]; });
+          var g = grid(["Column", "Type", "Null %", "Distinct≈", "Min", "Max", ""], rows, {
+            cell: function (v, i, row) {
+              var td = i === 6 ? h("td") : cell(v);
+              if (i === 6) { var b = el("button", "btn", "Chart"); b.onclick = function () { profile(row[0], prof); pr.scrollIntoView({ block: "nearest" }); }; td.append(b); }
+              if (i === 2) { td.className = "n"; td.textContent = v == null ? "" : (+v).toFixed(1) + "%"; }
+              return td;
+            }
+          });
+          p.replaceChildren(pr, g);
+          profile(cols[0] && cols[0].name, prof);
+        }).catch(function (e) { failure(p, e); });
+      }
+    };
+    function profile(col, box) {
+      if (!col) return; box.replaceChildren(el("div", "empty", "Reading " + col + "…"));
+      api("parquet/profile", params({ col: col })).then(function (d) {
+        var cap = d.column + " · " + d.type + " · " + d.nulls.toLocaleString() + " null of " + d.rows.toLocaleString();
+        var wrap = el("div"); wrap.append(el("div", "cap", cap));
+        var ch = el("div", "chart"); wrap.append(ch); box.replaceChildren(wrap);
+        if (d.kind === "histogram") C.vbar(ch, d.items, { aria: "Histogram of " + col, xl: col, th: "From", vh: "Rows" });
+        else if (d.kind === "months") C.line(ch, d.items.map(function (i) { return i.l; }), [{ n: "rows", c: "var(--s1)", v: d.items.map(function (i) { return i.v; }) }], { aria: "Rows per month", th: "Month" });
+        else C.hbar(ch, d.items, { ml: 170, aria: "Most common values of " + col, th: "Value", vh: "Rows" });
+      }).catch(function (e) { failure(box, e); });
+    }
+    function drawTable() {
+      var p = panes.table;
+      api("parquet/rows", params({ offset: state.offset, limit: state.limit, sort: state.sort, dir: state.dir, fcol: state.fcol, fq: state.fq })).then(function (d) {
+        var tools = el("div", "tools"); tools.style.padding = "0 40px";
+        var sel = h("select"); sel.setAttribute("aria-label", "Filter column");
+        sel.append(new Option("filter column…", "")); d.columns.forEach(function (c) { sel.append(new Option(c, c)); }); sel.value = state.fcol;
+        var inp = h("input"); inp.type = "search"; inp.placeholder = "contains…"; inp.value = state.fq; inp.setAttribute("aria-label", "Filter text");
+        var go = el("button", "btn solid", "Filter");
+        function apply() { state.fcol = sel.value; state.fq = inp.value; state.offset = 0; drawTable(); }
+        go.onclick = apply; inp.onkeydown = function (e) { if (e.key === "Enter") apply(); };
+        var size = h("select"); size.setAttribute("aria-label", "Rows per page");
+        [25, 50, 100, 200].forEach(function (n) { size.append(new Option(n + " rows", n)); }); size.value = state.limit;
+        size.onchange = function () { state.limit = +size.value; state.offset = 0; drawTable(); };
+        tools.append(sel, inp, go, size);
+        var from = d.total ? d.offset + 1 : 0, to = Math.min(d.total, d.offset + d.limit);
+        var prev = el("button", "btn", "← Prev"), next = el("button", "btn", "Next →");
+        prev.disabled = d.offset <= 0; next.disabled = to >= d.total;
+        prev.onclick = function () { state.offset = Math.max(0, d.offset - d.limit); drawTable(); };
+        next.onclick = function () { state.offset = d.offset + d.limit; drawTable(); };
+        var pager = el("div", "pager", [prev, from.toLocaleString() + "–" + to.toLocaleString() + " of " + d.total.toLocaleString(), next]); pager.style.padding = "0 40px";
+        var t = grid(d.columns, d.rows, { sort: { col: state.sort, dir: state.dir, on: function (c) { state.dir = state.sort === c && state.dir === "asc" ? "desc" : "asc"; state.sort = c; state.offset = 0; drawTable(); } }, emptyText: "No rows match." });
+        p.replaceChildren(tools, pager, t);
+      }).catch(function (e) { failure(p, e); });
+    }
+    api("parquet/schema", params()).then(function (s) {
+      schema = s; meta.textContent = s.rows.toLocaleString() + " rows · " + s.columns.length + " columns · " + s.files + " file" + (s.files === 1 ? "" : "s");
+      if (opts.onSchema) opts.onSchema(s);
+    }).catch(function (e) { meta.textContent = e.message; });
+    open("charts");
+  }
+
+  /* ---------------- data page ---------------- */
+  function data() {
+    var pick = $("#pickers"), version = qs.get("version"), split = qs.get("split"), table = qs.get("table") || "mined_dataset", all = qs.get("all") === "1";
+    function go() { var u = new URLSearchParams({ version: version, split: split, table: table }); if (all) u.set("all", "1"); location.search = u.toString(); }
+    api("tables", { version: version, split: split }).then(function (c) {
+      if (!c.tables.length) { $("#explorer").replaceChildren(el("div", "empty", "No parquet tables have been uploaded yet. A PC needs pandas and pyarrow to write them.")); return; }
+      version = c.version; split = c.split;
+      var vs = h("select"), ss = h("select"), ts = el("div", "tabs");
+      c.versions.forEach(function (v) { vs.append(new Option("miner " + v, v)); }); vs.value = version; vs.onchange = function () { version = vs.value; split = null; go(); };
+      c.splits.forEach(function (v) { ss.append(new Option("split " + v, v)); }); ss.value = split; ss.onchange = function () { split = ss.value; go(); };
+      c.tables.forEach(function (t) { var b = el("button", "", t.name + " · " + (all ? t.all : t.finished)); b.setAttribute("aria-pressed", String(t.name === table)); b.onclick = function () { table = t.name; go(); }; ts.append(b); });
+      var lab = el("label", "cap"); var cb = h("input"); cb.type = "checkbox"; cb.checked = all; cb.onchange = function () { all = cb.checked; go(); };
+      lab.append(cb, " include unfinished PCs"); pick.replaceChildren(vs, ss, ts, lab);
+      var cur = c.tables.filter(function (t) { return t.name === table; })[0];
+      if (!cur || !(all ? cur.all : cur.finished)) { $("#explorer").replaceChildren(el("div", "empty", "No " + (all ? "" : "finished PC has this ") + "file for this table yet. " + (all ? "" : "Tick “include unfinished PCs” to see partial data."))); return; }
+      explorer($("#explorer"), { table: table, version: version, split: split, all: all ? "1" : "" });
+    }).catch(function (e) { failure($("#explorer"), e); });
+  }
+
+  /* ---------------- file viewer ---------------- */
+  function tree(v, key) {
+    if (v !== null && typeof v === "object") {
+      var arr = Array.isArray(v), keys = arr ? v.map(function (_, i) { return i; }) : Object.keys(v);
+      var d = h("details"); if (key == null || keys.length <= 12) d.open = true;
+      var s = h("summary"); if (key != null) { var k = h("span", "k", String(key)); s.append(k, document.createTextNode(": ")); }
+      s.append(document.createTextNode(arr ? "[" + keys.length + "]" : "{" + keys.length + "}")); d.append(s);
+      keys.forEach(function (kk) { d.append(tree(v[kk], kk)); });
+      return d;
+    }
+    var line = h("span", "leaf");
+    if (key != null) { line.append(h("span", "k", String(key)), document.createTextNode(": ")); }
+    var val = h("span", v === null ? "nl" : typeof v === "string" ? "s" : "nm", v === null ? "null" : typeof v === "string" ? JSON.stringify(v) : String(v));
+    line.append(val); return line;
+  }
+  function textViewer(root, key, kind) {
+    var st = { offset: 0, limit: 200, q: "", tail: false };
+    var box = el("div"); root.replaceChildren(box);
+    function draw() {
+      api("lines", { key: key, offset: st.offset, limit: st.limit, q: st.q, tail: st.tail ? "1" : "" }).then(function (d) {
+        var tools = el("div", "tools"); tools.style.padding = "16px 40px 0";
+        var inp = h("input"); inp.type = "search"; inp.placeholder = "filter lines…"; inp.value = st.q; inp.setAttribute("aria-label", "Filter lines");
+        function apply() { st.q = inp.value; st.offset = 0; draw(); }
+        inp.onkeydown = function (e) { if (e.key === "Enter") apply(); };
+        var go = el("button", "btn solid", "Filter"); go.onclick = apply;
+        var tl = el("button", "btn", st.tail ? "Show from start" : "Jump to end"); tl.onclick = function () { st.tail = !st.tail; st.offset = 0; draw(); };
+        tools.append(inp, go, tl);
+        var pager = el("div", "pager"); pager.style.padding = "0 40px";
+        if (!st.tail) {
+          var prev = el("button", "btn", "← Prev"), next = el("button", "btn", "Next →"), to = Math.min(d.total, d.offset + d.limit);
+          prev.disabled = d.offset <= 0; next.disabled = to >= d.total;
+          prev.onclick = function () { st.offset = Math.max(0, d.offset - d.limit); draw(); }; next.onclick = function () { st.offset = d.offset + d.limit; draw(); };
+          pager.append(prev, (d.total ? d.offset + 1 : 0).toLocaleString() + "–" + to.toLocaleString() + " of " + d.total.toLocaleString() + " lines", next);
+        } else pager.append("last " + d.lines.length + " of " + d.total.toLocaleString() + " lines");
+        var pre = h("pre", "log"); var needle = st.q.toLowerCase();
+        d.lines.forEach(function (l) {
+          var row = h("span"), txt = l[1];
+          if (/\b(ERROR|Traceback)\b|\[error\]/i.test(txt)) row.className = "e"; else if (/\b(WARN|WARNING)\b|\[warn/i.test(txt)) row.className = "w";
+          row.append(h("span", "ln", String(l[0])));
+          var i = needle ? txt.toLowerCase().indexOf(needle) : -1;
+          if (i >= 0) { row.append(document.createTextNode(txt.slice(0, i)), el("mark", "", txt.slice(i, i + needle.length)), document.createTextNode(txt.slice(i + needle.length))); }
+          else row.append(document.createTextNode(txt));
+          pre.append(row, document.createTextNode("\n"));
+        });
+        box.replaceChildren(tools, pager, d.lines.length ? pre : el("div", "empty", "No lines."));
+      }).catch(function (e) { failure(box, e); });
+    }
+    draw();
+  }
+  function jsonlViewer(root, key) {
+    var st = { offset: 0, limit: 50, q: "" }, box = el("div"); root.replaceChildren(box);
+    function draw() {
+      api("jsonl", { key: key, offset: st.offset, limit: st.limit, q: st.q }).then(function (d) {
+        var tools = el("div", "tools"); tools.style.padding = "16px 40px 0";
+        var inp = h("input"); inp.type = "search"; inp.placeholder = "contains…"; inp.value = st.q; inp.setAttribute("aria-label", "Filter records");
+        function apply() { st.q = inp.value; st.offset = 0; draw(); }
+        inp.onkeydown = function (e) { if (e.key === "Enter") apply(); };
+        var go = el("button", "btn solid", "Filter"); go.onclick = apply; tools.append(inp, go);
+        var prev = el("button", "btn", "← Prev"), next = el("button", "btn", "Next →"), to = Math.min(d.total, d.offset + d.limit);
+        prev.disabled = d.offset <= 0; next.disabled = to >= d.total;
+        prev.onclick = function () { st.offset = Math.max(0, d.offset - d.limit); draw(); }; next.onclick = function () { st.offset = d.offset + d.limit; draw(); };
+        var pager = el("div", "pager", [prev, (d.total ? d.offset + 1 : 0) + "–" + to + " of " + d.total.toLocaleString() + " records", next]); pager.style.padding = "0 40px";
+        box.replaceChildren(tools, pager, grid(d.columns, d.rows));
+      }).catch(function (e) { failure(box, e); });
+    }
+    draw();
+  }
+  function traceViewer(root, key) {
+    root.replaceChildren(el("div", "empty", "Reading the trace…"));
+    api("trace", { key: key }).then(function (t) {
+      var top = el("section", "rule grid g5");
+      top.append(stat("Events", t.events.toLocaleString(), Object.keys(t.levels).map(function (k) { return k + " " + t.levels[k]; }).join(" · ")),
+        stat("PRs", t.prs.toLocaleString(), "finished in this trace"), stat("Warnings", String(t.levels.WARN || 0), "", t.levels.WARN ? "warn" : ""),
+        stat("Errors", String(t.levels.ERROR || 0), "", t.levels.ERROR ? "bad" : ""),
+        stat("Slowest PR", t.slowest.length ? t.slowest[0].dur_s + " s" : "–", t.slowest.length ? t.slowest[0].repo + " #" + t.slowest[0].pr : ""));
+      var charts = el("section", "rule grid g2 stack");
+      function panel(cap, title, note) { var d = el("div", "panel", [el("div", "cap", cap), el("h3", "", title)]); var c = el("div", "chart"); d.append(c); if (note) d.append(el("p", "note", note)); charts.append(d); return c; }
+      C.hbar(panel("Where the time went", "Seconds per PR stage", "Stages nest, so they add up to more than the wall time."), t.pr_stage_seconds, { ml: 150, fv: function (v) { return nf(v) + " s"; }, aria: "Seconds per stage", th: "Stage", vh: "Seconds" });
+      if (t.pr_durations.length > 1) C.line(panel("Pace", "Seconds per PR, in order"), t.pr_durations.map(function (_, i) { return String(i + 1); }), [{ n: "seconds", c: "var(--s2)", v: t.pr_durations }], { aria: "Seconds per PR", th: "PR #", fv: function (v) { return v + " s"; } });
+      else C.empty(panel("Pace", "Seconds per PR, in order"), "Fewer than two PRs in this trace.");
+      if (t.run_stage_seconds.length) C.hbar(panel("Repo stages", "Seconds per repo stage"), t.run_stage_seconds, { ml: 150, fv: function (v) { return nf(v) + " s"; }, c: "var(--s3)", aria: "Seconds per repo stage", th: "Stage", vh: "Seconds" });
+      var wrap = el("div"); var probs = el("section", "section");
+      probs.append(el("div", "shead", [el("div", "cap", "Needs a look"), el("h2", "", t.problems.length ? t.problems.length + " warnings and errors" : "No warnings or errors")]));
+      var pt = t.problems.length ? grid(["Level", "Stage", "Repo", "PR", "Message"], t.problems.map(function (p) { return [p.lvl, p.stage, p.repo, p.pr, p.msg]; })) : null;
+      var ev = el("div"); var evh = el("section", "section"); evh.append(el("div", "shead", [el("div", "cap", "Events"), el("h2", "", "Every event, filterable")]));
+      wrap.append(top, charts, probs); if (pt) wrap.append(pt); wrap.append(evh, ev);
+      root.replaceChildren(wrap); jsonlViewer(ev, key);
+    }).catch(function (e) { failure(root, e); });
+  }
+  function jsonViewer(root, key) {
+    api("json", { key: key }).then(function (doc) {
+      var box = el("div"), body = el("div"); root.replaceChildren(box);
+      var tabs = el("div", "tabs"), tb = el("button", "", "Tree"), rb = el("button", "", "Raw"); tabs.append(tb, rb);
+      var head = el("div", "section"); head.append(tabs);
+      function showTree() { tb.setAttribute("aria-pressed", "true"); rb.setAttribute("aria-pressed", "false"); var j = el("div", "json"); j.append(tree(doc)); body.replaceChildren(smart(doc), j); }
+      function showRaw() { rb.setAttribute("aria-pressed", "true"); tb.setAttribute("aria-pressed", "false"); var pre = h("pre", "log"); pre.textContent = JSON.stringify(doc, null, 2); body.replaceChildren(pre); }
+      tb.onclick = showTree; rb.onclick = showRaw; box.append(head, body); showTree();
+    }).catch(function (e) { failure(root, e); });
+  }
+  /* run.json and health files get a summary above the tree */
+  function smart(doc) {
+    var out = el("div"), s = doc && doc.stats;
+    if (s && doc.repo) {
+      var g = el("section", "rule grid g5");
+      [["Rows", s.rows], ["Merged share", s.merged_share], ["Outside share", s.outside_share], ["Bot share", s.bot_share], ["CI unobserved", s.ci_unobserved_share]].forEach(function (kv) {
+        g.append(stat(kv[0], kv[1] == null ? "null" : (typeof kv[1] === "number" && kv[1] <= 1 && kv[0] !== "Rows" ? (kv[1] * 100).toFixed(1) + "%" : String(kv[1])), ""));
+      });
+      out.append(g);
+      var fl = (doc.flags || []); out.append(el("div", "section", [el("div", "cap", "Health flags"), fl.length ? el("p", "", fl.join(" · ")) : el("p", "", "None. This repo looks healthy.")]));
+    } else if (doc && doc.repos && doc.reason) {
+      var g2 = el("section", "rule grid g5");
+      g2.append(stat("Repos", (doc.repos_done || 0) + "/" + (doc.repos_total || 0), ""), stat("PRs mined", (doc.prs_done || 0).toLocaleString(), ""),
+        stat("PRs left", (doc.prs_remaining || 0).toLocaleString(), doc.current || ""), stat("Reason", doc.reason, ""), stat("Host", doc.host || "?", ""));
+      out.append(g2);
+    }
+    return out;
+  }
+  function view() {
+    var key = qs.get("key"), root = $("#viewer");
+    api("meta", { key: key }).then(function (m) {
+      var parts = key.split("/");
+      $("#v-cap").textContent = m.kind + " · " + bytes(m.size) + " · updated " + ago(m.updated);
+      $("#v-title").textContent = parts.slice(3).join("/") || key;
+      $("#v-sub").textContent = parts[0] + " · miner " + parts[1] + " · split " + parts[2] + (m.uri ? " · " + m.uri : "");
+      if (m.kind === "parquet") explorer(root, { key: key });
+      else if (m.kind === "trace") traceViewer(root, key);
+      else if (m.kind === "jsonl") jsonlViewer(root, key);
+      else if (m.kind === "json") jsonViewer(root, key);
+      else if (m.kind === "text") textViewer(root, key);
+      else root.replaceChildren(el("div", "empty", "This file type has no viewer. It is in the store at " + (m.uri || key) + "."));
+    }).catch(function (e) { $("#v-title").textContent = "Not available"; $("#v-sub").textContent = e.message; });
+  }
+
+  /* ---------------- search ---------------- */
+  function search() {
+    var f = $("#sform"); f.q.value = qs.get("q") || ""; f.regex.checked = qs.get("regex") === "1";
+    api("search", { q: qs.get("q"), pc: qs.get("pc"), regex: qs.get("regex") === "1" ? "1" : "" }).then(function (d) {
+      var sel = f.pc; sel.append(new Option("all PCs", "")); d.pcs.forEach(function (p) { sel.append(new Option(p, p)); }); sel.value = qs.get("pc") || "";
+      $("#note").textContent = d.note || "";
+      if (!qs.get("q")) return;
+      var rows = d.hits.map(function (x) { return [x.key, x.line, x.text]; });
+      $("#hits").replaceChildren(rows.length ? grid(["File", "Line", "Text"], rows, {
+        cell: function (v, i, row) { var td = h("td"); if (i === 0) td.append(link(v.split("/").slice(0, 1).concat(v.split("/").slice(3)).join("/"), viewHref(v))); else if (i === 1) { td.className = "n"; td.textContent = v; } else { td.className = "wrapc"; td.style.fontFamily = "var(--mono)"; td.textContent = v; } return td; }
+      }) : el("div", "empty", "No matches."));
+    }).catch(function (e) { failure($("#hits"), e); });
+  }
+
+  var page = document.body.dataset.page;
+  ({ overview: overview, run: run, data: data, view: view, search: search })[page] && ({ overview: overview, run: run, data: data, view: view, search: search })[page]();
+})();

@@ -1,142 +1,81 @@
 """
-ui.py — the pages: server-rendered HTML, no scripts, one stylesheet.
-
-Overview: one row per PC (repos done and total, PRs mined, PRs still to mine in
-the repos already started, last sync). Run page: one row per repo with its
-state, rows, PR count and health flags. Search: grep over the PCs' run logs.
+ui.py — the page shell. Every page is the same frame (the site's hairline frame,
+the Riffle lockup, one nav) around an empty container; static/app.js fills it from
+the JSON endpoints. No inline scripts or styles, so the Content-Security-Policy can
+stay strict, and data is only ever put on the page with textContent.
 """
 from __future__ import annotations
 
 import html
-import time
-from urllib.parse import quote, urlencode
+import os
 
-LIVE_S = 25 * 60            # a PC that has not synced for this long is "silent"
+HERE = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(HERE, "static", "lockup.svg"), encoding="utf-8") as _fh:
+    LOCKUP = _fh.read()
 
-CSS = """
-:root{--bg:#fafaf9;--fg:#1c1917;--mut:#78716c;--line:#e7e5e4;--card:#fff;--ok:#15803d;--warn:#b45309;--bad:#b91c1c;--acc:#1d4ed8}
-@media(prefers-color-scheme:dark){:root{--bg:#0c0a09;--fg:#e7e5e4;--mut:#a8a29e;--line:#292524;--card:#1c1917;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--acc:#93c5fd}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
-main{max-width:1100px;margin:0 auto;padding:16px}h1{font-size:20px;margin:8px 0 16px}h2{font-size:15px;margin:24px 0 8px}
-nav{display:flex;gap:16px;align-items:center;border-bottom:1px solid var(--line);padding:10px 16px}nav b{margin-right:auto}
-a{color:var(--acc)}table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line)}
-th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:500}
-td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}.tot{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px}
-.tot div{background:var(--card);border:1px solid var(--line);padding:8px 14px;min-width:130px}.tot b{display:block;font-size:20px}
-.tot span{color:var(--mut);font-size:12px}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.mut{color:var(--mut)}
-.bar{height:6px;background:var(--line);min-width:80px}.bar i{display:block;height:100%;background:var(--ok)}
-pre{background:var(--card);border:1px solid var(--line);padding:8px;overflow:auto;white-space:pre-wrap;word-break:break-word}
-form{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}input,select,button{font:inherit;padding:5px 8px}
-@media(max-width:640px){main{padding:12px}th,td{padding:5px 6px}}
-"""
+NAV = (("overview", "/", "Overview"), ("data", "/data", "Data"), ("search", "/search", "Log search"))
 
-
-def page(title: str, body: str, refresh: int = 0) -> str:
-    meta = f'<meta http-equiv="refresh" content="{refresh}">' if refresh else ""
-    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{html.escape(title)}</title>'
-            f'<meta name="viewport" content="width=device-width,initial-scale=1">{meta}<style>{CSS}</style></head>'
-            f'<body><nav><b>Riffle data</b><a href="/">Overview</a><a href="/search">Log search</a></nav>'
-            f'<main>{body}</main></body></html>')
-
-
-def ago(ts: float | None, now: float | None = None) -> str:
-    if not ts:
-        return "never"
-    s = int((now or time.time()) - ts)
-    return ("just now" if s < 60 else f"{s // 60} min ago" if s < 3600 else
-            f"{s // 3600} h ago" if s < 86400 else f"{s // 86400} d ago")
-
-
-def state_of(run: dict, now: float | None = None) -> tuple[str, str]:
-    """(label, css class): mining, done, stopped or silent."""
-    st, age = run["status"], (now or time.time()) - run["updated"]
-    reason = st.get("reason")
-    if reason == "batch done":
-        return "done", "ok"
-    if reason == "stopped":
-        return "stopped", "warn"
-    return ("mining", "ok") if age < LIVE_S else ("silent", "bad")
-
-
-def _n(v) -> str:
-    return "–" if v is None else f"{v:,}"
+BODIES = {
+    "overview": """
+<section class="rule intro"><div class="cap">Mining runs</div><h1>Mining <span class="of">progress</span></h1>
+<p id="sub">Every PC that sends its output here, as of its last sync.</p></section>
+<section class="rule grid g5" id="kpis"></section>
+<section class="rule grid g2 stack">
+ <div class="panel"><div class="cap">PRs mined</div><h3>By PC</h3><div class="chart" id="c-prs"></div></div>
+ <div class="panel"><div class="cap">Repos</div><h3>By state, per PC</h3><div class="chart" id="c-repos"></div></div>
+</section>
+<section class="rule section"><div class="shead"><div class="cap">PCs</div><h2>Every machine</h2>
+<p>PRs left counts the repo each PC is mining now. A repo that has not started has no PR selection yet, so it counts under repos waiting.</p></div></section>
+<section><div class="tablewrap" id="pcs"></div></section>""",
+    "run": """
+<section class="rule intro"><div class="cap" id="r-cap">Run</div><h1 id="r-title">…</h1><p id="r-sub"></p></section>
+<section class="rule grid g5" id="kpis"></section>
+<section class="rule grid g2 stack">
+ <div class="panel"><div class="cap">Per repo</div><h3>PRs mined per repo</h3><div class="chart" id="c-repos"></div></div>
+ <div class="panel"><div class="cap">Health</div><h3>Flags per repo</h3><div class="chart" id="c-health"></div></div>
+</section>
+<section class="rule section"><div class="shead"><div class="cap">Repos</div><h2>State and health</h2></div></section>
+<section><div class="tablewrap" id="repos"></div></section>
+<section class="rule section"><div class="shead"><div class="cap">Files</div><h2>Everything this run sent</h2><p>Open a file to read it here. Datasets open as tables with charts.</p></div></section>
+<section><div class="tablewrap" id="files"></div></section>""",
+    "data": """
+<section class="rule intro"><div class="cap">Mined tables</div><h1>Browse the <span class="of">data</span></h1>
+<p>The three mined tables, joined over every PC's files. They stay three: one row per PR, per snapshot and per head commit.</p></section>
+<section class="rule section"><div class="tools" id="pickers"></div></section>
+<section id="explorer"></section>""",
+    "view": """
+<section class="rule intro"><div class="cap" id="v-cap">File</div><h1 id="v-title">…</h1><p id="v-sub"></p></section>
+<section id="viewer"></section>""",
+    "search": """
+<section class="rule intro"><div class="cap">Logs and traces</div><h1>Search the <span class="of">logs</span></h1>
+<p>Plain text or a regular expression, over every PC's run logs and traces.</p></section>
+<section class="rule section"><form class="tools" id="sform"><input type="search" name="q" placeholder="text or regex" size="40" aria-label="Search text">
+<select name="pc" aria-label="PC"></select><label class="cap"><input type="checkbox" name="regex"> regex</label><button class="btn solid">Search</button></form>
+<div id="note" class="cap"></div></section>
+<section id="hits"></section>""",
+}
 
 
-def overview(runs: list[dict], now: float | None = None) -> str:
-    tot = {k: sum(r["status"].get(k) or 0 for r in runs)
-           for k in ("repos_total", "repos_done", "repos_failed", "prs_done", "prs_remaining", "repos_pending")}
-    cards = "".join(f"<div><b>{_n(v)}</b><span>{html.escape(label)}</span></div>" for label, v in (
-        ("PCs", len(runs)), ("repos done", tot["repos_done"]), ("repos total", tot["repos_total"]),
-        ("repos not started", tot["repos_pending"]), ("PRs mined", tot["prs_done"]),
-        ("PRs left (started repos)", tot["prs_remaining"]), ("repos failed", tot["repos_failed"])))
-    rows = []
-    for r in runs:
-        st = r["status"]
-        label, cls = state_of(r, now)
-        total, done = st.get("repos_total") or 0, st.get("repos_done") or 0
-        pct = int(100 * done / total) if total else 0
-        href = "/run?" + urlencode({"pc": r["pc"], "prefix": r["prefix"]})
-        rows.append(
-            f'<tr><td><a href="{html.escape(href)}">{html.escape(r["pc"])}</a><br>'
-            f'<span class="mut">{html.escape(st.get("host") or "")} · miner {html.escape(st.get("miner_version") or "?")}</span></td>'
-            f'<td class="{cls}">{label}</td>'
-            f'<td>{done}/{total} repos<div class="bar"><i style="width:{pct}%"></i></div></td>'
-            f'<td>{html.escape(st.get("current") or "–")}</td>'
-            f'<td class="n">{_n(st.get("prs_done"))}</td><td class="n">{_n(st.get("prs_remaining"))}</td>'
-            f'<td class="n">{_n(st.get("repos_pending"))}</td><td class="n">{_n(st.get("repos_failed"))}</td>'
-            f'<td>{ago(r["updated"], now)}</td></tr>')
-    table = ('<table><tr><th>PC</th><th>State</th><th>Progress</th><th>Now mining</th><th class="n">PRs mined</th>'
-             '<th class="n">PRs left</th><th class="n">Repos waiting</th><th class="n">Failed</th><th>Last sync</th></tr>'
-             + "".join(rows) + "</table>") if rows else '<p class="mut">No PC has synced yet.</p>'
-    note = ('<p class="mut">PRs left counts the repo each PC is mining now. A repo that has not started has no '
-            'PR selection yet, so it shows under "repos waiting" instead.</p>')
-    return page("Riffle data", f'<h1>Mining progress</h1><div class="tot">{cards}</div>{table}{note}', refresh=60)
+def shell(page: str, title: str, authed: bool = True) -> str:
+    nav = "".join(f'<a href="{href}"{" aria-current=page" if key == page else ""}>{label}</a>' for key, href, label in NAV)
+    right = ('<a class="btn" href="/logout">Sign out</a>' if authed else "")
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">'
+            f'<title>{html.escape(title)} · Riffle data</title><link rel="icon" type="image/svg+xml" href="/static/favicon.svg">'
+            f'<link rel="stylesheet" href="/static/riffle.css"></head><body data-page="{page}"><div class="wrap">'
+            f'<header class="top"><a class="brand" href="/" aria-label="Riffle data">{LOCKUP}<span class="tag">Data</span></a>'
+            f'<nav class="main" aria-label="Main">{nav}</nav><div>{right}</div></header>'
+            f'{BODIES.get(page, "")}<footer class="rule foot">Riffle team store · nothing here is on the scoring path</footer>'
+            f'</div><script src="/static/charts.js"></script><script src="/static/app.js"></script></body></html>')
 
 
-def run_page(run: dict, health: dict[str, dict], files: list[dict], uris: dict[str, str | None],
-             now: float | None = None) -> str:
-    st = run["status"]
-    label, cls = state_of(run, now)
-    rows = []
-    for repo, rec in sorted(st.get("repos", {}).items()):
-        sel = rec.get("selected")
-        left = (max(0, sel - rec.get("rows", 0)) if sel is not None and rec.get("state") == "mining" else None)
-        h = health.get(repo, {})
-        flags = "".join(f'<div class="warn">{html.escape(f)}</div>' for f in h.get("flags", [])) or (
-            '<span class="ok">ok</span>' if h else '<span class="mut">–</span>')
-        scls = {"done": "ok", "failed": "bad", "mining": "warn"}.get(rec.get("state"), "mut")
-        rows.append(f'<tr><td>{html.escape(repo)}</td><td class="{scls}">{html.escape(rec.get("state", "?"))}</td>'
-                    f'<td class="n">{_n(rec.get("rows"))}</td><td class="n">{_n(sel)}</td><td class="n">{_n(left)}</td>'
-                    f'<td>{flags}</td></tr>')
-    repos = ('<table><tr><th>Repo</th><th>State</th><th class="n">PRs mined</th><th class="n">PRs selected</th>'
-             '<th class="n">Left</th><th>Health</th></tr>' + "".join(rows) + "</table>")
-    frows = []
-    for f in files:
-        rel = f["key"]
-        short = html.escape(rel.split("/", 1)[1])
-        link = (f'<a href="/file/{quote(rel)}">{short}</a>'
-                if "/logs/" in rel or "/health/" in rel or rel.endswith("run.json") else short)
-        uri = uris.get(rel)
-        frows.append(f'<tr><td>{link}</td><td class="n">{f["size"]:,}</td><td>{ago(f["updated"], now)}</td>'
-                     f'<td class="mut">{html.escape(uri or "")}</td></tr>')
-    ftable = ('<table><tr><th>File</th><th class="n">Bytes</th><th>Updated</th><th>Bucket</th></tr>'
-              + "".join(frows) + "</table>")
-    head = (f'<h1>{html.escape(run["pc"])} <span class="{cls}">{label}</span></h1>'
-            f'<p class="mut">split {html.escape(str(st.get("split_id")))} · miner {html.escape(str(st.get("miner_version")))} '
-            f'· last sync {ago(run["updated"], now)} ({html.escape(str(st.get("reason")))}) · '
-            f'{_n(st.get("prs_done"))} PRs mined, {_n(st.get("prs_remaining"))} left in the current repo</p>')
-    return page(f'{run["pc"]} · Riffle data', f"{head}<h2>Repos</h2>{repos}<h2>Files</h2>{ftable}", refresh=60)
-
-
-def search_page(q: str, pc: str, regex: bool, pcs: list[str], hits: list[tuple[str, int, str]], note: str = "") -> str:
-    opts = '<option value="">all PCs</option>' + "".join(
-        f'<option{" selected" if p == pc else ""}>{html.escape(p)}</option>' for p in pcs)
-    form = (f'<form action="/search"><input name="q" value="{html.escape(q)}" placeholder="text or regex" size="40">'
-            f'<select name="pc">{opts}</select><label><input type="checkbox" name="regex" value="1"'
-            f'{" checked" if regex else ""}> regex</label><button>Search</button></form>')
-    out = "".join(f'{html.escape(f)}:{n}: {html.escape(line)}\n' for f, n, line in hits)
-    body = f"<h1>Log search</h1>{form}"
-    if note:
-        body += f'<p class="warn">{html.escape(note)}</p>'
-    body += (f"<pre>{out}</pre>" if hits else ('<p class="mut">No matches.</p>' if q else ""))
-    return page("Log search · Riffle data", body)
+def login(error: str = "") -> str:
+    err = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark">'
+            f'<title>Sign in · Riffle data</title><link rel="icon" type="image/svg+xml" href="/static/favicon.svg">'
+            f'<link rel="stylesheet" href="/static/riffle.css"></head><body><div class="login">{LOCKUP}'
+            f'<div class="cap" style="margin-top:28px">Team store</div><h1 style="font:500 2rem/1.1 var(--sans);letter-spacing:-.035em;margin:10px 0 0">Sign in</h1>'
+            f'<p style="color:var(--nickel)">Paste the read token the lead gave you.</p>'
+            f'<form method="post" action="/login"><input type="password" name="token" autocomplete="current-password" '
+            f'placeholder="rd_…" aria-label="Read token" required autofocus><button class="btn solid">Sign in</button></form>{err}</div></body></html>')

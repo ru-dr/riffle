@@ -52,6 +52,12 @@ class Index:
         return dict(pc=r["pc"], prefix=r["prefix"], updated=r["updated"],
                     status=json.loads(r["status"])) if r else None
 
+    def file(self, key: str) -> dict | None:
+        """One file by its exact key (`files(like=)` treats _ and % as wildcards)."""
+        with self.lock:
+            r = self.db.execute("SELECT * FROM files WHERE key=?", (key,)).fetchone()
+        return dict(r) if r else None
+
     def files(self, pc: str | None = None, like: str | None = None) -> list[dict]:
         sql, args = "SELECT * FROM files WHERE 1=1", []
         if pc:

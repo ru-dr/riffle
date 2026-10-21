@@ -38,17 +38,25 @@ def srv(tmp_path):
     s.shutdown()
 
 
-def call(srv, method, path, token=None, body=None, headers=None, basic=False):
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
+
+
+def call(srv, method, path, token=None, body=None, headers=None, basic=False, full=False):
     h = dict(headers or {})
     if token:
         h["Authorization"] = (("Basic " + base64.b64encode(f"x:{token}".encode()).decode()) if basic
                               else f"Bearer {token}")
     req = urllib.request.Request(srv.url + path, data=body, method=method, headers=h)
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status, r.read()
+        with _opener.open(req, timeout=10) as r:
+            return (r.status, r.read(), dict(r.headers)) if full else (r.status, r.read())
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return (e.code, e.read(), dict(e.headers)) if full else (e.code, e.read())
 
 
 def put(srv, key, data: bytes, token=None, sha=True):
@@ -56,12 +64,41 @@ def put(srv, key, data: bytes, token=None, sha=True):
     return call(srv, "PUT", f"/v1/files/{key}", token or srv.pc, data, h)
 
 
-def test_healthz_open_pages_need_a_reader(srv):
+def test_healthz_open_api_and_pages_need_a_reader(srv):
     assert call(srv, "GET", "/healthz")[0] == 200
-    assert call(srv, "GET", "/")[0] == 401
-    assert call(srv, "GET", "/", srv.pc)[0] == 401                  # a PC token cannot read
-    assert call(srv, "GET", "/", srv.rd)[0] == 200
-    assert call(srv, "GET", "/", srv.rd, basic=True)[0] == 200      # browser login
+    assert call(srv, "GET", "/api/runs")[0] == 401
+    code, _, hdr = call(srv, "GET", "/", full=True)
+    assert code == 302 and hdr["Location"] == "/login"             # a page sends you to sign in
+    assert call(srv, "GET", "/api/runs", srv.pc)[0] == 401          # a PC token cannot read
+    assert call(srv, "GET", "/api/runs", srv.rd)[0] == 200
+    assert call(srv, "GET", "/api/runs", srv.rd, basic=True)[0] == 200   # scripts can use Basic too
+
+
+def test_login_sets_a_cookie_that_opens_the_pages(srv):
+    code, body = call(srv, "POST", "/login", None, b"token=nope", {"Content-Type": "application/x-www-form-urlencoded"})
+    assert code == 401 and b"not a read token" in body
+    code, _, hdr = call(srv, "POST", "/login", None, f"token={srv.rd}".encode(), {"Content-Type": "application/x-www-form-urlencoded"}, full=True)
+    assert code == 302 and "HttpOnly" in hdr["Set-Cookie"] and "SameSite=Strict" in hdr["Set-Cookie"]
+    cookie = hdr["Set-Cookie"].split(";")[0]
+    code, page, hdr = call(srv, "GET", "/", None, None, {"Cookie": cookie}, full=True)
+    assert code == 200 and b'data-page="overview"' in page
+    assert "script-src 'self'" in hdr["Content-Security-Policy"] and hdr["X-Content-Type-Options"] == "nosniff"
+    assert b"<script>" not in page                                  # no inline scripts, so the CSP can stay strict
+    assert call(srv, "GET", "/api/runs", None, None, {"Cookie": cookie})[0] == 200
+
+
+def test_static_files_are_served_and_traversal_is_not(srv):
+    assert call(srv, "GET", "/static/riffle.css")[0] == 200
+    code, body, hdr = call(srv, "GET", "/static/fonts/Geist-Variable.woff2", full=True)
+    assert code == 200 and hdr["Content-Type"].startswith("font/woff2") and len(body) > 10000
+    assert call(srv, "GET", "/static/../app.py")[0] == 404
+    assert call(srv, "GET", "/static/..%2fapp.py")[0] == 404
+
+
+def test_failed_sign_ins_are_throttled(srv):
+    for _ in range(20):
+        call(srv, "GET", "/api/runs", "wrong")
+    assert call(srv, "GET", "/api/runs", srv.rd)[0] == 429          # even the right token waits
 
 
 def test_put_needs_a_pc_token_and_stores_under_its_name(srv):
@@ -87,7 +124,7 @@ def test_checksum_mismatch_and_short_body_are_refused(srv):
     assert os.listdir(os.path.join(srv.data, "spool")) == []        # nothing left behind
 
 
-def test_run_json_feeds_the_overview_and_run_page(srv):
+def test_run_json_feeds_the_run_api(srv):
     status = {"reason": "repo done", "pc": "1/2", "split_id": "abc", "miner_version": "6.6.0", "host": "h1",
               "repos_total": 3, "repos_done": 1, "repos_pending": 1, "repos_failed": 0, "prs_done": 65,
               "prs_remaining": 60, "current": "o/big",
@@ -96,32 +133,83 @@ def test_run_json_feeds_the_overview_and_run_page(srv):
                         "o/later": {"state": "pending"}}}
     assert put(srv, "6.6.0/abc/run.json", json.dumps(status).encode())[0] == 200
     assert put(srv, "6.6.0/abc/health/o_a.json", json.dumps({"repo": "o/a", "flags": ["only 25 rows (< 50)"]}).encode())[0] == 200
-    code, page = call(srv, "GET", "/", srv.rd)
-    text = page.decode()
-    assert code == 200 and "pc1" in text and "1/3 repos" in text and ">65<" in text and ">60<" in text
-    code, page = call(srv, "GET", "/run?pc=pc1&prefix=6.6.0/abc", srv.rd)
-    text = page.decode()
-    assert code == 200 and "o/big" in text and "only 25 rows" in text and ">60<" in text
-    assert json.loads(call(srv, "GET", "/api/runs", srv.rd)[1])[0]["status"]["current"] == "o/big"
+    runs = json.loads(call(srv, "GET", "/api/runs", srv.rd)[1])
+    assert runs[0]["pc"] == "pc1" and runs[0]["status"]["current"] == "o/big"
+    d = json.loads(call(srv, "GET", "/api/run?pc=pc1&prefix=6.6.0/abc", srv.rd)[1])
+    assert d["health"]["o/a"]["flags"] == ["only 25 rows (< 50)"]
+    assert {f["kind"] for f in d["files"]} == {"json"}
+    assert call(srv, "GET", "/api/run?pc=pc1&prefix=nope", srv.rd)[0] == 404
 
 
-def test_search_scans_logs_and_traces_and_escapes_html(srv):
+def test_search_scans_logs_and_traces(srv):
     put(srv, "6.6.0/abc/logs/run-1.log", b"ok line\n[blame] warning <b>x</b>\n")
     put(srv, "6.6.0/abc/logs/run-1.trace.jsonl", b'{"msg":"blame warning in trace"}\n')
-    code, page = call(srv, "GET", "/search?q=blame", srv.rd)
-    text = page.decode()
-    assert code == 200 and "[blame] warning &lt;b&gt;x&lt;/b&gt;" in text and "<b>x</b>" not in text
-    assert "blame warning in trace" in text.split("<pre>")[1]       # command-line runs have only a trace
-    assert "ok line" not in text
-    assert "bad regex" in call(srv, "GET", "/search?q=(&regex=1", srv.rd)[1].decode()
+    d = json.loads(call(srv, "GET", "/api/search?q=blame", srv.rd)[1])
+    texts = sorted(h["text"] for h in d["hits"])
+    assert texts == ['[blame] warning <b>x</b>', '{"msg":"blame warning in trace"}']   # raw text; the page uses textContent
+    assert d["pcs"] == []                                            # no run.json yet
+    assert "bad regex" in json.loads(call(srv, "GET", "/api/search?q=(&regex=1", srv.rd)[1])["note"]
 
 
-def test_file_view_only_for_small_mirrored_files(srv):
-    put(srv, "6.6.0/abc/logs/run-1.log", b"0123456789")
-    put(srv, "6.6.0/abc/data/dataset.parquet", b"PAR1")
-    assert call(srv, "GET", "/file/pc1/6.6.0/abc/logs/run-1.log?tail=4", srv.rd) == (200, b"6789")
-    assert call(srv, "GET", "/file/pc1/6.6.0/abc/data/dataset.parquet", srv.rd)[0] == 404
-    assert call(srv, "GET", "/file/pc1/6.6.0/abc/logs/run-1.log")[0] == 401
+def test_viewer_apis_for_text_json_jsonl_and_trace(srv):
+    put(srv, "6.6.0/abc/logs/run-1.log", b"line one\nWARN two\nline three\n")
+    put(srv, "6.6.0/abc/health/o_a.json", b'{"repo":"o/a","stats":{"rows":3},"flags":[]}')
+    trace = "\n".join(json.dumps(e) for e in [
+        {"lvl": "INFO", "stage": "pr", "msg": "done", "repo": "o/a", "pr": 1, "dur_s": 4.0, "stages": {"git": {"n": 2, "s": 3.0}, "api": {"n": 1, "s": 1.0}}},
+        {"lvl": "WARN", "stage": "api", "msg": "retry", "repo": "o/a"}]).encode() + b"\n"
+    put(srv, "6.6.0/abc/logs/run-1.trace.jsonl", trace)
+    k = "pc1/6.6.0/abc/"
+    assert json.loads(call(srv, "GET", f"/api/meta?key={k}logs/run-1.log", srv.rd)[1])["kind"] == "text"
+    d = json.loads(call(srv, "GET", f"/api/lines?key={k}logs/run-1.log&q=warn", srv.rd)[1])
+    assert d["total"] == 1 and d["lines"] == [[2, "WARN two"]]
+    assert json.loads(call(srv, "GET", f"/api/lines?key={k}logs/run-1.log&tail=1&limit=1", srv.rd)[1])["lines"] == [[3, "line three"]]
+    assert json.loads(call(srv, "GET", f"/api/json?key={k}health/o_a.json", srv.rd)[1])["stats"]["rows"] == 3
+    j = json.loads(call(srv, "GET", f"/api/jsonl?key={k}logs/run-1.trace.jsonl", srv.rd)[1])
+    assert j["total"] == 2 and "msg" in j["columns"]
+    t = json.loads(call(srv, "GET", f"/api/trace?key={k}logs/run-1.trace.jsonl", srv.rd)[1])
+    assert t["prs"] == 1 and t["pr_stage_seconds"][0] == {"l": "git", "v": 3.0, "n": 2} and t["problems"][0]["lvl"] == "WARN"
+    assert call(srv, "GET", f"/api/lines?key={k}logs/nope.log", srv.rd)[0] == 404
+    assert call(srv, "GET", "/api/lines?key=../../etc/passwd", srv.rd)[0] == 404
+    assert call(srv, "GET", f"/api/lines?key={k}logs/run-1.log")[0] == 401
+
+
+def test_parquet_apis_over_one_file_and_a_table(srv, tmp_path):
+    pd = pytest.importorskip("pandas")
+    pytest.importorskip("pyarrow")
+    pytest.importorskip("duckdb")
+    df = pd.DataFrame({"repo": ["o/a"] * 3 + ["o/b"] * 2, "pr": range(5), "score": [0.1, 0.5, 0.9, 0.2, 0.4],
+                       "label_bad": [True, False, None, False, True],
+                       "created_at": pd.to_datetime(["2026-01-05", "2026-01-20", "2026-02-02", "2026-03-03", "2026-03-04"])})
+    path = tmp_path / "d.parquet"
+    df.to_parquet(path)
+    assert put(srv, "6.6.0/abc/data/dataset_pc1of2.parquet", path.read_bytes())[0] == 200
+    assert put(srv, "6.6.0/abc/run.json", json.dumps({"reason": "batch done", "repos": {}}).encode())[0] == 200
+    key = "pc1/6.6.0/abc/data/dataset_pc1of2.parquet"
+
+    def get(route, **kw):
+        q = "&".join(f"{k}={quote(str(v), safe='/')}" for k, v in kw.items())
+        code, body = call(srv, "GET", f"/api/{route}?{q}", srv.rd)
+        return code, json.loads(body)
+
+    code, sc = get("parquet/schema", key=key)
+    assert code == 200 and sc["rows"] == 5 and {c["name"] for c in sc["columns"]} >= {"repo", "score", "label_bad"}
+    code, rows = get("parquet/rows", key=key, sort="score", dir="desc", limit=2)
+    assert rows["total"] == 5 and rows["rows"][0][rows["columns"].index("score")] == 0.9
+    code, rows = get("parquet/rows", key=key, fcol="repo", fq="o/b")
+    assert rows["total"] == 2
+    assert get("parquet/rows", key=key, sort="nope")[0] == 400              # column names come from the file
+    assert get("parquet/rows", key=key, sort='repo"; drop table x; --')[0] == 400
+    code, ch = get("parquet/charts", key=key)
+    assert ch["repos"][0] == {"l": "o/a", "v": 3} and ch["labels"][0]["vals"] == [2, 2, 1] and ch["months"]["column"] == "created_at"
+    assert get("parquet/profile", key=key, col="score")[1]["kind"] in ("histogram", "top")
+    assert get("parquet/profile", key=key, col="created_at")[1]["kind"] == "months"
+    cat = json.loads(call(srv, "GET", "/api/tables", srv.rd)[1])
+    assert cat["version"] == "6.6.0" and cat["tables"][0] == {"name": "mined_dataset", "finished": 1, "all": 1}
+    code, sc = get("parquet/schema", table="mined_dataset", version="6.6.0", split="abc")
+    assert code == 200 and sc["rows"] == 5
+    assert get("parquet/schema", table="mined_snapshot", version="6.6.0", split="abc")[0] == 404
+    assert get("parquet/schema", table="x;y", version="6.6.0", split="abc")[0] == 400
+    assert get("parquet/schema", key="pc1/6.6.0/abc/data/missing.parquet")[0] == 404
 
 
 def test_revoked_token_stops_working_at_once(srv):
