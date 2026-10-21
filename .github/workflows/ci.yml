@@ -70,7 +70,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install pytest jsonschema pyyaml pandas pyarrow
+      - run: pip install pytest jsonschema pyyaml pandas pyarrow duckdb
 
       - name: Repo miner (tables match their contracts)
         run: python -m pytest pipelines/ingestion/repo_miner/tests -q
@@ -80,3 +80,6 @@ jobs:
 
       - name: Airflow start-up scripts
         run: python -m pytest infra/docker/airflow/tests -q
+
+      - name: Team store (riffle-data) and the miner's sync client
+        run: python -m pytest infra/docker/riffle-data/tests -q

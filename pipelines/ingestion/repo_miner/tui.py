@@ -82,13 +82,46 @@ from textual import on  # noqa: E402
 from textual.app import App, ComposeResult  # noqa: E402
 from textual.binding import Binding  # noqa: E402
 from textual.containers import Horizontal, Vertical, VerticalScroll  # noqa: E402
+from textual.markup import escape as esc  # noqa: E402  (text from a join code or the store is data, never markup)
 from textual.screen import ModalScreen  # noqa: E402
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input,  # noqa: E402
                              Label, Log, ProgressBar, Select, Static)
 from rich.highlighter import Highlighter  # noqa: E402
 
+def form_values(argv: list[str]) -> dict:
+    """The form fields a command line means (the lead's, from a join code), parsed the way the miner parses it."""
+    import build_dataset
+    ns = build_dataset.build_parser().parse_known_args(list(argv))[0]
+    vals = {"repos_file": ns.repos_file, "out": ns.out, "out_prefix": ns.out_prefix or "", "out_postfix": ns.out_postfix or "",
+            "max_prs": "" if ns.full_repo or ns.max_prs is None else str(ns.max_prs), "min_age": str(ns.min_age_days),
+            "window_from": ns.window_from or "", "window_to": ns.window_to or "", "cap_training": ns.cap_on == "training",
+            "full_repo": bool(ns.full_repo), "only_domain": ns.only_domain or "", "llm": bool(ns.llm),
+            "snapshots": bool(ns.snapshots), "szz": bool(ns.szz), "ci_history": bool(ns.ci_history),
+            "merge_outcome": bool(ns.merge_outcome), "scanners": not ns.no_scanners,
+            "api_contract": not ns.no_api_contract, "git_discovery": ns.pr_discovery == "git"}
+    if ns.lead_in_days is not None:
+        vals["lead_in"] = str(ns.lead_in_days)
+    if ns.llm_scope:
+        vals["llm_training"] = ns.llm_scope == "training"
+    if ns.close_reason_llm:
+        vals["close_other_only"] = ns.close_reason_llm == "other_only"
+    if ns.llm_model:
+        vals["llm_model"] = ns.llm_model
+    shard = naming.parse_shard(ns.shard)
+    if shard:
+        vals["pc_index"], vals["pcs"] = str(shard[0]), str(shard[1])
+    return vals
+
+
 MODELS = [("Haiku (default, fast/cheap)", "haiku"), ("Sonnet", "sonnet"), ("Opus", "opus"),
           ("Fable 5.1", "claude-fable-5-1")]
+
+# the form fields a join code decides: locked after joining. Machine settings (workers, clone dir, resume
+# switches, the test fields) stay editable, because PCs differ in RAM and disk.
+LOCKED_IDS = frozenset((
+    "repos_file", "out", "out_prefix", "out_postfix", "pcs", "pc_index", "max_prs", "min_age", "window_from",
+    "window_to", "cap_training", "full_repo", "lead_in", "only_domain", "llm", "llm_model", "llm_training",
+    "close_other_only", "snapshots", "szz", "ci_history", "merge_outcome", "scanners", "api_contract", "git_discovery"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(HERE, "build_dataset.py")
@@ -360,37 +393,396 @@ class QRScreen(ModalScreen):
         self.app.pop_screen()
 
 
+class LeadSettingsScreen(ModalScreen):
+    """What the lead chose, read-only, for a PC that joined: the repo list and who mines what, every setting that shapes the
+    data, who issued it and when it expires."""
+
+    BINDINGS = [Binding("escape,q", "app.pop_screen", "Close")]
+    CSS = """
+    LeadSettingsScreen { align: center middle; }
+    #ls { width: 100; max-width: 98%; height: auto; max-height: 96%; border: round $primary; background: $surface; padding: 0 2 1 2; }
+    #ls_title { margin-top: 1; text-style: bold; }
+    #ls_info { margin-top: 1; color: $text-muted; }
+    .sec { margin-top: 1; text-style: bold; }
+    #ls DataTable { height: auto; max-height: 12; margin-top: 1; }
+    """
+
+    def __init__(self, info: dict, doc: dict, my_version: str):
+        super().__init__()
+        self.info, self.doc, self.my_version = info, doc, my_version
+
+    def compose(self) -> ComposeResult:
+        lead, d = self.info["lead"], self.doc
+        exp = time.strftime("%Y-%m-%d", time.gmtime(lead["expires"])) if lead.get("expires") else "never"
+        ver = lead.get("version") or d.get("v") or "?"
+        same = "same as yours" if ver == self.my_version else f"yours is {self.my_version}: run git pull"
+        with VerticalScroll(id="ls"):
+            yield Static("The lead's settings   [dim]read-only · Esc closes[/dim]", id="ls_title")
+            yield Static(f"issued by [b]{esc(str(lead.get('issued_by') or 'the lead'))}[/b] on {(lead.get('created') or '?')[:10]} · "
+                         f"split [b]{esc(str(d['s']))}[/b] · you are PC [b]{d['k']}[/b] of [b]{d['n']}[/b]\n"
+                         f"code valid until {exp} · miner {ver} ({same})", id="ls_info")
+            yield Static("Settings every PC runs with", classes="sec")
+            yield DataTable(id="ls_settings", show_header=False)
+            n = len(self.info["repos"])
+            yield Static(f"Repos in {esc(str(lead.get('repos_name') or 'the list'))} ({n}); yours are marked", classes="sec")
+            yield DataTable(id="ls_repos")
+
+    def on_mount(self) -> None:
+        t = self.query_one("#ls_settings", DataTable)
+        t.add_columns("setting", "value")
+        for k, v in self.info["settings"]:
+            t.add_row(k, str(v))
+        r = self.query_one("#ls_repos", DataTable)
+        r.add_columns("Repo", "Commits", "Mined by")
+        for name, w, pc in self.info["repos"]:
+            r.add_row(name, f"~{w:,}" if w else "–", f"PC {pc}" + ("  ◀ you" if pc == self.doc["k"] else ""))
+        if not self.info["repos"]:
+            r.add_row("(the list is not on this PC)", "", "")
+
+
+class LeadScreen(ModalScreen):
+    """The lead's tools, without a terminal: issue one join code per PC for the settings in the form, copy
+    them, and see or revoke the PC tokens on the store. Needs the store URL and an admin token in .env."""
+
+    BINDINGS = [Binding("escape", "app.pop_screen", "Close")]
+    CSS = """
+    LeadScreen { align: center middle; }
+    #lead { width: 104; max-width: 98%; height: auto; max-height: 96%; border: round $primary;
+            background: $surface; padding: 0 2 1 2; }
+    #lead_title { height: 1; margin-top: 1; text-style: bold; }
+    #lead_status { margin-top: 1; color: $text-muted; }
+    #lead_msg { margin-top: 1; padding: 0 1; background: $boost; min-height: 1; }
+    .sec { margin-top: 1; text-style: bold; }
+    .hint { color: $text-muted; }
+    .lrow { height: 1; margin-top: 1; }
+    .lrow Input { width: 1fr; background: $boost; }
+    .lrow .days { width: 8; }
+    .lrow Button { margin-left: 1; }
+    .lrow Static { width: auto; margin-right: 1; color: $text-muted; }
+    #lead DataTable { height: 6; margin-top: 1; }
+    """
+
+    def __init__(self, tui_app):
+        super().__init__()
+        self.tui = tui_app
+        self.codes: list[tuple[str, str]] = []          # (label, join code) from the last Issue
+        self.split_id = ""
+        self.pending: str | None = None                  # a revoke waiting for its second press
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="lead"):
+            yield Static("Lead tools   [dim]Esc closes[/dim]", id="lead_title")
+            yield Static("", id="lead_status")
+            yield Static("Set the form on the left first, then Issue codes.", id="lead_msg")
+            yield Static("Admin token", classes="sec")
+            yield Static("From manage.py add-admin on the store. Checked with the store, then saved to .env.", classes="hint")
+            with Horizontal(classes="lrow"):
+                yield Input("", id="adm_token", password=True, placeholder="ad_…", compact=True)
+                yield Button("Save", id="adm_save", compact=True)
+            yield Static("Join codes", classes="sec")
+            yield Static("One per PC, carrying the settings in the form. Send each only to its owner.", classes="hint")
+            with Horizontal(classes="lrow"):
+                yield Static("Valid for", classes="")
+                yield Input("30", id="adm_days", type="integer", compact=True, classes="days")
+                yield Static("days (0 = never)")
+                yield Button("Issue codes", id="adm_issue", variant="primary", compact=True)
+            yield DataTable(id="codes", cursor_type="row")
+            with Horizontal(classes="lrow"):
+                yield Button("Copy selected", id="code_copy", compact=True)
+                yield Button("Copy all", id="code_all", compact=True)
+                yield Button("Save to a private file", id="code_save", compact=True)
+                yield Button("Join this PC as selected", id="code_join", variant="primary", compact=True)
+            yield Static("PC tokens on the store", classes="sec")
+            yield DataTable(id="pcs_tbl", cursor_type="row")
+            with Horizontal(classes="lrow"):
+                yield Button("Refresh", id="pc_refresh", compact=True)
+                yield Button("Revoke selected PC", id="pc_revoke", variant="error", compact=True)
+                yield Button("Revoke its whole split", id="split_revoke", variant="error", compact=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#codes", DataTable).add_columns("PC", "Join code (shortened here; Copy gives the whole code)")
+        self.query_one("#pcs_tbl", DataTable).add_columns("PC", "Split", "Expires", "Last upload")
+        self._status()
+        if self._admin_ready():
+            self._refresh()
+
+    # -- helpers ---------------------------------------------------------
+    def _admin_ready(self) -> bool:
+        return bool(os.environ.get("RIFFLE_SYNC_URL") and os.environ.get("RIFFLE_ADMIN_TOKEN"))
+
+    def _status(self) -> None:
+        url = os.environ.get("RIFFLE_SYNC_URL") or "(not set)"
+        ok = bool(os.environ.get("RIFFLE_ADMIN_TOKEN"))
+        self.query_one("#lead_status", Static).update(
+            f"Store [b]{esc(url)}[/b]  ·  admin token: " + ("[green]saved[/]" if ok else "[yellow]not saved: paste it below[/]")
+            + f"\nForm: [b]{self.tui._val('pcs') or '1'}[/b] PC(s) · repos file [b]{esc(str(self.tui._val('repos_file')))}[/b]")
+
+    def _msg(self, text: str, level: str = "") -> None:
+        color = {"bad": "red", "ok": "green", "warn": "yellow"}.get(level)
+        text = esc(text)
+        self.query_one("#lead_msg", Static).update(f"[{color}]{text}[/]" if color else text)
+
+    def _bg(self, fn) -> None:
+        self.run_worker(fn, thread=True, group="lead", exclusive=False)
+
+    # -- buttons ---------------------------------------------------------
+    @on(Button.Pressed, "#adm_save")
+    def _save_token(self) -> None:
+        token = self.query_one("#adm_token", Input).value.strip()
+        if not token.startswith("ad_"):
+            self._msg("An admin token starts with ad_. (Read tokens start with rd_ and cannot issue codes.)", "bad")
+            return
+        self._msg("Checking the token with the store…")
+
+        def work() -> None:
+            import admin
+            import join
+            saved = {k: os.environ.get(k) for k in ("RIFFLE_ADMIN_TOKEN",)}
+            os.environ["RIFFLE_ADMIN_TOKEN"] = token
+            try:
+                me = admin.call("GET", "/v1/whoami")
+                if me.get("kind") != "admins":
+                    raise admin.AdminError(f"that is a {str(me.get('kind')).rstrip('s')} token, not an admin token")
+                join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_ADMIN_TOKEN": token})
+            except admin.AdminError as e:
+                if saved["RIFFLE_ADMIN_TOKEN"] is None:
+                    os.environ.pop("RIFFLE_ADMIN_TOKEN", None)
+                else:
+                    os.environ["RIFFLE_ADMIN_TOKEN"] = saved["RIFFLE_ADMIN_TOKEN"]
+                self.app.call_from_thread(self._msg, f"Not saved: {e}", "bad")
+                return
+            self.app.call_from_thread(self._token_saved)
+        self._bg(work)
+
+    def _token_saved(self) -> None:
+        self.query_one("#adm_token", Input).value = ""
+        self._status()
+        self._msg("Admin token saved to .env.", "ok")
+        self._refresh(keep_msg=True)
+
+    @on(Button.Pressed, "#adm_issue")
+    def _issue(self) -> None:
+        if not self._admin_ready():
+            self._msg("Save the store URL (RIFFLE_SYNC_URL in .env) and an admin token first.", "bad")
+            return
+        pcs = self.tui._val("pcs")
+        if not pcs.isdigit() or int(pcs) < 2:
+            self._msg("Set \"Number of PCs\" in the form to 2 or more, then issue codes.", "bad")
+            return
+        if not self.tui._shard_ok() or not self.tui._window_ok():
+            return
+        days = self.query_one("#adm_days", Input).value.strip() or "0"
+        n = int(pcs)
+        try:
+            import join
+            flags = join.shared_argv(self.tui._build_cmd()[3:])
+        except ValueError as e:
+            self._msg(str(e), "bad")
+            return
+        self._msg(f"Planning the split over {n} PCs and asking the store for {n} tokens…")
+
+        def work() -> None:
+            import subprocess
+            fd, path = tempfile.mkstemp(prefix="riffle-codes-")          # mkstemp files are private (600)
+            os.close(fd)
+            try:
+                cmd = [sys.executable, BUILD, *flags, "--shard-plan", str(n), "--issue-tokens",
+                       "--token-days", days, "--tokens-out", path]
+                r = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True, timeout=180, env=dict(os.environ))
+                with open(path, encoding="utf-8") as fh:
+                    rows = [ln.rstrip("\n").split("\t", 1) for ln in fh if "\t" in ln]
+            except (subprocess.TimeoutExpired, OSError) as e:
+                self.app.call_from_thread(self._msg, f"Could not issue codes: {e}", "bad")
+                return
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            sid = next((ln.split("split ID ")[1].split(":")[0] for ln in r.stdout.splitlines() if "split ID " in ln), "")
+            if r.returncode != 0 or not rows:
+                tail = (r.stderr.strip().splitlines() or r.stdout.strip().splitlines() or ["no output"])[-1]
+                self.app.call_from_thread(self._msg, f"Could not issue codes: {tail}", "bad")
+                return
+            self.app.call_from_thread(self._show_codes, sid, [(a, b) for a, b in rows])
+        self._bg(work)
+
+    def _show_codes(self, sid: str, rows: list[tuple[str, str]]) -> None:
+        self.codes, self.split_id = rows, sid
+        t = self.query_one("#codes", DataTable)
+        t.clear()
+        for label, code in rows:
+            t.add_row(label, code[:22] + "…" + code[-8:], key=label)
+        self._msg(f"Split {sid}: {len(rows)} codes. Copy each one and send it only to that PC's owner. "
+                  f"Issuing again for this split replaces these codes.", "ok")
+        self._refresh(keep_msg=True)
+
+    def _selected_code(self) -> tuple[str, str] | None:
+        t = self.query_one("#codes", DataTable)
+        if not self.codes or t.cursor_row is None or t.cursor_row >= len(self.codes):
+            return None
+        return self.codes[t.cursor_row]
+
+    @on(Button.Pressed, "#code_copy")
+    def _copy_one(self) -> None:
+        sel = self._selected_code()
+        if not sel:
+            self._msg("Issue codes first, then pick a row.", "warn")
+            return
+        ok = self.tui._copy(sel[1])
+        self._msg(f"Copied the code for {sel[0]}." if ok else "No clipboard here; use Save to a private file.", "ok" if ok else "warn")
+
+    @on(Button.Pressed, "#code_join")
+    def _join_here(self) -> None:
+        """The lead's own PC is one of the PCs: join with the selected code without pasting it (same path as the Join box)."""
+        sel = self._selected_code()
+        if not sel:
+            self._msg("Issue codes first, then pick the row for this PC (PC 1 is the first).", "warn")
+            return
+        self.tui.query_one("#join_code", Input).value = sel[1]
+        self.dismiss()
+        self.tui.action_join()
+
+    @on(Button.Pressed, "#code_all")
+    def _copy_all(self) -> None:
+        if not self.codes:
+            self._msg("Issue codes first.", "warn")
+            return
+        ok = self.tui._copy("\n".join(f"{a}\t{b}" for a, b in self.codes))
+        self._msg("Copied all codes, one per line." if ok else "No clipboard here; use Save to a private file.", "ok" if ok else "warn")
+
+    @on(Button.Pressed, "#code_save")
+    def _save_codes(self) -> None:
+        if not self.codes:
+            self._msg("Issue codes first.", "warn")
+            return
+        path = os.path.join(HERE, f"join_codes_{self.split_id or 'split'}.txt")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(f"{a}\t{b}" for a, b in self.codes) + "\n")
+        self._msg(f"Saved to {path} (readable only by you). Delete it once the codes are sent.", "ok")
+
+    # -- PC tokens ---------------------------------------------------------
+    @on(Button.Pressed, "#pc_refresh")
+    def _refresh_btn(self) -> None:
+        self._refresh()
+
+    def _refresh(self, keep_msg: bool = False) -> None:
+        """Reload the PC table. keep_msg leaves the message line alone (the caller just wrote one)."""
+        if not self._admin_ready():
+            return
+
+        def work() -> None:
+            import admin
+            try:
+                rows = admin.call("GET", "/v1/admin/pcs")["pcs"]
+            except admin.AdminError as e:
+                self.app.call_from_thread(self._msg, f"Could not list PCs: {e}", "bad")
+                return
+            self.app.call_from_thread(self._show_pcs, rows, keep_msg)
+        self._bg(work)
+
+    def _show_pcs(self, rows: list[dict], keep_msg: bool = False) -> None:
+        import admin
+        t = self.query_one("#pcs_tbl", DataTable)
+        t.clear()
+        for r in rows:
+            exp = time.strftime("%Y-%m-%d", time.gmtime(r["expires"])) if r.get("expires") else "never"
+            t.add_row(r["pc"], r.get("split") or "-", exp, admin.ago(r.get("last_upload")), key=r["pc"])
+        self._pcs = rows
+        if not rows and not keep_msg:
+            self._msg("No PC tokens issued yet.")
+
+    def _selected_pc(self) -> dict | None:
+        t = self.query_one("#pcs_tbl", DataTable)
+        rows = getattr(self, "_pcs", [])
+        if not rows or t.cursor_row is None or t.cursor_row >= len(rows):
+            return None
+        return rows[t.cursor_row]
+
+    def _revoke(self, what: str, body: dict, label: str) -> None:
+        if self.pending != what:                              # two presses: the first only asks
+            self.pending = what
+            self._msg(f"Press the same button again to revoke {label}. It stops that PC at once.", "warn")
+            return
+        self.pending = None
+
+        def work() -> None:
+            import admin
+            try:
+                gone = admin.call("POST", "/v1/admin/revoke", body)["revoked"]
+            except admin.AdminError as e:
+                self.app.call_from_thread(self._msg, f"Not revoked: {e}", "bad")
+                return
+            self.app.call_from_thread(self._msg, "Revoked: " + (", ".join(gone) or "nothing"), "ok")
+            self.app.call_from_thread(self._refresh)
+        self._bg(work)
+
+    @on(Button.Pressed, "#pc_revoke")
+    def _revoke_pc(self) -> None:
+        pc = self._selected_pc()
+        if not pc:
+            self._msg("Pick a PC in the table first.", "warn")
+            return
+        self._revoke("pc:" + pc["pc"], {"name": pc["pc"], "kind": "pcs"}, pc["pc"])
+
+    @on(Button.Pressed, "#split_revoke")
+    def _revoke_split(self) -> None:
+        pc = self._selected_pc()
+        if not pc or not pc.get("split"):
+            self._msg("Pick a PC of that split in the table first.", "warn")
+            return
+        self._revoke("split:" + pc["split"], {"split_id": pc["split"]}, f"every PC of split {pc['split']}")
+
+
 class RiffleTUI(App):
     TITLE = "Riffle miner"
     SUB_TITLE = f"build_dataset · v{__version__}"
     CSS = """
-    #form { width: 42; border: round $primary; padding: 0 1; }
+    #side { width: 44; }
+    #form { height: 1fr; border: round $primary; padding: 0 1; }
+    #actions { height: auto; border: round $primary; padding: 0 1; }
+    #mainbtns { height: 3; }
+    #mainbtns Button { width: 1fr; }
+    #morebtns { height: 1; margin-top: 1; }
+    #morebtns Button { width: 1fr; min-width: 6; }
+    #join_msg { height: auto; color: $text-muted; }
+    #lead_card { height: auto; margin-top: 1; padding: 0 1; border-left: thick $success; display: none; }
+    #storerow { height: 1; margin-top: 1; }
+    #storerow Button { width: 1fr; min-width: 7; }
+    #leave { display: none; }
+    #form Input:disabled, #form Select:disabled { text-style: italic; opacity: 70%; }
+    #form Checkbox:disabled { opacity: 70%; }
     #form Input { margin-bottom: 0; }
     #form Label { color: $text-muted; margin-top: 1; }
     #form Checkbox { margin-top: 1; }
-    #buttons { height: 3; margin-top: 1; }
-    #buttons Button { width: 1fr; }
     #main { padding: 0 1; }
     #stats { height: 9; border: round $secondary; padding: 0 1; }
     #overall { height: 1; margin: 0 0 1 0; }
     #repos { height: 1fr; min-height: 6; border: round $secondary; }
     #log { height: 1fr; min-height: 6; border: round $secondary; }
     #token_warn { color: $warning; margin-top: 1; }
+    #store_line { margin-top: 1; }
     .breaker { color: $error; text-style: bold; }
     """
     BINDINGS = [
         Binding("ctrl+r", "start", "Start"),
         Binding("ctrl+x", "stop", "Stop"),
-        Binding("ctrl+t", "test_llm", "Test LLM"),
-        Binding("ctrl+e", "test_run", "Test run"),
-        Binding("ctrl+o", "view_test", "View test data"),
-        Binding("ctrl+g", "show_split", "Show split"),
-        Binding("ctrl+k", "audit", "Audit data"),
-        Binding("ctrl+l", "clear_log", "Clear log"),
-        Binding("ctrl+y", "copy_log", "Copy log"),
-        Binding("ctrl+n", "skip_repo", "Skip repo"),
-        Binding("ctrl+b", "open_dashboard", "Web view / QR"),
+        Binding("f2", "join", "Join"),
+        Binding("f3", "lead", "Lead"),
+        Binding("f4", "open_store", "Store"),
+        Binding("f5", "lead_settings", "Settings"),
+        Binding("ctrl+g", "show_split", "Split"),
+        Binding("ctrl+b", "open_dashboard", "Web view"),
         Binding("ctrl+q", "quit", "Quit"),
+        # still work, but the footer keeps to the keys people use (each has a button or is in the docs)
+        Binding("ctrl+t", "test_llm", "Test LLM", show=False),
+        Binding("ctrl+e", "test_run", "Test run", show=False),
+        Binding("ctrl+o", "view_test", "View test data", show=False),
+        Binding("ctrl+k", "audit", "Audit data", show=False),
+        Binding("ctrl+l", "clear_log", "Clear log", show=False),
+        Binding("ctrl+y", "copy_log", "Copy log", show=False),
+        Binding("ctrl+n", "skip_repo", "Skip repo", show=False),
     ]
 
     def __init__(self):
@@ -416,83 +808,103 @@ class RiffleTUI(App):
         self._skip_confirm: tuple[str, float] | None = None
         self._res: dict = {}                       # last RAM/CPU reading, for the dashboard
         self.dash = None if os.getenv("RIFFLE_DASHBOARD") == "0" else dashboard.Dashboard()
+        self.store_state: dict | None = None       # the last answer of the team store's whoami
+        self.joined: dict | None = None            # the join code's contents, once joined in this session
+        self.lead_argv: list[str] | None = None    # the lead's flags + this PC's --shard, to keep the form in line
+        self.sync_info: dict | None = None         # the miner's last "sync" event
+        self._quitting = False
+        self._hint_shown = False
 
     # ---------------------------------------------------------------- layout
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
-            with VerticalScroll(id="form"):
-                yield Static("", id="token_warn")
-                yield Label("Repos file")
-                yield Input("repos.txt", id="repos_file", compact=True)
-                yield Label("Output dataset")
-                yield Input("dataset.parquet", id="out", compact=True)
-                yield Label("Name prefix / postfix (blank = auto pc tag; {pc} {n} {host} {date})")
-                yield Input("", id="out_prefix", placeholder="prefix", compact=True)
-                yield Input("", id="out_postfix", placeholder="postfix", compact=True)
-                yield Label("Number of PCs (1 = mine everything here)")
-                yield Input("1", id="pcs", type="integer", compact=True)
-                yield Label("This PC # (1..PCs)")
-                yield Input("1", id="pc_index", type="integer", compact=True)
-                yield Label("Clone dir")
-                yield Input("cloned_repos", id="clone_dir", compact=True)
-                yield Checkbox("Full repo: every closed PR, no cap or window", False, id="full_repo",
-                               compact=True)
-                yield Label("Max PRs per repo (blank = all)")
-                yield Input("100", id="max_prs", type="integer", compact=True)
-                yield Label("Skip PRs merged in last N days (mature labels)")
-                yield Input("90", id="min_age", type="integer", compact=True)
-                yield Label("Date window from (YYYY-MM-DD; blank = newest-N mode)")
-                yield Input("", id="window_from", placeholder="2023-07-01", compact=True)
-                yield Label("Date window to (YYYY-MM-DD)")
-                yield Input("", id="window_to", placeholder="2026-07-31", compact=True)
-                yield Checkbox("Max PRs counts training PRs only (window)", False, id="cap_training",
-                               compact=True)
-                yield Label("History lead-in days (window; 0 = off)")
-                yield Input("180", id="lead_in", type="integer", compact=True)
-                yield Label("Only repos tagged [domain: NAME] (blank = all)")
-                yield Input("", id="only_domain", placeholder="web-ts", compact=True)
-                yield Label("PR workers")
-                yield Input(str(config.default_workers()), id="workers", type="integer", compact=True)
-                yield Label("LLM concurrency")
-                yield Input("4", id="llm_conc", type="integer", compact=True)
-                yield Label("Re-mine repos (owner/name, comma-separated)")
-                yield Input("", id="remine", placeholder="e.g. rust-lang/cargo", compact=True)
-                yield Label("Test repo (Test run only)")
-                yield Input("https://github.com/pallets/flask", id="test_repo", compact=True)
-                yield Label("Test PRs")
-                yield Input("10", id="test_prs", type="integer", compact=True)
-                yield Label("LLM model")
-                yield Select(MODELS, value="haiku", allow_blank=False, id="llm_model", compact=True)
-                yield Checkbox("LLM flags (claude -p)", True, id="llm", compact=True)
-                yield Checkbox("LLM on training PRs only", True, id="llm_training", compact=True)
-                yield Checkbox("Close reason: LLM only when rules are unsure", True,
-                               id="close_other_only", compact=True)
-                yield Checkbox("Wait for Claude plan reset (don't fail calls)", True,
-                               id="quota_wait", compact=True)
-                yield Checkbox("PR snapshots (capture while mining, tables built at the end)", True,
-                               id="snapshots",
-                               compact=True)
-                yield Checkbox("SZZ label", True, id="szz", compact=True)
-                yield Checkbox("CI history", True, id="ci_history", compact=True)
-                yield Checkbox("Merge outcome (+ unmerged PRs)", True, id="merge_outcome",
-                               compact=True)
-                yield Checkbox("Scanners (lizard/semgrep)", True, id="scanners", compact=True)
-                yield Checkbox("API contract diff", True, id="api_contract", compact=True)
-                yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
-                yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
-                yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
-                yield Checkbox("Auto re-mine broken repos", False, id="auto_remine", compact=True)
-                yield Checkbox("Skip big repos (quick test run)", False, id="skip_big", compact=True)
-                yield Label("Big = more than N commits")
-                yield Input("100000", id="big_n", type="integer", compact=True)
-                with Horizontal(id="buttons"):
-                    yield Button("Show split", id="split", variant="default")
-                    yield Button("Audit", id="audit", variant="default")
-                    yield Button("Test LLM", id="test", variant="primary")
-                    yield Button("Test run", id="testrun", variant="warning")
-                    yield Button("Start", id="start", variant="success")
-                    yield Button("Stop", id="stop", variant="error", disabled=True)
+            with Vertical(id="side"):
+                with VerticalScroll(id="form"):
+                    yield Static("", id="token_warn")
+                    yield Static("", id="store_line")
+                    yield Static("", id="lead_card")
+                    yield Label("Join code from the lead (riffle1.…)")
+                    yield Input("", id="join_code", placeholder="paste it here, then Join (F2)", password=True,
+                                compact=True)
+                    yield Static("", id="join_msg")
+                    with Horizontal(id="storerow"):
+                        yield Button("Join F2", id="join", variant="primary", compact=True)
+                        yield Button("Lead F3", id="lead_btn", compact=True)
+                        yield Button("Store F4", id="store_btn", compact=True)
+                        yield Button("Leave", id="leave", variant="warning", compact=True)
+                    yield Label("Repos file")
+                    yield Input("repos.txt", id="repos_file", compact=True)
+                    yield Label("Output dataset")
+                    yield Input("dataset.parquet", id="out", compact=True)
+                    yield Label("Name prefix / postfix (blank = auto pc tag; {pc} {n} {host} {date})")
+                    yield Input("", id="out_prefix", placeholder="prefix", compact=True)
+                    yield Input("", id="out_postfix", placeholder="postfix", compact=True)
+                    yield Label("Number of PCs (1 = mine everything here)")
+                    yield Input("1", id="pcs", type="integer", compact=True)
+                    yield Label("This PC # (1..PCs)")
+                    yield Input("1", id="pc_index", type="integer", compact=True)
+                    yield Label("Clone dir")
+                    yield Input("cloned_repos", id="clone_dir", compact=True)
+                    yield Checkbox("Full repo: every closed PR, no cap or window", False, id="full_repo",
+                                   compact=True)
+                    yield Label("Max PRs per repo (blank = all)")
+                    yield Input("100", id="max_prs", type="integer", compact=True)
+                    yield Label("Skip PRs merged in last N days (mature labels)")
+                    yield Input("90", id="min_age", type="integer", compact=True)
+                    yield Label("Date window from (YYYY-MM-DD; blank = newest-N mode)")
+                    yield Input("", id="window_from", placeholder="2023-07-01", compact=True)
+                    yield Label("Date window to (YYYY-MM-DD)")
+                    yield Input("", id="window_to", placeholder="2026-07-31", compact=True)
+                    yield Checkbox("Max PRs counts training PRs only (window)", False, id="cap_training",
+                                   compact=True)
+                    yield Label("History lead-in days (window; 0 = off)")
+                    yield Input("180", id="lead_in", type="integer", compact=True)
+                    yield Label("Only repos tagged [domain: NAME] (blank = all)")
+                    yield Input("", id="only_domain", placeholder="web-ts", compact=True)
+                    yield Label("PR workers")
+                    yield Input(str(config.default_workers()), id="workers", type="integer", compact=True)
+                    yield Label("LLM concurrency")
+                    yield Input("4", id="llm_conc", type="integer", compact=True)
+                    yield Label("Re-mine repos (owner/name, comma-separated)")
+                    yield Input("", id="remine", placeholder="e.g. rust-lang/cargo", compact=True)
+                    yield Label("Test repo (Test run only)")
+                    yield Input("https://github.com/pallets/flask", id="test_repo", compact=True)
+                    yield Label("Test PRs")
+                    yield Input("10", id="test_prs", type="integer", compact=True)
+                    yield Label("LLM model")
+                    yield Select(MODELS, value="haiku", allow_blank=False, id="llm_model", compact=True)
+                    yield Checkbox("LLM flags (claude -p)", True, id="llm", compact=True)
+                    yield Checkbox("LLM on training PRs only", True, id="llm_training", compact=True)
+                    yield Checkbox("Close reason: LLM only when rules are unsure", True,
+                                   id="close_other_only", compact=True)
+                    yield Checkbox("Wait for Claude plan reset (don't fail calls)", True,
+                                   id="quota_wait", compact=True)
+                    yield Checkbox("PR snapshots (capture while mining, tables built at the end)", True,
+                                   id="snapshots",
+                                   compact=True)
+                    yield Checkbox("SZZ label", True, id="szz", compact=True)
+                    yield Checkbox("CI history", True, id="ci_history", compact=True)
+                    yield Checkbox("Merge outcome (+ unmerged PRs)", True, id="merge_outcome",
+                                   compact=True)
+                    yield Checkbox("Scanners (lizard/semgrep)", True, id="scanners", compact=True)
+                    yield Checkbox("API contract diff", True, id="api_contract", compact=True)
+                    yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
+                    yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
+                    yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
+                    yield Checkbox("Auto re-mine broken repos", False, id="auto_remine", compact=True)
+                    yield Checkbox("Skip big repos (quick test run)", False, id="skip_big", compact=True)
+                    yield Label("Big = more than N commits")
+                    yield Input("100000", id="big_n", type="integer", compact=True)
+                with Vertical(id="actions"):
+                    with Horizontal(id="mainbtns"):
+                        yield Button("Start  ^r", id="start", variant="success")
+                        yield Button("Stop  ^x", id="stop", variant="error", disabled=True)
+                    with Horizontal(id="morebtns"):
+                        yield Button("Split", id="split", compact=True)
+                        yield Button("Audit", id="audit", compact=True)
+                        yield Button("Test LLM", id="test", compact=True)
+                        yield Button("Test run", id="testrun", compact=True)
             with Vertical(id="main"):
                 yield Static("Idle. Configure on the left, then Start (ctrl+r).", id="stats")
                 yield ProgressBar(id="overall", show_eta=False)
@@ -509,6 +921,8 @@ class RiffleTUI(App):
             t.add_column(label, key=key)
         self.query_one("#log", Log).highlighter = _LevelHighlighter()
         self._check_token()
+        self._check_store()
+        self.set_interval(60, self._check_store)                # a revoke, rotation or expiry shows within a minute
         self._start_dashboard()
         self.set_interval(0.25, self._poll_events)
         self.set_interval(1.0, self._render_stats)
@@ -677,6 +1091,251 @@ class RiffleTUI(App):
             "" if ok else "⚠ GITHUB_TOKEN not set (shell or .env): GitHub rate limits "
                           "will pause runs for up to an hour at a time.")
         return ok
+
+    # ------------------------------------------------------------- team store
+    def _check_store(self) -> None:
+        """Ask the store who this PC's token is, off the UI thread, and show the answer."""
+        def work() -> None:
+            import sync
+            r = sync.whoami()
+            self.call_from_thread(self._show_store, r)
+        self.run_worker(work, thread=True, group="store", exclusive=True)
+
+    def _show_store(self, r: dict) -> None:
+        self.store_state = r
+        if r.get("unset"):
+            text = "[b]Team store[/b]\n[yellow]not joined[/] · paste the lead's code below"
+        elif r["ok"]:
+            text = (f"[b]Team store[/b]\n[green]✓ joined as {esc(str(r['name']))}[/]\n"
+                    f"[dim]split {esc(str(r.get('split') or 'any'))} · uploads each repo and on Stop[/]")
+        elif r.get("unreachable"):
+            text = f"[b]Team store[/b]\n[yellow]unreachable[/] · {esc(str(r['why']))}\n[dim]everything saves here, uploads when it can[/]"
+        else:
+            text = f"[b]Team store[/b]\n[red]✗ {esc(str(r['why']))}[/]\n[dim]ask the lead for a new code and paste it below[/]"
+        self.query_one("#store_line", Static).update(text)
+        if (r.get("ok") or r.get("unreachable")) and self.lead_argv is None:     # a store that is down is not a rejection
+            self._restore_join(r)
+        if r.get("ok") and self.lead_argv is None:
+            self._join_msg("This PC has a store token but no saved join code, so the lead's settings are not applied. "
+                           "Paste the code again and press Join (F2), or press Leave.", "warn")
+        self._update_leave()
+
+    @on(Button.Pressed, "#join")
+    def _join_btn(self) -> None:
+        self.action_join()
+
+    @on(Button.Pressed, "#store_btn")
+    def _store_btn(self) -> None:
+        self.action_open_store()
+
+    def action_open_store(self) -> None:
+        """Open the store's pages in the browser; if a read token is saved (python doctor.py), copy it so you can paste it
+        on the sign-in page."""
+        url = (os.environ.get("RIFFLE_SYNC_URL") or "").rstrip("/")
+        if not url:
+            self.notify("Join first (paste the join code), then the store's address is known.", severity="warning")
+            return
+        token = os.environ.get("RIFFLE_READ_TOKEN")
+        copied = bool(token) and self._copy(token)
+        try:
+            webbrowser.open(url)
+        except Exception:                                   # noqa: BLE001
+            pass
+        self.notify(f"Opened {url}. " + ("The read token is copied: paste it to sign in." if copied else
+                    "No read token saved: run python doctor.py to save one, or ask the lead for one."), timeout=10)
+
+    @on(Button.Pressed, "#lead_btn")
+    def _lead_btn(self) -> None:
+        self.action_lead()
+
+    def action_lead(self) -> None:
+        """Issue join codes and manage PC tokens (the lead's side)."""
+        self.push_screen(LeadScreen(self))
+
+    def action_join(self) -> None:
+        """Join with the pasted code (checks it with the store, saves .env, fills the form from the
+        lead's flags); with the box empty, put the lead's settings back."""
+        import join
+        code = self._val("join_code")
+        if not code:
+            if self.joined and self.lead_argv:
+                self._apply_form(form_values(self.lead_argv))
+                self._join_msg("The form is back to the lead's settings.", "ok")
+            else:
+                self._join_msg("Paste the join code the lead sent you first.", "warn")
+            return
+        try:
+            doc = join.decode(code)
+        except ValueError as e:
+            self._join_msg(str(e), "bad")
+            return
+        self._join_msg("Checking the code with the store…")
+
+        def work() -> None:
+            import sync
+            r = sync.whoami(doc["u"], doc["t"])
+            d2 = doc
+            if r["ok"]:
+                join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
+                os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
+                d2 = join.apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), HERE)    # the lead's repo list, not our own file
+            self.call_from_thread(self._joined, d2, r)
+        self.run_worker(work, thread=True, group="join", exclusive=True)
+
+    def _join_msg(self, text: str, level: str = "") -> None:
+        """A message under the join box that stays until the next action (a toast disappears too soon to read)."""
+        color = {"bad": "red", "ok": "green", "warn": "yellow"}.get(level)
+        self._hint_shown = False
+        text = esc(text)
+        self.query_one("#join_msg", Static).update(f"[{color}]{text}[/]" if color else text)
+
+    @on(Input.Changed, "#join_code")
+    def _join_typed(self, event: Input.Changed) -> None:
+        n = len(event.value.strip())
+        if n:
+            self._join_msg(f"{n} characters pasted. Press Join (F2).")
+            self._hint_shown = True
+        elif self._hint_shown:                       # emptied by hand: drop our hint, but never wipe a result
+            self._join_msg("")
+
+    def _joined(self, doc: dict, r: dict) -> None:
+        import join
+        if not r["ok"]:
+            self._join_msg(f"Not saved: {r['why']}. Ask the lead for a new code.", "bad")
+            return
+        self.joined = doc
+        self.lead_argv = list(doc.get("a", [])) + ["--shard", f"{doc['k']}/{doc['n']}"]
+        join.save_state(os.path.join(HERE, join.STATE_FILE), doc)
+        self.query_one("#join_code", Input).value = ""          # the code is a secret: do not leave it on screen
+        self._show_store(r)
+        self._lock_form(True)
+        self._join_msg("Joined. The lead's settings are filled in and locked. Leave the split to change them.", "ok")
+        try:
+            self._apply_form(form_values(self.lead_argv))
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+        self._log(f"[tui] joined as {r['name']}: PC {doc['k']} of {doc['n']}, split {doc['s']}. The form now has the "
+                  f"lead's flags; Start uploads to {doc['u']}", style="bold green")
+        if doc.get("v") and doc["v"] != __version__:
+            self._log(f"[tui] WARNING: the lead used miner {doc['v']} and you have {__version__}. Run git pull and "
+                      f"restart, or the merge will refuse your files.", style="bold yellow")
+            self.notify(f"Miner version differs from the lead's ({doc['v']}). git pull first.", severity="warning", timeout=10)
+        else:
+            self.notify(f"Joined as {r['name']}. Form filled from the lead's flags.")
+
+    def _lock_form(self, on: bool) -> None:
+        """Lock (or unlock) the fields the lead's join code decides. Called when joining, leaving and restoring."""
+        for wid in LOCKED_IDS:
+            try:
+                w = self.query_one(f"#{wid}")
+                w.disabled = on
+                w.tooltip = "Set by the lead. Leave the split to change it." if on else None
+            except Exception:                                   # noqa: BLE001
+                continue
+        self._update_leave()
+        self._show_card()
+
+    def _update_leave(self) -> None:
+        """Leave shows whenever this PC is tied to the store: locked to the lead's settings, or just holding a token."""
+        try:
+            self.query_one("#leave", Button).display = bool(self.lead_argv is not None or os.environ.get("RIFFLE_SYNC_TOKEN"))
+        except Exception:                                       # noqa: BLE001
+            pass
+
+    def _restore_join(self, r: dict) -> None:
+        """A TUI restarted after joining: the lead's settings come back from .join.json and stay locked, as long as the
+        store still accepts the token for that split."""
+        import join
+        doc = join.load_state(os.path.join(HERE, join.STATE_FILE))
+        if not doc or not (r.get("ok") or r.get("unreachable")) or (r.get("split") and r["split"] != doc.get("s")):
+            return
+        self.joined = doc
+        self.lead_argv = list(doc.get("a", [])) + ["--shard", f"{doc['k']}/{doc['n']}"]
+        try:
+            self._apply_form(form_values(self.lead_argv))
+        except ValueError:
+            return
+        self._lock_form(True)
+        self._join_msg("The lead's settings are locked in. Leave the split to change them.", "ok")
+
+    def _describe(self) -> dict | None:
+        import join
+        if not self.joined:
+            return None
+        try:
+            return join.describe(self.joined, HERE)
+        except Exception:                                   # noqa: BLE001  (a card must never break the form)
+            return None
+
+    def _show_card(self) -> None:
+        """A short, always-visible summary of what the lead chose, under the store status."""
+        card = self.query_one("#lead_card", Static)
+        if not self.joined:
+            card.update("")
+            card.display = False
+            return
+        d, info = self.joined, self._describe()
+        lead = d.get("lead") or {}
+        lines = ["[b]Lead's settings[/b] · locked"]
+        name = lead.get("repos_name") or "repos list"
+        lines.append(f"file [b]{esc(str(name))}[/b]" + (f" · {len(info['repos'])} repos" if info and info["repos"] else ""))
+        if info and info["mine"]:
+            lines.append("yours: " + esc(", ".join(info["mine"])))
+        if info:
+            s = dict(info["settings"])
+            lines.append(f"{s['Max PRs per repo']} PRs/repo · LLM {s['LLM flags']} · SZZ {s['SZZ label']}")
+        lines.append(f"[dim]split {esc(str(d['s']))} · PC {d['k']} of {d['n']} · F5 for all[/]")
+        card.update("\n".join(lines))
+        card.display = True
+
+    def action_lead_settings(self) -> None:
+        info = self._describe()
+        if not info:
+            self.notify("Join first: these are the settings the lead chose.", severity="warning")
+            return
+        self.push_screen(LeadSettingsScreen(info, self.joined, __version__))
+
+    @on(Button.Pressed, "#leave")
+    def _leave_btn(self) -> None:
+        self.action_leave()
+
+    def action_leave(self) -> None:
+        """Unlock the form: forget the lead's settings on this PC. Uploads stop while your settings make a different split."""
+        import join
+        if self.lead_argv is None:                              # only a token on this PC (no saved join code): forget the token
+            if not os.environ.get("RIFFLE_SYNC_TOKEN"):
+                return
+            join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": "", "RIFFLE_SYNC_TOKEN": ""})
+            os.environ.pop("RIFFLE_SYNC_URL", None)
+            os.environ.pop("RIFFLE_SYNC_TOKEN", None)
+            self._update_leave()
+            self._check_store()
+            self._join_msg("Left the team store: this PC no longer uploads. Join again with a code from the lead.", "warn")
+            return
+        self.joined = self.lead_argv = None
+        join.clear_state(os.path.join(HERE, join.STATE_FILE))
+        self._lock_form(False)
+        self._join_msg("Unlocked. Your settings are your own now; uploads turn off while they make a different split.", "warn")
+
+    def _apply_form(self, vals: dict) -> None:
+        for wid, v in vals.items():
+            try:
+                w = self.query_one(f"#{wid}")
+            except Exception:                                   # noqa: BLE001
+                continue
+            if isinstance(w, Checkbox):
+                w.value = bool(v)
+            elif isinstance(w, Input):
+                w.value = str(v)
+            elif isinstance(w, Select) and v in [m[1] for m in MODELS]:
+                w.value = v
+
+    def _lead_differences(self) -> list[tuple[str, object, object]]:
+        """Settings that shape the dataset which differ from the lead's flags (empty when not joined)."""
+        if not self.lead_argv:
+            return []
+        import join
+        return join.differences(self.lead_argv, self._build_cmd()[3:])
 
     # ---------------------------------------------------------------- actions
     def _val(self, wid: str) -> str:
@@ -899,6 +1558,7 @@ class RiffleTUI(App):
         self.action_stop()
 
     def action_start(self, test: bool = False) -> None:
+        self._check_store()                                     # refresh the card; the miner re-checks the token itself
         if self.proc is not None:
             self.notify("A run is already in progress.", severity="warning")
             return
@@ -913,6 +1573,23 @@ class RiffleTUI(App):
         if not test and not os.path.isfile(os.path.join(HERE, repos_file)) and not os.path.isfile(repos_file):
             self.notify(f"Repos file not found: {repos_file}", severity="error")
             return
+        if not test:
+            try:
+                diffs = self._lead_differences()
+            except ValueError:
+                diffs = []
+            if diffs:
+                self._log("[tui] NOT STARTED: these settings differ from the lead's. Different flags make the merge "
+                          "refuse your files and turn uploads off:", style="bold red")
+                for name, lead, mine in diffs:
+                    self._log(f"  --{name.replace('_', '-')}: lead {lead!r}, yours {mine!r}", style="red")
+                self._log("  Press F2 with the join box empty to put the lead's settings back, or change the fields.",
+                          style="yellow")
+                self.notify("Your settings differ from the lead's; see the log. F2 restores them.", severity="error", timeout=10)
+                return
+            if self.store_state and not self.store_state.get("ok") and not self.store_state.get("unset"):
+                self.notify(f"Uploads are off: {self.store_state['why']}. Everything is still saved here.",
+                            severity="warning", timeout=10)
         mp = self._val("max_prs")
         self.max_prs = int(mp) if mp.isdigit() and not self._on("full_repo") else None
         self.test_mode = test
@@ -953,7 +1630,9 @@ class RiffleTUI(App):
         try:
             os.killpg(self.proc.pid, signal.SIGINT)
             self._log("[stop] SIGINT sent; the checkpoint keeps finished PRs. "
-                      "Start again with 'Reuse clones' on to resume.", style="yellow")
+                      "Start again with 'Reuse clones' on to resume."
+                      + (" The miner uploads what it has before it exits (up to two minutes)."
+                         if self.store_state and self.store_state.get("ok") else ""), style="yellow")
         except ProcessLookupError:
             pass
 
@@ -962,13 +1641,27 @@ class RiffleTUI(App):
         self.log_lines.clear()
 
     async def action_quit(self) -> None:
-        if self.proc is not None:
+        proc = self.proc
+        if proc is not None:
+            if self._quitting:                       # a second ctrl+q: do not wait for the upload
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self.exit()
+                return
+            self._quitting = True
             self.action_stop()
+            wait = 10.0
+            if self.store_state and self.store_state.get("ok"):
+                wait = float(os.environ.get("RIFFLE_SYNC_TIMEOUT", "120")) + 20
+                self._log("[tui] waiting for the miner to upload before quitting (ctrl+q again to quit now)", style="yellow")
+                self.notify("Uploading before quitting. ctrl+q again to quit now.", timeout=8)
             try:
-                await asyncio.wait_for(self.proc.wait(), timeout=10)
+                await asyncio.wait_for(proc.wait(), timeout=wait)
             except (asyncio.TimeoutError, ProcessLookupError):
                 try:
-                    os.killpg(self.proc.pid, signal.SIGKILL)
+                    os.killpg(proc.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
         self.exit()
@@ -980,8 +1673,10 @@ class RiffleTUI(App):
         self.query_one("#testrun", Button).disabled = running
         self.query_one("#split", Button).disabled = running
         self.query_one("#audit", Button).disabled = running
+        self.query_one("#join", Button).disabled = running
+        locked = self.lead_argv is not None
         for w in self.query("#form Input, #form Checkbox, #form Select"):
-            w.disabled = running
+            w.disabled = running or (locked and w.id in LOCKED_IDS)
 
     # ------------------------------------------------------------- subprocess
     async def _run_proc(self, cmd: list[str]) -> None:
@@ -1123,6 +1818,8 @@ class RiffleTUI(App):
             r.stage = e.get("stage", r.stage)
         elif ev == "assemble":
             self.assembly = {k: v for k, v in e.items() if k not in ("t", "ev")}
+        elif ev == "sync":
+            self.sync_info = dict(e, t=t)
         elif ev == "rate_limit":
             r = self._repo(e["repo"])
             r.rl_until = t + (e.get("wait") or 0)
@@ -1268,6 +1965,8 @@ class RiffleTUI(App):
 
     # ------------------------------------------------------------------ stats
     def _render_stats(self) -> None:
+        if not self.query("#stats"):              # the screen is closing (a timer fired late)
+            return
         if self.stats.started is None:
             idle = "Idle. Configure on the left, then Start (ctrl+r)."
             if self.dash:
@@ -1339,6 +2038,9 @@ class RiffleTUI(App):
             "\n            ".join(self.out_paths)
         if self.log_path:
             line3 += f"\n[b]Log:[/b] {self.log_path}"
+        store = self._sync_text()
+        if store:
+            line3 += f"\n[b]Team store:[/b] {store}"
         if self.dash:
             line3 += f"\n[b]Web view:[/b] {self.dash.url}"
         self.query_one("#stats", Static).update(line1 + "\n" + line2 + "\n" + line3)
@@ -1361,6 +2063,23 @@ class RiffleTUI(App):
             "breaker": self.stats.breaker,
             "assembly": self.assembly,
         })
+
+    def _sync_text(self) -> str | None:
+        """One line for the stats panel: is this run uploading, and when did it last?"""
+        si = self.sync_info
+        if not si:
+            return None
+        if si.get("off"):
+            return f"[yellow]uploads OFF for this run[/] · {esc(str(si['off']))}"
+        if si.get("on"):
+            return f"[green]uploading as {esc(str(si['on']))}[/] · after each repo and when you stop"
+        ago = _fmt_secs(max(0, time.time() - si["t"]))
+        line = f"last upload {ago} ago · {si.get('sent', 0)} files sent"
+        if si.get("failed"):
+            line += f" · [red]{si['failed']} failed[/]"
+        if si.get("stopped"):
+            line += f" · [yellow]{esc(str(si['stopped']))}; the next repo retries[/]"
+        return line
 
     def _resources(self) -> str | None:
         """RAM/CPU of the miner process tree (build_dataset → mine_repo → git,

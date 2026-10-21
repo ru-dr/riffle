@@ -35,9 +35,14 @@ def _parse_env_file(path: str) -> None:
 
 
 def _load_dotenv() -> None:
+    """RIFFLE_DOTENV=path loads that file instead; RIFFLE_NO_DOTENV=1 loads none (the tests set it,
+    so a developer's real .env never leaks into them)."""
+    if os.environ.get("RIFFLE_NO_DOTENV"):
+        return
     here = os.path.dirname(os.path.abspath(__file__))
-    for candidate in (os.path.join(here, ".env"),
-                      os.path.join(os.getcwd(), ".env")):
+    explicit = os.environ.get("RIFFLE_DOTENV")
+    for candidate in ((explicit,) if explicit else (os.path.join(here, ".env"),
+                                                     os.path.join(os.getcwd(), ".env"))):
         if os.path.isfile(candidate):
             _parse_env_file(candidate)
             return

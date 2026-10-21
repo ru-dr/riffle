@@ -494,6 +494,49 @@ def _path_note(tool: str, added: list[str]) -> str:
 
 
 # -------------------------------------------------------------------- checks
+def _team_store_check() -> tuple[str, str, str, str | None]:
+    """The join token (the write token inside the lead's join code): (name, status, detail, fix). Optional, so a
+    problem is a warning, never a failure."""
+    import sync
+    url, token = _env("RIFFLE_SYNC_URL"), _env("RIFFLE_SYNC_TOKEN")
+    if not url or not token:
+        return ("Join token", WARN, "not joined: your output stays on this PC. Paste the join code the lead sent you",
+                "join")
+    r = sync.whoami(url, token)
+    if r["ok"]:
+        return ("Join token", OK, f"{r['name']} · split {r.get('split') or 'any'} · output is sent after each repo", None)
+    return ("Join token", WARN, f"{r['why']}. The run still works and keeps everything locally; "
+                                f"paste a new join code from the lead", "join")
+
+
+def _read_token_check() -> tuple[str, str, str, str | None]:
+    """The read token: signs in to the store's pages (never used by the miner itself)."""
+    import sync
+    url, token = _env("RIFFLE_SYNC_URL"), _env("RIFFLE_READ_TOKEN")
+    if not url:
+        return ("Read token", WARN, "needs the store address: join first (the join code carries it)", None)
+    if not token:
+        return ("Read token", WARN, f"optional: lets you open {url} and read the mined data. The lead makes one on "
+                                    f"the Admin page", "read")
+    r = sync.whoami(url, token)
+    if r.get("kind") == "readers":
+        return ("Read token", OK, f"{r['name']} · open {url} and paste it to sign in", None)
+    why = r["why"] if not r.get("kind") else f"that is a {str(r['kind']).rstrip('s')} token, not a read token"
+    return ("Read token", WARN, f"{why}", "read")
+
+
+def _admin_token_check() -> tuple[str, str, str, str | None] | None:
+    """The lead's admin token; only shown when one is set (volunteers have none)."""
+    import sync
+    url, token = _env("RIFFLE_SYNC_URL"), _env("RIFFLE_ADMIN_TOKEN")
+    if not token:
+        return None
+    r = sync.whoami(url, token) if url else {"ok": False, "why": "needs RIFFLE_SYNC_URL"}
+    if r.get("kind") == "admins":
+        return ("Admin token", OK, f"{r['name']} · can issue and revoke PC tokens (TUI Lead tools, F3)", None)
+    return ("Admin token", WARN, r["why"] if not r.get("kind") else f"that is a {str(r['kind']).rstrip('s')} token, not an admin token", None)
+
+
 def run_checks(plat: Platform | None = None) -> list[Result]:
     plat = plat or detect_platform()
     added = deps.extend_path()      # tools installed to ~/go/bin, ~/.local/bin, npm -g count
@@ -559,6 +602,10 @@ def run_checks(plat: Platform | None = None) -> list[Result]:
     tok = _env("GITHUB_TOKEN")
     st, detail = _github_token_status(tok)
     add("GITHUB_TOKEN", st, detail, fix="token" if st == FAIL else None, group="Credentials")
+
+    for chk in (_team_store_check(), _read_token_check(), _admin_token_check()):
+        if chk:
+            add(chk[0], chk[1], chk[2], fix=chk[3], group="Credentials")
 
     backend = _env("LLM_BACKEND") or "claude_cli"
     if backend == "claude_cli":
@@ -630,6 +677,64 @@ def _fix_token(plat: Platform) -> None:
         _set_env_value("GITHUB_TOKEN", tok)
         where = "private, gitignored" if os.name != "nt" else "gitignored"
         print(f"  {_sym(st)} {detail} · saved to {ENV_PATH} ({where})")
+        return
+
+
+def _fix_join(plat: Platform) -> None:
+    """Paste the lead's join code: check it with the store, save it, and say what to run."""
+    import join
+    import sync
+    for _ in range(3):
+        try:
+            code = getpass.getpass("  Paste the join code (hidden, Enter to skip): ").strip()
+        except EOFError:
+            return
+        if not code:
+            return
+        try:
+            doc = join.decode(code)
+        except ValueError as e:
+            print(f"  {_sym(FAIL)} {e}; try again.")
+            continue
+        r = sync.whoami(doc["u"], doc["t"])
+        if not r["ok"]:
+            print(f"  {_sym(FAIL)} {r['why']}. Ask the lead for a new code.")
+            return
+        base = os.path.dirname(ENV_PATH)
+        try:
+            doc = join.apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), base)      # the lead's repo list, not our own file
+        except OSError as e:
+            print(f"  {_sym(WARN)} could not save the lead's repo list ({e}); the code's own flags stand.")
+        join.write_env(ENV_PATH, {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
+        join.save_state(os.path.join(base, join.STATE_FILE), doc)
+        os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
+        print(f"  {_sym(OK)} joined as {r['name']} (PC {doc['k']} of {doc['n']}) · saved to {ENV_PATH}")
+        print(f"  Run this, exactly: {join.command(doc)}   (or open the TUI: it fills the form from the code)")
+        return
+
+
+def _fix_read(plat: Platform) -> None:
+    """Save a read token so the TUI can copy it and open the store's pages."""
+    import sync
+    url = _env("RIFFLE_SYNC_URL")
+    if not url:
+        print(f"  {_sym(WARN)} join first: the store address comes with the join code")
+        return
+    for _ in range(3):
+        try:
+            tok = getpass.getpass("  Paste the read token (starts with rd_; hidden, Enter to skip): ").strip()
+        except EOFError:
+            return
+        if not tok:
+            return
+        r = sync.whoami(url, tok)
+        if r.get("kind") != "readers":
+            why = r["why"] if not r.get("kind") else f"that is a {str(r['kind']).rstrip('s')} token, not a read token"
+            print(f"  {_sym(FAIL)} {why}; try again.")
+            continue
+        _set_env_value("RIFFLE_READ_TOKEN", tok)
+        print(f"  {_sym(OK)} read token for {r['name']} saved to {ENV_PATH}. Open {url} and paste it to sign in "
+              f"(in the TUI: F4 copies it and opens the page).")
         return
 
 
@@ -705,6 +810,8 @@ FIXERS: dict[str, tuple[str, Callable[[Platform], None]]] = {
     "venv": ("Install the Python venv module now?", _fix_venv),
     "pip": ("Install the missing Python packages now?", _fix_pip),
     "token": ("Set up a GitHub token now?", _fix_token),
+    "join": ("Paste the lead's join code now?", _fix_join),
+    "read": ("Save a read token for the store's pages now?", _fix_read),
     "llm_key": ("Set LLM_API_KEY now?", _fix_llm_key),
     "openai": ("Install the openai package now?", _fix_openai),
     "git": ("Install git now?", lambda p: _fix_system("git", p)),
@@ -787,7 +894,7 @@ def run(interactive: bool | None = None) -> tuple[bool, list[Result]]:
                 asked.add(r.fix)
                 question, fixer = FIXERS[r.fix]
                 prompt = question if r.fix == "api_tools" else f"{r.name}: {question}"
-                if _ask(prompt, default=r.status == FAIL):
+                if _ask(prompt, default=r.status == FAIL or r.fix == "join"):
                     try:
                         fixer(plat)
                     except Exception as e:      # noqa: BLE001 (one bad fix must not stop the rest)

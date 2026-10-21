@@ -45,7 +45,7 @@ Python tests (repo root; CI runs them, so keep them passing):
 
 ```bash
 python -m pytest contracts/tests pipelines/ingestion/repo_miner/tests -q   # CI job `contracts`: core dependencies only
-python -m pytest pipelines/training/tests infra/docker/airflow/tests -q    # CI job `pipelines` runs these and the miner tests, with pandas and pyarrow
+python -m pytest pipelines/training/tests infra/docker/airflow/tests infra/docker/riffle-data/tests -q    # CI job `pipelines` runs these and the miner tests, with pandas and pyarrow
 ```
 
 The miner tests need no network, no semgrep and no LLM; CI never runs those. Tests that need pandas skip themselves when it is absent.

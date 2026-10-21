@@ -1,0 +1,63 @@
+# The team store for mined data and run logs (ADR 0015). One service. It runs on
+# a laptop (no bucket, files on a volume) and on one GCP VM (bucket set, the VM's
+# service account does the auth, no key file).
+#
+#   cp .env.example .env
+#   docker compose up -d --build
+#   docker compose exec riffle-data python manage.py add-reader lead
+#   docker compose exec riffle-data python manage.py add-pc pc1
+
+name: riffle-data
+
+services:
+  riffle-data:
+    image: riffle-data:local
+    build: .
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      RIFFLE_BUCKET: ${RIFFLE_BUCKET:-}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-}
+      BQ_LOCATION: ${BQ_LOCATION:-US}
+      RIFFLE_MAX_FILE_BYTES: ${RIFFLE_MAX_FILE_BYTES:-2147483648}
+      # behind Caddy the client address and https come from its X-Forwarded-* headers
+      # the address join codes made by the admin page point at (https://<RIFFLE_DOMAIN>); blank = the address it was reached on
+      RIFFLE_PUBLIC_URL: ${RIFFLE_PUBLIC_URL:-}
+      RIFFLE_TRUST_PROXY: ${RIFFLE_TRUST_PROXY:-0}
+      RIFFLE_COOKIE_SECURE: ${RIFFLE_COOKIE_SECURE:-0}
+    # Loopback by default: the service speaks plain HTTP, so its tokens must not cross a
+    # network in clear. For other machines use the `public` profile below (Caddy, HTTPS),
+    # an IAP tunnel or Tailscale.
+    ports:
+      - "${RIFFLE_BIND_ADDR:-127.0.0.1}:${RIFFLE_PORT:-8470}:8470"
+    volumes:
+      - store-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # HTTPS for a public address: docker compose --profile public up -d
+  # Set RIFFLE_DOMAIN (a name that points at this machine), RIFFLE_TRUST_PROXY=1 and
+  # RIFFLE_COOKIE_SECURE=1 in .env, and RIFFLE_BIND_ADDR=127.0.0.1 so only Caddy is public.
+  caddy:
+    profiles: ["public"]
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      RIFFLE_DOMAIN: ${RIFFLE_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [riffle-data]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  store-data:
+  caddy-data:

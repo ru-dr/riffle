@@ -234,6 +234,28 @@ health flags. Scale the estimates for the full run from those.
   and `dataset_merged.merge.json`. The three tables stay three: they have one row
   per PR, per snapshot and per head commit, and are joined when training loads
   them (`pipelines/training/frames.py`), not stored merged.
+- Tokens in one place: `python doctor.py` checks the GitHub token, the join token (and offers to paste the join code), the read token (saved as `RIFFLE_READ_TOKEN`; the TUI's F4 copies it and opens the store) and, for the lead, the admin token.
+- Joining a split (ADR 0015): the lead plans the split with
+  `python build_dataset.py <the flags every PC should run> --shard-plan N --issue-tokens [--token-days D]`
+  (needs `RIFFLE_SYNC_URL` and `RIFFLE_ADMIN_TOKEN` in the lead's `.env`). The store mints one
+  write token per PC, bound to that split, and the plan prints one **join code** per PC. Send each
+  code only to its PC's owner. They run `python join.py CODE`: it checks the code with the store,
+  writes `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` into `.env` (mode 600) and prints the exact
+  command to run, which is the lead's flags plus `--shard K/N`. `python join.py --check` and
+  `python doctor.py` report whether the token still works. A token writes only under its own split,
+  so if a PC's flags make a different split the run turns sync off and says why. Running the plan
+  again for the same split issues new tokens and revokes the old ones.
+- Managing who may upload (lead only, needs `RIFFLE_ADMIN_TOKEN`): `python admin.py list` shows every PC token with its
+  split, expiry and last upload; `python admin.py revoke NAME` and `revoke-split ID` cut access at once;
+  `python admin.py whoami` checks the admin token. The admin token reads no data. The store also has an admin web page (`/admin`) with the same powers plus rotating a split and adding readers; sign in there with the admin token.
+- Central sync (ADR 0015): with `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` in
+  `.env`, the miner sends its logs, traces, `health/*.json`, dataset, snapshot and
+  commit-feature tables, `.partial.jsonl` checkpoint and shard manifest to the
+  team store after each repo, on a Stop and at the end of a batch (`--no-sync`
+  turns it off). It is incremental and never fails a run; a store that cannot be
+  reached is a warning, and a Stop waits at most `RIFFLE_SYNC_TIMEOUT` seconds
+  (default 120). `ci_cache/`, `snapshots_raw/` and the clones are never sent: they
+  are what a resume reads, and a resume happens on the same PC.
 - Run trace: next to each run log, `logs/run-*.trace.jsonl` holds one JSON line
   per event (`runlog.py`): each run stage with its duration, one line per PR with
   its time split by stage (diff, history, git, api, llm, quota_wait, ...), GitHub
@@ -287,6 +309,10 @@ The nine columns of `contracts/mined_features.schema.json`
   not written to the training dataset.
 
 ## TUI
+
+**Lead tools (F3, or the button under Join):** everything the lead needs, without a terminal. It shows the store and whether the admin token is saved (paste it once; it is checked with the store and written to `.env`). Set the form to the settings every PC should use and the number of PCs, then **Issue codes**: it plans the split, asks the store for one token per PC, and lists the codes with Copy selected, Copy all and a private file save. Only the settings that shape the data travel in the codes; machine settings such as workers and clone dir do not. The lower table shows every PC token with its split, expiry and last upload, and **Revoke selected PC** and **Revoke its whole split** cut access (press twice to confirm). Issuing again for the same split replaces its tokens.
+
+With a join code, paste it into the **Join code** box and press Join (F2): the TUI checks it with the store, saves `.env`, fills the form with the lead's flags and your PC number, and shows `Team store: joined as …`. Those fields are then **locked**: the lead's settings cannot be changed on this PC (they are remembered in `.join.json`, so a restart keeps them locked). Settings about this machine (workers, clone dir, resume switches, the test fields) stay editable. **Leave** (or F-key via the button) unlocks the form and forgets the lead's settings; uploads then stop while your settings make a different split. Start still refuses, with the differences listed, if a locked setting somehow differs. The stats panel has a `Team store` line with the last upload, and quitting after Stop waits for the final upload (a second ctrl+q quits at once).
 
 ```bash
 python tui.py
@@ -509,7 +535,7 @@ v1 output: merged PRs and breakage labels only. Every shard PC must use the
 same setting, or the merge model only sees some of the repos. Repos mined
 before v2.0.0 need a re-mine to get merge labels.
 
-- Rows: closed-unmerged PRs from the same creation window as the merged PRs
+- Rows: closed-unmerged PRs closed in the same span as the merged PRs
   mined, so the merged / unmerged mix is the repo's own. Their commits are
   fetched from `refs/pull/N/head` without local refs, so no `git log --all`
   scan sees them. Features are computed at the fork point as usual;
@@ -722,6 +748,8 @@ build_dataset.py batch driver: clone repos.txt + mine all into one dataset
 snapshot_capture.py / snapshots.py   PR snapshots: capture while mining, assemble at batch end
 naming.py        output names (PC tag, prefix/postfix), run stems
 merge_shards.py  join the PCs' files after checking manifests and consistency.py
+sync.py          send a PC's output to the team store (RIFFLE_SYNC_URL, ADR 0015)
+join.py          join a split with the lead's code: writes .env and checks it
 runlog.py        structured run trace (logs/run-*.trace.jsonl); trace_report.py summarises it
 ```
 

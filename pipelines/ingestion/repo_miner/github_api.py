@@ -98,6 +98,7 @@ class GitHubAPI:
         self.incomplete = False
         # closed-unmerged PRs found by merged_prs() (enable_merge_outcome only)
         self.unmerged: list[dict] = []
+        self.merged_span: tuple[str, str] | None = None   # legacy mode: (oldest, newest) merge time of the kept merged PRs
         self.use_landed = False
         self._user_cache: dict[str, str | None] = {}
         self._user_lock = threading.Lock()
@@ -460,11 +461,15 @@ class GitHubAPI:
         if use_landed and self.st.enable_merge_outcome:
             print("[merge-outcome] landed-commit repo: closed-unmerged PRs skipped "
                   "(not-merged is ambiguous here)", file=sys.stderr)
-        # keep unmerged PRs from the same creation window as the kept merged
-        # ones, so the merged / not-merged mix is the repo's real one
-        if unmerged and collected:
-            oldest = min(p.get("created_at") or "" for p in collected)
-            unmerged = [p for p in unmerged if (p.get("created_at") or "") >= oldest]
+        # keep the unmerged PRs closed in the same span as the kept merged ones (from the oldest kept merge to the newest),
+        # so the merged / not-merged mix is the repo's real one. The cap only shortens the span of merged PRs: unmerged PRs
+        # closed before or after it would have no merged counterparts and skew the mix (a repo with 20 merged PRs in three
+        # weeks came out with 168 unmerged ones from the three months before).
+        self.merged_span = None
+        if collected:
+            merged_times = [p.get("merged_at") or "" for p in collected]
+            self.merged_span = (min(merged_times), max(merged_times))
+            unmerged = [p for p in unmerged if self.merged_span[0] <= (p.get("closed_at") or "") <= self.merged_span[1]]
         cap = self.st.max_unmerged
         if cap is not None and len(unmerged) > cap:
             print(f"[merge-outcome] {len(unmerged)} closed-unmerged PRs in the window; "
@@ -860,8 +865,24 @@ class GitHubAPI:
             except (OSError, json.JSONDecodeError):
                 pass
 
+        # Pages are checkpointed to <cache>.pages.json every few pages, so a
+        # stopped run resumes at the next page instead of page 1. The final
+        # cache is written only when the walk reached the end of the list: a
+        # failed page keeps the checkpoint and is retried by the next run,
+        # rather than a truncated map being cached as complete.
+        pages_path = (cache_path + ".pages.json") if cache_path else None
         raw: dict[str, list] = {}
         page = 1
+        if pages_path and os.path.isfile(pages_path):
+            try:
+                with open(pages_path, encoding="utf-8") as fh:
+                    ck = json.load(fh)
+                raw, page = ck["raw"], int(ck["next_page"])
+                print(f"[ci-history] resuming at page {page} ({len(raw)} commits checkpointed)",
+                      file=__import__("sys").stderr, flush=True)
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+                raw, page = {}, 1
+        complete = False
         while page <= 400:                          # safety cap: 40k runs
             status, data = self._get_persistent(
                 f"/repos/{self.owner}/{self.repo}/actions/runs",
@@ -871,6 +892,7 @@ class GitHubAPI:
                 break
             runs = data.get("workflow_runs", [])
             if not runs:
+                complete = True
                 break
             for run in runs:
                 sha = run.get("head_sha")
@@ -890,8 +912,11 @@ class GitHubAPI:
                     continue
                 raw.setdefault(sha, []).append(run.get("conclusion"))
             if len(runs) < 100:
+                complete = True
                 break
             page += 1
+            if pages_path and page % 10 == 0:
+                self._save_ci_pages(pages_path, raw, page)
             print(f"[ci-history] fetched {sum(len(v) for v in raw.values())} runs "
                   f"across {len(raw)} commits...", file=__import__("sys").stderr, flush=True)
 
@@ -904,10 +929,28 @@ class GitHubAPI:
             # else: only neutral/skipped/cancelled -> leave out (unknown)
 
         if cache_path:
-            try:
-                os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
-                with open(cache_path, "w", encoding="utf-8") as fh:
-                    json.dump(ci, fh)
-            except OSError:
-                pass
+            if complete:
+                try:
+                    os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
+                    with open(cache_path, "w", encoding="utf-8") as fh:
+                        json.dump(ci, fh)
+                    if os.path.isfile(pages_path):
+                        os.remove(pages_path)
+                except OSError:
+                    pass
+            else:
+                self._save_ci_pages(pages_path, raw, page)
+                print(f"[ci-history] stopped at page {page}; map not cached, "
+                      f"a rerun resumes from there", file=__import__("sys").stderr, flush=True)
         return ci
+
+    @staticmethod
+    def _save_ci_pages(path: str, raw: dict, next_page: int) -> None:
+        tmp = path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"next_page": next_page, "raw": raw}, fh)
+            os.replace(tmp, path)
+        except OSError:
+            pass

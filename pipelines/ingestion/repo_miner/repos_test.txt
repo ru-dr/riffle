@@ -1,0 +1,6 @@
+# A small list for trying the whole flow on two PCs: one split, two join codes, a run on each PC
+# (RUN_GUIDE.md, "Try it on two PCs"). Every PC must have this exact file: the split depends on it.
+https://github.com/pallets/flask  # [~5,500 commits] [domain: test]
+https://github.com/pallets/click  # [~2,700 commits] [domain: test]
+https://github.com/pallets/jinja  # [~3,000 commits] [domain: test]
+https://github.com/pallets/itsdangerous  # [~900 commits] [domain: test]
