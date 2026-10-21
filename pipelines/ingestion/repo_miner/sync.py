@@ -1,5 +1,5 @@
 """
-sync.py — hand a run's output to the team's central store (ADR 0014).
+sync.py — hand a run's output to the team's central store (ADR 0015).
 
 After each finished repo, on a Stop (ctrl+c) and at the end of a batch,
 build_dataset.py calls sync() to PUT what this PC has made to the store: the
@@ -17,7 +17,7 @@ other secrets. It never fails a run: any error is a warning, a store that
 cannot be reached ends that sync early, and a Stop waits at most
 RIFFLE_SYNC_TIMEOUT seconds (default 120) for it.
 
-Uploads are incremental. `.sync_state.json` records the size and mtime of each
+Uploads are incremental. `.sync_state.json` records, per store URL, the size and mtime of each
 file as last sent, and an unchanged file is skipped, so syncing often is cheap.
 Each PUT carries the file's SHA-256 so the store can reject a torn upload.
 """
@@ -143,7 +143,8 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
         except ValueError:
             budget_s = DEFAULT_BUDGET_S
     deadline = time.monotonic() + budget_s
-    state = _load_state(state_path)
+    all_state = _load_state(state_path)
+    state = all_state.setdefault(url, {})          # per store: a new URL sends everything again
     try:
         files = collect(out, health_dir, log_dir)
     except Exception as e:                                  # noqa: BLE001
@@ -193,7 +194,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
             _put(url, token, f"{prefix}/run.json", body, len(body), None, CONNECT_S)
         except (urllib.error.URLError, OSError, TimeoutError):
             result["failed"].append("run.json")
-    _save_state(state_path, state)
+    _save_state(state_path, all_state)
     return result
 
 

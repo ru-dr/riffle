@@ -234,7 +234,7 @@ health flags. Scale the estimates for the full run from those.
   and `dataset_merged.merge.json`. The three tables stay three: they have one row
   per PR, per snapshot and per head commit, and are joined when training loads
   them (`pipelines/training/frames.py`), not stored merged.
-- Central sync (ADR 0014): with `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` in
+- Central sync (ADR 0015): with `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` in
   `.env`, the miner sends its logs, traces, `health/*.json`, dataset, snapshot and
   commit-feature tables, `.partial.jsonl` checkpoint and shard manifest to the
   team store after each repo, on a Stop and at the end of a batch (`--no-sync`
@@ -730,7 +730,7 @@ build_dataset.py batch driver: clone repos.txt + mine all into one dataset
 snapshot_capture.py / snapshots.py   PR snapshots: capture while mining, assemble at batch end
 naming.py        output names (PC tag, prefix/postfix), run stems
 merge_shards.py  join the PCs' files after checking manifests and consistency.py
-sync.py          send a PC's output to the team store (RIFFLE_SYNC_URL, ADR 0014)
+sync.py          send a PC's output to the team store (RIFFLE_SYNC_URL, ADR 0015)
 runlog.py        structured run trace (logs/run-*.trace.jsonl); trace_report.py summarises it
 ```
 

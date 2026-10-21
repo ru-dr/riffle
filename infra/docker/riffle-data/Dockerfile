@@ -1,4 +1,4 @@
-# The team store: ingest, pages and the BigQuery loader (ADR 0014). Built
+# The team store: ingest, pages and the BigQuery loader (ADR 0015). Built
 # locally and never pulled, like the Airflow image (ADR 0013).
 FROM python:3.12-slim
 

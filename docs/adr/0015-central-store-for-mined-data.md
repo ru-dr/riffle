@@ -1,4 +1,4 @@
-# 0014: A central store for mined data and run logs
+# 0015: A central store for mined data and run logs
 
 - **Date:** 2026-10-21
 - **Status:** Proposed
@@ -14,6 +14,7 @@ step 7 says "the team bucket or DVC, as the lead says", which is not decided).
 The lead wants to see every PC's logs and mined data in one place, and wants a
 paused run to bring that place up to date. Real-time streaming is not needed.
 `ci_cache/` is what a resume reads, and a resume happens on the same PC.
+[ADR 0014](0014-mlops-tooling-stack.md) (Proposed) fixes the longer-term stack: DVC and a bucket for data, DuckDB for ad-hoc queries, and Loki and Grafana for the services' logs. This ADR covers the mining phase only, where volunteers' PCs send output to one place.
 
 ## Decision
 
@@ -53,7 +54,7 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 | --- | --- |
 | S3 or MinIO API directly from each PC | Needs an S3 client library and signing on every PC, and a PC key can usually also read; a PUT endpoint needs neither |
 | DVC or a shared bucket by hand | Manual, and gives no view of logs or run state |
-| Continuous log streaming (Loki or similar) | Real-time is not needed, and a stopped PC would still lose its last minutes; sync on events covers it |
+| Continuous log streaming to Loki, as ADR 0014 uses for services | Real-time is not needed, and a stopped PC would still lose its last minutes; sync on events covers it |
 | Syncing `ci_cache/` | Only the same PC resumes from it, and it can be large |
 | A hosted dashboard (Grafana Cloud and similar) | Ongoing cost and another account; the pages here are small and read the same index |
 
@@ -71,6 +72,8 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 - A shared VM is a new thing to run, patch and back up, and a GCP project with billing is needed before anything runs.
 - The BigQuery tables can hold partly mined PCs unless `--only-finished` is used.
 
+- ADR 0014 names DVC, not BigQuery, for training data, and Grafana, not a custom page, for dashboards. BigQuery here is an extra copy for analysis and the pages are miner-only. If ADR 0014 is accepted as written, one of them should change, or this ADR should say why the mining phase differs.
+
 ## Revisit if
 
 - The corpus or one PC's output grows past what a single PUT per file handles
@@ -80,6 +83,7 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 
 ## Open
 
+- Whether BigQuery stays once ADR 0014 is decided, or DuckDB over the bucket's parquet replaces it.
 - Which GCP organisation and project hold the VM, bucket and BigQuery dataset, and who pays. Nothing has been created or run on GCP yet; only the laptop setup is tested.
 - How long the store keeps logs and traces.
 - Whether the lead's merge (`merge_shards.py`) should read from the store

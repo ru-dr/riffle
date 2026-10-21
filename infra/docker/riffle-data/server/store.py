@@ -1,5 +1,5 @@
 """
-store.py — where uploaded files live (ADR 0014).
+store.py — where uploaded files live (ADR 0015).
 
 Small files the viewer reads (run logs, health files, run.json) are always kept
 on the VM's disk under <data>/store, so log search and the pages never wait on

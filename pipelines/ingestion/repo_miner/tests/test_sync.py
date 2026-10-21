@@ -1,5 +1,5 @@
 """
-sync.py: incremental PUTs to the team store, bounded and never fatal (ADR 0014).
+sync.py: incremental PUTs to the team store, bounded and never fatal (ADR 0015).
 A real local HTTP server stands in for the store.
 """
 from __future__ import annotations
@@ -148,3 +148,12 @@ def test_status_reports_per_repo_progress(tmp_path, monkeypatch):
     assert st["current"] == "o/big"
     assert st["repos"]["o/big"]["selected"] == 100 and st["repos"]["o/big"]["rows"] == 40
     assert st["prs_done"] == 25 + 40 and st["prs_remaining"] == 60
+
+
+def test_a_new_store_url_gets_everything_again(store, run_dir, monkeypatch):
+    assert _sync(run_dir)["sent"] == 5
+    assert _sync(run_dir)["sent"] == 0
+    monkeypatch.setenv("RIFFLE_SYNC_URL", os.environ["RIFFLE_SYNC_URL"].rstrip("/") + "/")  # same store, same state
+    assert _sync(run_dir)["sent"] == 0
+    monkeypatch.setenv("RIFFLE_SYNC_URL", os.environ["RIFFLE_SYNC_URL"].replace("127.0.0.1", "localhost"))
+    assert _sync(run_dir)["sent"] == 5

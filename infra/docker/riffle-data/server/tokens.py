@@ -1,5 +1,5 @@
 """
-tokens.py — who may write and who may read (ADR 0014).
+tokens.py — who may write and who may read (ADR 0015).
 
 tokens.json holds only SHA-256 hashes: {"pcs": {name: {...}}, "readers": {...}}.
 A PC's token can PUT files under its own name and nothing else; a reader's token

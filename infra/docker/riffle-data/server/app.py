@@ -1,5 +1,5 @@
 """
-app.py — the team store's HTTP service (ADR 0014). Standard library only,
+app.py — the team store's HTTP service (ADR 0015). Standard library only,
 apart from google-cloud-storage when RIFFLE_BUCKET is set.
 
   PUT  /v1/files/<key>            a PC's token; stored as <pc>/<key>

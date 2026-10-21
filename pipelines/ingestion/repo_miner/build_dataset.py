@@ -382,7 +382,7 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
             return proc.returncode, True
 
 
-# --- central sync (ADR 0014) ---------------------------------------------------
+# --- central sync (ADR 0015) ---------------------------------------------------
 # Set once the run's output name is final; run() reads it on a Stop. "repos" is
 # each repo's state for the store's progress page: pending, mining, done, failed
 # or skipped, with its finished rows and, once selected, how many PRs it has.

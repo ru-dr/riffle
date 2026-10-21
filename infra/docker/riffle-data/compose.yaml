@@ -1,4 +1,4 @@
-# The team store for mined data and run logs (ADR 0014). One service. It runs on
+# The team store for mined data and run logs (ADR 0015). One service. It runs on
 # a laptop (no bucket, files on a volume) and on one GCP VM (bucket set, the VM's
 # service account does the auth, no key file).
 #

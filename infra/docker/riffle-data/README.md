@@ -1,6 +1,6 @@
 # riffle-data
 
-The team store for the repo miner's output (ADR 0014). Each PC's miner sends its
+The team store for the repo miner's output (ADR 0015). Each PC's miner sends its
 logs, health files, dataset tables and a `run.json` here after each repo, on a
 Stop and at the end. This service stores them, shows progress per PC, searches
 the logs, and keeps the parquet tables in a bucket for BigQuery.
