@@ -58,7 +58,8 @@
     function open() {
       if (sel.disabled) return;
       closeMenu(false); build(); list.hidden = false; btn.setAttribute("aria-expanded", "true"); openMenu = m;
-      var r = btn.getBoundingClientRect(); root.classList.toggle("up", window.innerHeight - r.bottom < 260 && r.top > 260);
+      var r = btn.getBoundingClientRect(), need = Math.min(list.scrollHeight, 256) + 12;   // open upward only when it does not fit below
+      root.classList.toggle("up", window.innerHeight - r.bottom < need && r.top > need);
       mark(sel.selectedIndex);
     }
     function choose(i) {
