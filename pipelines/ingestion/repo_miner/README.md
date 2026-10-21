@@ -306,6 +306,8 @@ The nine columns of `contracts/mined_features.schema.json`
 
 ## TUI
 
+With a join code, paste it into the **Join code** box and press Join (F2): the TUI checks it with the store, saves `.env`, fills the form with the lead's flags and your PC number, and shows `Team store: joined as …`. Start is refused, with the differences listed, if you then change a setting that shapes the dataset (window, caps, LLM and label switches, repos file, domain, PC numbers); settings about this machine (workers, clone dir, resume switches) may differ. The stats panel has a `Team store` line with the last upload, and quitting after Stop waits for the final upload (a second ctrl+q quits at once).
+
 ```bash
 python tui.py
 ```

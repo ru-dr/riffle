@@ -453,15 +453,18 @@ def _sync_begin(entries: list, done_repos: dict) -> None:
     if not me["ok"]:
         print(f"[sync] OFF for this run: {me['why']}. Fix it with `python join.py --check`; the run goes on "
               f"and writes everything locally.", flush=True)
+        progress.emit("sync", off=me["why"])
         _SYNC = None
         return
     if me.get("split") and me["split"] != sid:
         print(f"[sync] OFF for this run: your token is for split {me['split']}, but these flags make split "
               f"{sid or 'none'}. The repos file, domain, shard count or sizes differ from the lead's plan; "
               f"use the command join.py printed.", flush=True)
+        progress.emit("sync", off=f"token is for split {me['split']}, these flags make {sid or 'none'}")
         _SYNC = None
         return
     print(f"[sync] on as {me['name']}: output goes to the team store after each repo and on a Stop", flush=True)
+    progress.emit("sync", on=me["name"])
     _SYNC["repos"] = {f"{o}/{n}": ({"state": "done", "rows": done_repos[f"{o}/{n}".lower()]}
                                    if f"{o}/{n}".lower() in done_repos else {"state": "pending"})
                       for o, n, _ in entries}
@@ -605,7 +608,8 @@ def _assemble_snapshots(args) -> None:
     progress.emit("assemble", state="done", **r)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """The command line, on its own so join.py and the TUI can parse a command the way the miner will."""
     ap = argparse.ArgumentParser(
         description="Clone a list of GitHub repos and mine them into one dataset.")
     ap.add_argument("--repos-file", default="repos.txt",
@@ -726,6 +730,11 @@ def main():
     ap.add_argument("--test-repo", default="https://github.com/pallets/flask",
                     help="repo used by --test instead of the repos file (default: "
                          "pallets/flask, the smallest repo in the corpus)")
+    return ap
+
+
+def main():
+    ap = build_parser()
     args = ap.parse_args()
     if args.llm and not (args.shard_plan or args.audit):     # plan and audit need no LLM
         import config

@@ -87,6 +87,31 @@ from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input,
                              Label, Log, ProgressBar, Select, Static)
 from rich.highlighter import Highlighter  # noqa: E402
 
+def form_values(argv: list[str]) -> dict:
+    """The form fields a command line means (the lead's, from a join code), parsed the way the miner parses it."""
+    import build_dataset
+    ns = build_dataset.build_parser().parse_known_args(list(argv))[0]
+    vals = {"repos_file": ns.repos_file, "out": ns.out, "out_prefix": ns.out_prefix or "", "out_postfix": ns.out_postfix or "",
+            "max_prs": "" if ns.full_repo or ns.max_prs is None else str(ns.max_prs), "min_age": str(ns.min_age_days),
+            "window_from": ns.window_from or "", "window_to": ns.window_to or "", "cap_training": ns.cap_on == "training",
+            "full_repo": bool(ns.full_repo), "only_domain": ns.only_domain or "", "llm": bool(ns.llm),
+            "snapshots": bool(ns.snapshots), "szz": bool(ns.szz), "ci_history": bool(ns.ci_history),
+            "merge_outcome": bool(ns.merge_outcome), "scanners": not ns.no_scanners,
+            "api_contract": not ns.no_api_contract, "git_discovery": ns.pr_discovery == "git"}
+    if ns.lead_in_days is not None:
+        vals["lead_in"] = str(ns.lead_in_days)
+    if ns.llm_scope:
+        vals["llm_training"] = ns.llm_scope == "training"
+    if ns.close_reason_llm:
+        vals["close_other_only"] = ns.close_reason_llm == "other_only"
+    if ns.llm_model:
+        vals["llm_model"] = ns.llm_model
+    shard = naming.parse_shard(ns.shard)
+    if shard:
+        vals["pc_index"], vals["pcs"] = str(shard[0]), str(shard[1])
+    return vals
+
+
 MODELS = [("Haiku (default, fast/cheap)", "haiku"), ("Sonnet", "sonnet"), ("Opus", "opus"),
           ("Fable 5.1", "claude-fable-5-1")]
 
@@ -376,6 +401,7 @@ class RiffleTUI(App):
     #repos { height: 1fr; min-height: 6; border: round $secondary; }
     #log { height: 1fr; min-height: 6; border: round $secondary; }
     #token_warn { color: $warning; margin-top: 1; }
+    #store_line { margin-top: 1; }
     .breaker { color: $error; text-style: bold; }
     """
     BINDINGS = [
@@ -384,6 +410,7 @@ class RiffleTUI(App):
         Binding("ctrl+t", "test_llm", "Test LLM"),
         Binding("ctrl+e", "test_run", "Test run"),
         Binding("ctrl+o", "view_test", "View test data"),
+        Binding("f2", "join", "Join"),
         Binding("ctrl+g", "show_split", "Show split"),
         Binding("ctrl+k", "audit", "Audit data"),
         Binding("ctrl+l", "clear_log", "Clear log"),
@@ -416,6 +443,11 @@ class RiffleTUI(App):
         self._skip_confirm: tuple[str, float] | None = None
         self._res: dict = {}                       # last RAM/CPU reading, for the dashboard
         self.dash = None if os.getenv("RIFFLE_DASHBOARD") == "0" else dashboard.Dashboard()
+        self.store_state: dict | None = None       # the last answer of the team store's whoami
+        self.joined: dict | None = None            # the join code's contents, once joined in this session
+        self.lead_argv: list[str] | None = None    # the lead's flags + this PC's --shard, to keep the form in line
+        self.sync_info: dict | None = None         # the miner's last "sync" event
+        self._quitting = False
 
     # ---------------------------------------------------------------- layout
     def compose(self) -> ComposeResult:
@@ -423,6 +455,11 @@ class RiffleTUI(App):
         with Horizontal():
             with VerticalScroll(id="form"):
                 yield Static("", id="token_warn")
+                yield Static("", id="store_line")
+                yield Label("Join code from the lead (riffle1.…)")
+                yield Input("", id="join_code", placeholder="paste it here, then Join (F2)", password=True,
+                            compact=True)
+                yield Button("Join", id="join", variant="primary")
                 yield Label("Repos file")
                 yield Input("repos.txt", id="repos_file", compact=True)
                 yield Label("Output dataset")
@@ -509,6 +546,7 @@ class RiffleTUI(App):
             t.add_column(label, key=key)
         self.query_one("#log", Log).highlighter = _LevelHighlighter()
         self._check_token()
+        self._check_store()
         self._start_dashboard()
         self.set_interval(0.25, self._poll_events)
         self.set_interval(1.0, self._render_stats)
@@ -677,6 +715,101 @@ class RiffleTUI(App):
             "" if ok else "⚠ GITHUB_TOKEN not set (shell or .env): GitHub rate limits "
                           "will pause runs for up to an hour at a time.")
         return ok
+
+    # ------------------------------------------------------------- team store
+    def _check_store(self) -> None:
+        """Ask the store who this PC's token is, off the UI thread, and show the answer."""
+        def work() -> None:
+            import sync
+            r = sync.whoami()
+            self.call_from_thread(self._show_store, r)
+        self.run_worker(work, thread=True, group="store", exclusive=True)
+
+    def _show_store(self, r: dict) -> None:
+        self.store_state = r
+        if r.get("unset"):
+            text = "[yellow]Team store: not joined.[/] Paste the join code the lead sent you below, then press Join."
+        elif r["ok"]:
+            text = (f"[green]Team store: joined as {r['name']}[/] (split {r.get('split') or 'any'}). "
+                    f"Your output is uploaded after each repo and when you stop.")
+        elif r.get("unreachable"):
+            text = f"[yellow]Team store: {r['why']}.[/] The run still saves everything here and uploads when it can."
+        else:
+            text = f"[red]Team store: {r['why']}.[/] Ask the lead for a new code and paste it below."
+        self.query_one("#store_line", Static).update(text)
+
+    @on(Button.Pressed, "#join")
+    def _join_btn(self) -> None:
+        self.action_join()
+
+    def action_join(self) -> None:
+        """Join with the pasted code (checks it with the store, saves .env, fills the form from the
+        lead's flags); with the box empty, put the lead's settings back."""
+        import join
+        code = self._val("join_code")
+        if not code:
+            if self.joined and self.lead_argv:
+                self._apply_form(form_values(self.lead_argv))
+                self.notify("The form is back to the lead's settings.")
+            else:
+                self.notify("Paste the join code the lead sent you first.", severity="warning")
+            return
+        try:
+            doc = join.decode(code)
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+            return
+        self.notify("Checking the code with the store…")
+
+        def work() -> None:
+            import sync
+            r = sync.whoami(doc["u"], doc["t"])
+            if r["ok"]:
+                join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
+                os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
+            self.call_from_thread(self._joined, doc, r)
+        self.run_worker(work, thread=True, group="join", exclusive=True)
+
+    def _joined(self, doc: dict, r: dict) -> None:
+        if not r["ok"]:
+            self.notify(f"Not saved: {r['why']}. Ask the lead for a new code.", severity="error", timeout=10)
+            return
+        self.joined = doc
+        self.lead_argv = list(doc.get("a", [])) + ["--shard", f"{doc['k']}/{doc['n']}"]
+        self.query_one("#join_code", Input).value = ""          # the code is a secret: do not leave it on screen
+        self._show_store(r)
+        try:
+            self._apply_form(form_values(self.lead_argv))
+        except ValueError as e:
+            self.notify(str(e), severity="error")
+        self._log(f"[tui] joined as {r['name']}: PC {doc['k']} of {doc['n']}, split {doc['s']}. The form now has the "
+                  f"lead's flags; Start uploads to {doc['u']}", style="bold green")
+        if doc.get("v") and doc["v"] != __version__:
+            self._log(f"[tui] WARNING: the lead used miner {doc['v']} and you have {__version__}. Run git pull and "
+                      f"restart, or the merge will refuse your files.", style="bold yellow")
+            self.notify(f"Miner version differs from the lead's ({doc['v']}). git pull first.", severity="warning", timeout=10)
+        else:
+            self.notify(f"Joined as {r['name']}. Form filled from the lead's flags.")
+
+    def _apply_form(self, vals: dict) -> None:
+        for wid, v in vals.items():
+            try:
+                w = self.query_one(f"#{wid}")
+            except Exception:                                   # noqa: BLE001
+                continue
+            if isinstance(w, Checkbox):
+                w.value = bool(v)
+            elif isinstance(w, Input):
+                w.value = str(v)
+            elif isinstance(w, Select) and v in [m[1] for m in MODELS]:
+                w.value = v
+
+    def _lead_differences(self) -> list[tuple[str, object, object]]:
+        """Settings that shape the dataset which differ from the lead's flags (empty when not joined)."""
+        if not self.lead_argv:
+            return []
+        import join
+        return join.differences(self.lead_argv, self._build_cmd()[3:])
 
     # ---------------------------------------------------------------- actions
     def _val(self, wid: str) -> str:
@@ -913,6 +1046,23 @@ class RiffleTUI(App):
         if not test and not os.path.isfile(os.path.join(HERE, repos_file)) and not os.path.isfile(repos_file):
             self.notify(f"Repos file not found: {repos_file}", severity="error")
             return
+        if not test:
+            try:
+                diffs = self._lead_differences()
+            except ValueError:
+                diffs = []
+            if diffs:
+                self._log("[tui] NOT STARTED: these settings differ from the lead's. Different flags make the merge "
+                          "refuse your files and turn uploads off:", style="bold red")
+                for name, lead, mine in diffs:
+                    self._log(f"  --{name.replace('_', '-')}: lead {lead!r}, yours {mine!r}", style="red")
+                self._log("  Press F2 with the join box empty to put the lead's settings back, or change the fields.",
+                          style="yellow")
+                self.notify("Your settings differ from the lead's; see the log. F2 restores them.", severity="error", timeout=10)
+                return
+            if self.store_state and not self.store_state.get("ok") and not self.store_state.get("unset"):
+                self.notify(f"Uploads are off: {self.store_state['why']}. Everything is still saved here.",
+                            severity="warning", timeout=10)
         mp = self._val("max_prs")
         self.max_prs = int(mp) if mp.isdigit() and not self._on("full_repo") else None
         self.test_mode = test
@@ -953,7 +1103,9 @@ class RiffleTUI(App):
         try:
             os.killpg(self.proc.pid, signal.SIGINT)
             self._log("[stop] SIGINT sent; the checkpoint keeps finished PRs. "
-                      "Start again with 'Reuse clones' on to resume.", style="yellow")
+                      "Start again with 'Reuse clones' on to resume."
+                      + (" The miner uploads what it has before it exits (up to two minutes)."
+                         if self.store_state and self.store_state.get("ok") else ""), style="yellow")
         except ProcessLookupError:
             pass
 
@@ -962,13 +1114,27 @@ class RiffleTUI(App):
         self.log_lines.clear()
 
     async def action_quit(self) -> None:
-        if self.proc is not None:
+        proc = self.proc
+        if proc is not None:
+            if self._quitting:                       # a second ctrl+q: do not wait for the upload
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self.exit()
+                return
+            self._quitting = True
             self.action_stop()
+            wait = 10.0
+            if self.store_state and self.store_state.get("ok"):
+                wait = float(os.environ.get("RIFFLE_SYNC_TIMEOUT", "120")) + 20
+                self._log("[tui] waiting for the miner to upload before quitting (ctrl+q again to quit now)", style="yellow")
+                self.notify("Uploading before quitting. ctrl+q again to quit now.", timeout=8)
             try:
-                await asyncio.wait_for(self.proc.wait(), timeout=10)
+                await asyncio.wait_for(proc.wait(), timeout=wait)
             except (asyncio.TimeoutError, ProcessLookupError):
                 try:
-                    os.killpg(self.proc.pid, signal.SIGKILL)
+                    os.killpg(proc.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
         self.exit()
@@ -980,6 +1146,7 @@ class RiffleTUI(App):
         self.query_one("#testrun", Button).disabled = running
         self.query_one("#split", Button).disabled = running
         self.query_one("#audit", Button).disabled = running
+        self.query_one("#join", Button).disabled = running
         for w in self.query("#form Input, #form Checkbox, #form Select"):
             w.disabled = running
 
@@ -1123,6 +1290,8 @@ class RiffleTUI(App):
             r.stage = e.get("stage", r.stage)
         elif ev == "assemble":
             self.assembly = {k: v for k, v in e.items() if k not in ("t", "ev")}
+        elif ev == "sync":
+            self.sync_info = dict(e, t=t)
         elif ev == "rate_limit":
             r = self._repo(e["repo"])
             r.rl_until = t + (e.get("wait") or 0)
@@ -1268,6 +1437,8 @@ class RiffleTUI(App):
 
     # ------------------------------------------------------------------ stats
     def _render_stats(self) -> None:
+        if not self.query("#stats"):              # the screen is closing (a timer fired late)
+            return
         if self.stats.started is None:
             idle = "Idle. Configure on the left, then Start (ctrl+r)."
             if self.dash:
@@ -1339,6 +1510,9 @@ class RiffleTUI(App):
             "\n            ".join(self.out_paths)
         if self.log_path:
             line3 += f"\n[b]Log:[/b] {self.log_path}"
+        store = self._sync_text()
+        if store:
+            line3 += f"\n[b]Team store:[/b] {store}"
         if self.dash:
             line3 += f"\n[b]Web view:[/b] {self.dash.url}"
         self.query_one("#stats", Static).update(line1 + "\n" + line2 + "\n" + line3)
@@ -1361,6 +1535,23 @@ class RiffleTUI(App):
             "breaker": self.stats.breaker,
             "assembly": self.assembly,
         })
+
+    def _sync_text(self) -> str | None:
+        """One line for the stats panel: is this run uploading, and when did it last?"""
+        si = self.sync_info
+        if not si:
+            return None
+        if si.get("off"):
+            return f"[yellow]uploads OFF for this run[/] · {si['off']}"
+        if si.get("on"):
+            return f"[green]uploading as {si['on']}[/] · after each repo and when you stop"
+        ago = _fmt_secs(max(0, time.time() - si["t"]))
+        line = f"last upload {ago} ago · {si.get('sent', 0)} files sent"
+        if si.get("failed"):
+            line += f" · [red]{si['failed']} failed[/]"
+        if si.get("stopped"):
+            line += f" · [yellow]{si['stopped']}; the next repo retries[/]"
+        return line
 
     def _resources(self) -> str | None:
         """RAM/CPU of the miner process tree (build_dataset → mine_repo → git,

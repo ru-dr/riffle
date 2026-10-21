@@ -34,6 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import progress
 import config  # noqa: F401  (loads .env, so RIFFLE_SYNC_* are set whoever imports this first)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -244,9 +245,11 @@ def put_status(prefix: str, status: dict) -> bool:
 
 
 def report(r: dict, why: str) -> None:
-    """One log line for a finished sync."""
+    """One log line for a finished sync, and an event for the TUI's status line."""
     if r["stopped"] == "off":
         return
+    progress.emit("sync", why=why, sent=r["sent"], skipped=r["skipped"], failed=len(r["failed"]),
+                  stopped=r["stopped"])
     line = f"[sync] {why}: {r['sent']} sent, {r['skipped']} unchanged"
     if r["failed"]:
         line += f", {len(r['failed'])} failed ({', '.join(r['failed'][:3])}{'...' if len(r['failed']) > 3 else ''})"

@@ -69,6 +69,33 @@ def write_env(path: str, values: dict[str, str]) -> None:
     os.replace(path + ".tmp", path)
 
 
+# The flags that change what is mined or which columns come out. Every PC must agree on them, or
+# the merge refuses the pieces (and a split-bound token turns sync off). The rest (clone dir, workers,
+# output name, resume switches, sync) are about this machine and may differ.
+SHAPING = ("repos_file", "only_domain", "max_prs", "min_age_days", "window_from", "window_to", "cap_on",
+           "lead_in_days", "full_repo", "llm", "llm_scope", "close_reason_llm", "llm_model", "llm_sample_pct",
+           "max_unmerged", "merge_outcome", "declared_labels", "szz", "ci_history", "snapshots",
+           "no_api_contract", "no_scanners", "no_review_history", "pr_discovery", "shard")
+
+
+def shaping(argv: list[str]) -> dict:
+    """The dataset-shaping settings a command line means, parsed the way the miner parses it."""
+    import build_dataset
+    try:
+        ns = build_dataset.build_parser().parse_known_args(list(argv))[0]
+    except SystemExit:
+        raise ValueError("could not read the lead's flags") from None
+    return {k: getattr(ns, k) for k in SHAPING}
+
+
+def differences(lead_argv: list[str], my_argv: list[str]) -> list[tuple[str, object, object]]:
+    """(setting, lead's, yours) for each shaping setting that differs. A setting the lead left at
+    the miner's own default (None, e.g. --llm-model) is not compared."""
+    lead, mine = shaping(lead_argv), shaping(my_argv)
+    return [(k, lead[k], mine[k]) for k in SHAPING if lead[k] is not None and lead[k] != mine[k]
+            or (lead[k] is None and k in ("max_prs", "window_from", "window_to", "only_domain") and mine[k] is not None)]
+
+
 def command(doc: dict) -> str:
     return "python build_dataset.py " + " ".join(shlex.quote(a) for a in doc.get("a", []) + ["--shard", f"{doc['k']}/{doc['n']}"])
 

@@ -1519,6 +1519,7 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.5.3 | 10-21 | output identical: the CI-history pre-pass checkpoints its pages (`ci_cache/<repo>.json.pages.json`) so a stopped run resumes at the next page, and a walk that ended on a failed page is no longer cached as complete |
 | 6.6.0 | 10-21 | `sync.py` and `--sync/--no-sync`: logs, health, datasets, shard manifest go to the team store after each repo, on a Stop and at the end; on only when `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` are set; output identical |
 | 6.7.0 | 10-21 | `join.py`, `--issue-tokens`, `--token-days`, `--tokens-out`: join codes with per-split write tokens; the run checks its token and split at start; sync settings are read from `.env` whoever imports `sync` first; doctor reports the team store; output identical |
+| 6.8.0 | 10-21 | TUI: Join code box and F2, form filled from the lead's flags, Start refused when shaping settings differ, store line and upload status, quit waits for the final upload; `build_dataset.build_parser()`, `join.differences()`; `sync` events for the TUI; output identical |
 
 Contract versions: `mined_dataset` 1.0 (2026-10-18, miner 2.2.0) → 1.1 (provenance, `domain`; miner 4.0.0) → 1.2 (`outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer`; miner 5.0.0). `mined_snapshot` 1.0 (miner 3.1.0) → 1.1 → 1.2 → 1.3 (`snapshot_weight`, `moment_bucket`; miner 6.0.0). `mined_commit_features` 1.0 (miner 3.1.0). Full table: `docs/contracts.md`.
 
