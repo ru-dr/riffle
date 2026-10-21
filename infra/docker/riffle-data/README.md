@@ -3,7 +3,7 @@
 The team store for the repo miner's output (ADR 0015). Each PC's miner sends its
 logs, health files, dataset tables and a `run.json` here after each repo, on a
 Stop and at the end. This service stores them, shows progress per PC, searches
-the logs, and keeps the parquet tables in a bucket for BigQuery.
+the logs, and keeps the parquet tables in a bucket, which DuckDB queries (BigQuery is optional).
 
 | Part | What it does |
 | --- | --- |
@@ -11,7 +11,9 @@ the logs, and keeps the parquet tables in a bucket for BigQuery.
 | `server/store.py` | Small files (logs, health, `run.json`) stay on the VM disk; with `RIFFLE_BUCKET` every file is also in GCS and big ones live only there |
 | `server/index.py` | SQLite index of files and runs. A cache: `manage.py reindex` rebuilds it |
 | `server/tokens.py`, `manage.py` | One write-only token per PC, read tokens for the UI. Only hashes are stored |
-| `server/bq_load.py` | Loads the PCs' parquet tables from the bucket into BigQuery |
+| `server/duck.py` | DuckDB views over the PCs' parquet tables, from the bucket or the store's disk |
+| `server/bq_load.py` | Optional: loads the same tables into BigQuery |
+| `server/tables.py` | Which uploaded file belongs to which mined table (shared by the two above) |
 
 ## What the pages show
 
@@ -44,15 +46,13 @@ Replace the names.
 
 ```bash
 gcloud config set project YOUR_PROJECT
-gcloud services enable compute.googleapis.com storage.googleapis.com bigquery.googleapis.com
+gcloud services enable compute.googleapis.com storage.googleapis.com
 
-# bucket for the tables, a service account for the VM, and BigQuery access
+# bucket for the tables and a service account for the VM
 gcloud storage buckets create gs://YOUR_BUCKET --location=US --uniform-bucket-level-access
 gcloud iam service-accounts create riffle-data
 SA=riffle-data@YOUR_PROJECT.iam.gserviceaccount.com
 gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET --member=serviceAccount:$SA --role=roles/storage.objectAdmin
-gcloud projects add-iam-policy-binding YOUR_PROJECT --member=serviceAccount:$SA --role=roles/bigquery.jobUser
-gcloud projects add-iam-policy-binding YOUR_PROJECT --member=serviceAccount:$SA --role=roles/bigquery.dataEditor
 
 # one VM (Debian 12, 2 vCPU / 4 GB, 50 GB disk) with that service account, no key file
 gcloud compute instances create riffle-data --machine-type=e2-medium --boot-disk-size=50GB \
@@ -70,7 +70,30 @@ Do not open port 8470 to the internet. Use one of: an IAP TCP tunnel
 and the PCs, or a TLS proxy (Caddy) with a firewall rule for your team's addresses. For
 IAP and PCs, point `RIFFLE_SYNC_URL` at the tunnel or Tailscale address.
 
-## Load into BigQuery
+## Query with DuckDB
+
+```bash
+pip install duckdb google-cloud-storage
+gcloud auth application-default login          # your own login; not needed on the VM
+python infra/docker/riffle-data/server/duck.py --bucket YOUR_BUCKET --version 6.6.0 --split SPLIT_ID \
+  -c "select repo, count(*) as prs from mined_dataset group by 1 order by 2 desc"
+python infra/docker/riffle-data/server/duck.py --bucket YOUR_BUCKET --version 6.6.0 --split SPLIT_ID --db mined.duckdb   # then: duckdb mined.duckdb
+```
+
+It downloads the parquet files to `~/.cache/riffle-data` (only the ones that changed) and
+makes three views named after the contracts: `mined_dataset`, `mined_snapshot` and
+`mined_commit_features`. They stay three, with different grains: join them in SQL or with
+`pipelines/training/frames.py`. Each view has a `filename` column naming the PC's file.
+By default only PCs that finished (`run.json` says "batch done") are included, so a
+half-mined PC does not skew a result; add `--include-unfinished` to see them. On the
+store's own volume use `--local` instead of `--bucket`.
+
+## Load into BigQuery (optional)
+
+Not needed for the DuckDB route, and the BigQuery API is not enabled in the project
+above. Enable `bigquery.googleapis.com` and give the VM's service account
+`roles/bigquery.jobUser` and `roles/bigquery.dataEditor` first. Use it if several people
+need SQL with per-person access, or dashboards.
 
 ```bash
 docker compose exec riffle-data python bq_load.py --dataset riffle_mined --version 6.6.0 --split SPLIT_ID --dry-run
@@ -90,5 +113,6 @@ python -m pytest infra/docker/riffle-data/tests -q
 ```
 
 They run the server on localhost with a local store, including the miner's own
-`sync.py` against it, and check which files go to which BigQuery table. The GCS
+`sync.py` against it, check which files go to which table, and build the DuckDB views
+over real parquet files (skipped without `duckdb`, `pandas` and `pyarrow`). The GCS
 and BigQuery calls themselves are not covered, because they need a real project.

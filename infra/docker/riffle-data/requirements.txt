@@ -1,3 +1,4 @@
-# Only needed when RIFFLE_BUCKET is set (GCS) or for bq_load.py. The server runs without them.
+# Only needed when RIFFLE_BUCKET is set (GCS), for duck.py, or for bq_load.py. The server runs without them.
 google-cloud-storage>=2.16
-google-cloud-bigquery>=3.20
+duckdb>=1.1
+google-cloud-bigquery>=3.20   # optional: bq_load.py only

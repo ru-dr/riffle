@@ -44,9 +44,13 @@ paused run to bring that place up to date. Real-time streaming is not needed.
   PRs mined and PRs left, health flags and file lists, plus log search. PRs left
   covers repos already started: the miner selects a repo's PRs when it begins
   it, so a repo that has not started has no PR count.
-- BigQuery gets the parquet tables from the bucket with `bq_load.py`, as
-  `mined_dataset`, `mined_snapshot` and `mined_commit_features`, replacing each
-  table on every load. The tables stay three (ADR 0012 and the miner's design).
+- The tables are queried with DuckDB (`server/duck.py`), as ADR 0014 chooses for
+  ad-hoc queries. It makes `mined_dataset`, `mined_snapshot` and
+  `mined_commit_features` views over the PCs' parquet files, by default only for
+  PCs that finished. The tables stay three (ADR 0012 and the miner's design).
+- BigQuery is optional (`server/bq_load.py`, same three tables), for the case
+  where several people need SQL with per-person access or dashboards. The
+  BigQuery API is not enabled until someone needs it.
 
 ## Options not taken
 
@@ -56,6 +60,7 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 | DVC or a shared bucket by hand | Manual, and gives no view of logs or run state |
 | Continuous log streaming to Loki, as ADR 0014 uses for services | Real-time is not needed, and a stopped PC would still lose its last minutes; sync on events covers it |
 | Syncing `ci_cache/` | Only the same PC resumes from it, and it can be large |
+| BigQuery as the main query engine | The data fits one machine, ADR 0014 already picks DuckDB, and BigQuery adds a second copy, billing and IAM; kept as an optional loader |
 | A hosted dashboard (Grafana Cloud and similar) | Ongoing cost and another account; the pages here are small and read the same index |
 
 ## Consequences
@@ -70,9 +75,9 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 - Sync needs the store reachable at stop time; a Stop with no network waits for
   the timeout, then leaves the files for the next sync.
 - A shared VM is a new thing to run, patch and back up, and a GCP project with billing is needed before anything runs.
-- The BigQuery tables can hold partly mined PCs unless `--only-finished` is used.
+- The DuckDB views include only finished PCs unless asked (`--include-unfinished`); the BigQuery loader includes all unless given `--only-finished`.
 
-- ADR 0014 names DVC, not BigQuery, for training data, and Grafana, not a custom page, for dashboards. BigQuery here is an extra copy for analysis and the pages are miner-only. If ADR 0014 is accepted as written, one of them should change, or this ADR should say why the mining phase differs.
+- ADR 0014 names DVC for training data and Grafana, not a custom page, for dashboards. The pages here are miner-only and the bucket holds the same parquet files DVC would version. If ADR 0014 is accepted as written, the pages may move to Grafana.
 
 ## Revisit if
 
@@ -83,8 +88,8 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 
 ## Open
 
-- Whether BigQuery stays once ADR 0014 is decided, or DuckDB over the bucket's parquet replaces it.
-- Which GCP organisation and project hold the VM, bucket and BigQuery dataset, and who pays. Nothing has been created or run on GCP yet; only the laptop setup is tested.
+- Whether the optional BigQuery loader is kept once the team knows who needs SQL access.
+- Who pays after the credit runs out. The project `riffle-data-miner` exists, with billing from the Education account and a budget alert; the VM and bucket are not created yet, and only the laptop setup is tested. A Gmail login has no GCP organisation, so the project sits outside one.
 - How long the store keeps logs and traces.
 - Whether the lead's merge (`merge_shards.py`) should read from the store
   instead of from files sent by hand.

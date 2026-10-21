@@ -70,7 +70,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install pytest jsonschema pyyaml pandas pyarrow
+      - run: pip install pytest jsonschema pyyaml pandas pyarrow duckdb
 
       - name: Repo miner (tables match their contracts)
         run: python -m pytest pipelines/ingestion/repo_miner/tests -q
