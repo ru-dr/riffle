@@ -148,3 +148,22 @@ def test_stats_panel_shows_uploads():
         app._apply({"ev": "sync", "t": 1.0, "off": "token for split abc, flags make xyz"})
         assert "OFF for this run" in app._sync_text()
     _run(go)
+
+
+def test_f4_opens_the_store_and_copies_the_saved_read_token(monkeypatch):
+    opened, copied = [], []
+    monkeypatch.setattr(tui.webbrowser, "open", lambda url: opened.append(url))
+
+    async def go(app, pilot):
+        monkeypatch.setattr(app, "_copy", lambda text: copied.append(text) or True)
+        monkeypatch.setenv("RIFFLE_SYNC_URL", "")
+        app.action_open_store()                                            # not joined: nothing to open, and it says so
+        assert opened == [] and copied == []
+        monkeypatch.setenv("RIFFLE_SYNC_URL", "https://s.example/")
+        monkeypatch.setenv("RIFFLE_READ_TOKEN", "")
+        app.action_open_store()
+        assert opened == ["https://s.example"] and copied == []            # no read token saved: opens the page only
+        monkeypatch.setenv("RIFFLE_READ_TOKEN", "rd_secret")
+        app.action_open_store()
+        assert opened[-1] == "https://s.example" and copied == ["rd_secret"]
+    _run(go)

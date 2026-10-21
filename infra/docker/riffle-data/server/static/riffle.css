@@ -144,3 +144,66 @@ code{font:.9em var(--mono);background:var(--wash);padding:1px 5px;border-radius:
 .alert.ok code{background:transparent;color:inherit;overflow-wrap:anywhere}
 #rform{padding:0}
 [hidden]{display:none !important}
+
+/* ---- polish: header, strips, tables, toolbars, phones ---- */
+.btn.link{padding:0;color:var(--nickel);text-decoration:underline;text-decoration-color:var(--stroke);text-underline-offset:3px;font-size:13px}
+.btn.link:hover{background:none;color:var(--ink);text-decoration-color:var(--ink)}
+.chart>.btn.link{margin-top:10px}
+.bar-label{display:flex;justify-content:space-between;gap:12px}
+/* a stat strip never leaves an empty grey cell: the last one stretches into the gap */
+@media (max-width:64rem){.g5>:last-child:nth-child(3n+2){grid-column:span 2}.g3>:last-child:nth-child(odd){grid-column:1/-1}}
+@media (max-width:40rem){.g5>:last-child:nth-child(3n+2){grid-column:auto}.g5>:last-child:nth-child(odd){grid-column:1/-1}}
+/* tables: numbers line up under their headers; rows that open something look like it */
+table.t th.n,table.t td.n{text-align:right}
+table.t tr.go{cursor:pointer}table.t tr.go:hover td{background:var(--wash)}
+table.t td .cap{margin-top:2px}
+.tablewrap.tall{max-height:68vh}
+.tablewrap.tall table.t th{z-index:1}
+table.t.sticky1 th:first-child,table.t.sticky1 td:first-child{position:sticky;left:0;background:var(--bg);box-shadow:1px 0 0 var(--stroke);z-index:2}
+table.t.sticky1 tbody tr:hover td:first-child{background:var(--wash)}
+.hint{font:12px var(--mono);color:var(--grey);padding:6px 24px}@media (min-width:48rem){.hint{padding:6px 40px}}
+/* toolbars: labelled groups that line up on one baseline */
+.toolbar{display:flex;flex-wrap:wrap;gap:16px 24px;align-items:flex-end;padding:0}
+.toolbar .grp{display:flex;flex-direction:column;gap:6px;min-width:0}
+.toolbar .grp>.cap{margin:0}
+.toolbar select{min-width:9rem;height:34px}
+.toolbar .tabs button{height:34px;display:inline-flex;align-items:center;gap:8px}
+.tabs button:disabled{opacity:.4;cursor:not-allowed}
+.tabs .count{font:11px var(--mono);color:var(--grey)}
+.check{display:inline-flex;align-items:center;gap:8px;height:34px;font:14px var(--sans);color:var(--nickel);cursor:pointer}
+.check input{width:16px;height:16px;accent-color:var(--accent)}
+.seg{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 12px}
+.seg button{appearance:none;cursor:pointer;border:0;border-radius:6px;padding:4px 10px;background:transparent;color:var(--nickel);font:13px var(--sans);outline:1px solid transparent}
+.seg button:hover{background:var(--wash)}.seg button[aria-pressed=true]{background:var(--surface);color:var(--ink);outline-color:var(--stroke)}
+.seg .count{font:11px var(--mono);color:var(--grey);margin-left:6px}
+.filler{display:flex;flex-direction:column;justify-content:center;gap:12px}
+.filler p{margin:0;max-width:26rem;font:14px/1.55 var(--sans);color:var(--nickel)}
+.filler .row{display:flex;flex-wrap:wrap;gap:8px}
+.explore{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:1px;background:var(--stroke)}
+.explore>*{background:var(--bg);min-width:0}
+@media (max-width:64rem){.explore{grid-template-columns:1fr}}
+.explore .side{position:sticky;top:0;align-self:start}
+@media (max-width:64rem){.explore .side{position:static}}
+/* phones: the nav becomes its own scrolling row, wide tables keep what matters */
+@media (max-width:48rem){
+  header.top{display:grid;grid-template-columns:1fr auto;gap:8px 12px;padding:14px 16px 0}
+  header.top .brand{grid-column:1}header.top>div:last-child{grid-column:2;grid-row:1}
+  nav.main{grid-column:1/-1;grid-row:2;flex-wrap:nowrap;overflow-x:auto;margin:0 -16px;padding:0 16px 10px;scrollbar-width:none}
+  nav.main::-webkit-scrollbar{display:none}nav.main a{white-space:nowrap}
+  .intro{padding:28px 16px 24px}.section{padding:24px 16px 8px}.panel{padding:20px 16px}
+  .stat{padding:16px}.hint{padding:6px 16px}
+  .hsm{display:none}
+  table.t th,table.t td{padding:9px 10px}
+  .tools,.toolbar{gap:10px 12px}
+  .toolbar .grp,.toolbar select{width:100%}
+  .alert.ok{margin:12px 16px}
+}
+table.t tr.sel td{background:var(--wash);box-shadow:inset 3px 0 0 var(--accent)}
+table.t tr.sel td+td{box-shadow:none}
+/* buttons that do something have an outline; links and tabs do not */
+.btn{outline:1px solid var(--stroke)}.btn.solid,.btn.link,.field .btn{outline:0}.btn:disabled{outline-color:transparent}.btn.bad{outline-color:var(--t-red-bg)}
+.explore{background:var(--bg)}.explore .side{border-left:1px solid var(--stroke)}
+@media (max-width:64rem){.explore .side{border-left:0;border-top:1px solid var(--stroke)}}
+table.t td.clip{max-width:16ch;overflow:hidden;text-overflow:ellipsis}
+.actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.prog{min-width:9rem}@media (max-width:48rem){.prog{min-width:6rem}}

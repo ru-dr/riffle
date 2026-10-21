@@ -234,6 +234,7 @@ health flags. Scale the estimates for the full run from those.
   and `dataset_merged.merge.json`. The three tables stay three: they have one row
   per PR, per snapshot and per head commit, and are joined when training loads
   them (`pipelines/training/frames.py`), not stored merged.
+- Tokens in one place: `python doctor.py` checks the GitHub token, the join token (and offers to paste the join code), the read token (saved as `RIFFLE_READ_TOKEN`; the TUI's F4 copies it and opens the store) and, for the lead, the admin token.
 - Joining a split (ADR 0015): the lead plans the split with
   `python build_dataset.py <the flags every PC should run> --shard-plan N --issue-tokens [--token-days D]`
   (needs `RIFFLE_SYNC_URL` and `RIFFLE_ADMIN_TOKEN` in the lead's `.env`). The store mints one

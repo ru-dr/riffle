@@ -181,8 +181,11 @@ def _check_size(path: str) -> int:
     return size
 
 
-def lines(path: str, offset=0, limit=200, q: str | None = None, tail: bool = False) -> dict:
-    """A page of lines (or the last `limit` lines), optionally only those containing q."""
+LEVEL = re.compile(r"\b(WARN|WARNING|ERROR|CRITICAL|Traceback)\b|\[(warn|error|llm-breaker)", re.I)
+
+
+def lines(path: str, offset=0, limit=200, q: str | None = None, tail: bool = False, levels: bool = False) -> dict:
+    """A page of lines (or the last `limit` lines), optionally only those containing q, or only warnings and errors."""
     _check_size(path)
     limit = max(1, min(int(limit), 2000))
     needle = (q or "").lower()
@@ -192,14 +195,15 @@ def lines(path: str, offset=0, limit=200, q: str | None = None, tail: bool = Fal
         with open(path, "rb") as fh:
             for n, raw in enumerate(fh, 1):
                 total = n
-                if not needle or needle in raw.decode("utf-8", "replace").lower():
-                    keep.append((n, raw.decode("utf-8", "replace").rstrip("\n")[:2000]))
+                text = raw.decode("utf-8", "replace")
+                if (not needle or needle in text.lower()) and (not levels or LEVEL.search(text)):
+                    keep.append((n, text.rstrip("\n")[:2000]))
         out = list(keep)
     else:
         with open(path, "rb") as fh:
             for n, raw in enumerate(fh, 1):
                 s = raw.decode("utf-8", "replace")
-                if needle and needle not in s.lower():
+                if (needle and needle not in s.lower()) or (levels and not LEVEL.search(s)):
                     continue
                 if total >= offset and len(out) < limit:
                     out.append((n, s.rstrip("\n")[:2000]))

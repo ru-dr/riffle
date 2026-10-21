@@ -124,8 +124,78 @@ def test_team_store_line_reads_dot_env_and_never_fails(monkeypatch):
     monkeypatch.delenv("RIFFLE_SYNC_URL", raising=False)
     monkeypatch.delenv("RIFFLE_SYNC_TOKEN", raising=False)
     monkeypatch.setattr(doctor, "_read_env_file", lambda: {})
-    name, status, detail = doctor._team_store_check()
-    assert name == "Team store" and status == doctor.WARN and "join.py" in detail
+    name, status, detail, fix = doctor._team_store_check()
+    assert name == "Join token" and status == doctor.WARN and "join code" in detail and fix == "join"
     monkeypatch.setattr(doctor, "_read_env_file", lambda: {"RIFFLE_SYNC_URL": "http://127.0.0.1:1", "RIFFLE_SYNC_TOKEN": "rw_x"})
-    name, status, detail = doctor._team_store_check()
+    name, status, detail, fix = doctor._team_store_check()
     assert status == doctor.WARN and "cannot reach the store" in detail          # a problem is a warning, never a failure
+
+
+def _fake_whoami(table):
+    return lambda url=None, token=None, timeout=15.0: table.get(token, {"ok": False, "why": "the store did not accept this token (wrong, revoked or expired)"})
+
+
+def test_read_and_admin_tokens_are_checked_for_their_own_kind(monkeypatch):
+    import doctor
+    import sync
+    monkeypatch.setattr(sync, "whoami", _fake_whoami({
+        "rd_ok": {"ok": False, "kind": "readers", "name": "maria", "why": "this is a reader token, not a PC token"},
+        "ad_ok": {"ok": False, "kind": "admins", "name": "lead", "why": "this is an admin token, not a PC token"}}))
+    env = {"RIFFLE_SYNC_URL": "https://s.example"}
+    monkeypatch.setattr(doctor, "_read_env_file", lambda: env)
+    for k in ("RIFFLE_SYNC_URL", "RIFFLE_SYNC_TOKEN", "RIFFLE_READ_TOKEN", "RIFFLE_ADMIN_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    assert doctor._read_token_check()[1:] [0] == doctor.WARN and doctor._read_token_check()[3] == "read"       # none saved: offer it
+    assert doctor._admin_token_check() is None                                                                  # volunteers have no admin line
+    env["RIFFLE_READ_TOKEN"] = "rd_ok"
+    name, status, detail, fix = doctor._read_token_check()
+    assert (name, status, fix) == ("Read token", doctor.OK, None) and "maria" in detail and "https://s.example" in detail
+    env["RIFFLE_READ_TOKEN"] = "ad_ok"                                                                          # the wrong kind is named, not accepted
+    assert doctor._read_token_check()[1] == doctor.WARN and "admin token, not a read token" in doctor._read_token_check()[2]
+    env["RIFFLE_ADMIN_TOKEN"] = "ad_ok"
+    assert doctor._admin_token_check()[:2] == ("Admin token", doctor.OK)
+    env["RIFFLE_ADMIN_TOKEN"] = "rd_ok"
+    assert doctor._admin_token_check()[1] == doctor.WARN
+    del env["RIFFLE_SYNC_URL"]
+    assert "join first" in doctor._read_token_check()[2]
+
+
+def test_the_join_fix_checks_a_code_and_saves_it(monkeypatch, tmp_path, capsys):
+    import doctor
+    import join
+    import sync
+    monkeypatch.setattr(doctor, "ENV_PATH", str(tmp_path / ".env"))
+    for k in ("RIFFLE_SYNC_URL", "RIFFLE_SYNC_TOKEN"):
+        monkeypatch.setenv(k, "")
+    good = join.encode("https://s.example", "rw_good", "abc12345", 2, 3, ["--repos-file", "repos_test.txt"])
+    monkeypatch.setattr(sync, "whoami", _fake_whoami({"rw_good": {"ok": True, "name": "pc2of3-abc12345", "split": "abc12345"}}))
+    answers = iter(["riffle1.garbage", good])
+    monkeypatch.setattr(doctor.getpass, "getpass", lambda prompt="": next(answers))
+    doctor._fix_join(None)
+    out = capsys.readouterr().out
+    assert "joined as pc2of3-abc12345" in out and "--shard 2/3" in out and "damaged" in out
+    env = (tmp_path / ".env").read_text()
+    assert "RIFFLE_SYNC_URL=https://s.example" in env and "RIFFLE_SYNC_TOKEN=rw_good" in env
+    # a code the store refuses is not saved
+    (tmp_path / ".env").unlink()
+    monkeypatch.setattr(sync, "whoami", _fake_whoami({}))
+    monkeypatch.setattr(doctor.getpass, "getpass", lambda prompt="": good)
+    doctor._fix_join(None)
+    assert not (tmp_path / ".env").exists() and "Ask the lead for a new code" in capsys.readouterr().out
+
+
+def test_the_read_fix_only_accepts_a_read_token(monkeypatch, tmp_path, capsys):
+    import doctor
+    import sync
+    monkeypatch.setattr(doctor, "ENV_PATH", str(tmp_path / ".env"))
+    monkeypatch.setattr(doctor, "_read_env_file", lambda: {"RIFFLE_SYNC_URL": "https://s.example"})
+    monkeypatch.delenv("RIFFLE_SYNC_URL", raising=False)
+    monkeypatch.setenv("RIFFLE_READ_TOKEN", "")
+    monkeypatch.setattr(sync, "whoami", _fake_whoami({"rd_good": {"ok": False, "kind": "readers", "name": "maria", "why": "x"},
+                                                      "rw_pc": {"ok": True, "kind": "pcs", "name": "pc1", "why": None}}))
+    answers = iter(["rw_pc", "rd_good"])
+    monkeypatch.setattr(doctor.getpass, "getpass", lambda prompt="": next(answers))
+    doctor._fix_read(None)
+    out = capsys.readouterr().out
+    assert "pcs token, not a read token" in out.replace("pc token", "pcs token") or "not a read token" in out
+    assert "RIFFLE_READ_TOKEN=rd_good" in (tmp_path / ".env").read_text()

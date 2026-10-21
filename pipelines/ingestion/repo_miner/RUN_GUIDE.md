@@ -19,7 +19,7 @@ the branch: `git fetch && git checkout infra/riffle-data-server && git pull`.
 cd riffle/pipelines/ingestion/repo_miner
 pip install -r requirements.txt
 cp .env.example .env              # put your own GITHUB_TOKEN in it (ask python doctor.py to do it for you)
-python doctor.py                  # fix anything marked FAIL; "Team store: not joined" is expected for now
+python doctor.py                  # checks and sets up every token (see below); "Join token: not joined" is expected for now
 ```
 
 **PC A (lead), on the TUI**
@@ -59,6 +59,19 @@ python doctor.py                  # fix anything marked FAIL; "Team store: not j
 **After the test:** on the Admin page press **Revoke all** for the split. The test files are in the bucket under
 `pc1of2-<split>/` and `pc2of2-<split>/`; delete them with
 `gcloud storage rm -r gs://riffle-data-miner-mined/pc1of2-<split> gs://riffle-data-miner-mined/pc2of2-<split>`.
+
+## The four tokens, and `python doctor.py`
+
+`python doctor.py` is the one place that checks all of them and offers to save each (answer `y`; pastes are hidden):
+
+| Doctor line | What it is | Where it comes from | What it is for |
+| --- | --- | --- | --- |
+| `GITHUB_TOKEN` | your own GitHub token (`public_repo`) | github.com/settings/tokens | the miner reading PRs; use a different account per PC |
+| `Join token` | the write token inside the **join code** (`riffle1.…`) | the lead, privately | uploading your output to the store; it works only for your split |
+| `Read token` | `rd_…` | the lead's Admin page → Add reader | signing in to the store's pages. The TUI's **F4** copies it and opens the page |
+| `Admin token` | `ad_…` (lead only, shown only when set) | `manage.py add-admin` on the VM | issuing codes and revoking (TUI F3, `admin.py`, the Admin page) |
+
+`python doctor.py --check` only reports and never asks.
 
 ## What you need
 

@@ -26,7 +26,7 @@ BODIES = {
 </section>
 <section class="rule section"><div class="shead"><div class="cap">PCs</div><h2>Every machine</h2>
 <p>PRs left counts the repo each PC is mining now. A repo that has not started has no PR selection yet, so it counts under repos waiting.</p></div></section>
-<section><div class="tablewrap" id="pcs"></div></section>""",
+<section><div id="pcs"></div></section>""",
     "run": """
 <section class="rule intro"><div class="cap" id="r-cap">Run</div><h1 id="r-title">…</h1><p id="r-sub"></p></section>
 <section class="rule grid g5" id="kpis"></section>
@@ -35,9 +35,9 @@ BODIES = {
  <div class="panel"><div class="cap">Health</div><h3>Flags per repo</h3><div class="chart" id="c-health"></div></div>
 </section>
 <section class="rule section"><div class="shead"><div class="cap">Repos</div><h2>State and health</h2></div></section>
-<section><div class="tablewrap" id="repos"></div></section>
+<section><div id="repos"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Files</div><h2>Everything this run sent</h2><p>Open a file to read it here. Datasets open as tables with charts.</p></div></section>
-<section><div class="tablewrap" id="files"></div></section>""",
+<section><div id="files"></div></section>""",
     "data": """
 <section class="rule intro"><div class="cap">Mined tables</div><h1>Browse the <span class="of">data</span></h1>
 <p>The three mined tables, joined over every PC's files. They stay three: one row per PR, per snapshot and per head commit.</p></section>
@@ -52,25 +52,28 @@ BODIES = {
 <section class="rule grid g5" id="kpis"></section>
 <section class="rule section" id="newcodes" hidden><div class="shead"><div class="cap">Shown once</div><h2 id="nc-title">New join codes</h2>
 <p id="nc-note"></p></div><div class="tools" id="nc-tools"></div></section>
-<section id="nc-table" hidden><div class="tablewrap" id="nc-rows"></div></section>
+<section id="nc-table" hidden><div id="nc-rows"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Splits</div><h2>Rotate or revoke a whole split</h2>
 <p>Rotating makes new tokens for every PC of the split and stops the old ones at once, then shows the new join codes here, once. New splits are planned from the miner's TUI (Lead tools, F3), because the plan needs the repos file.</p></div></section>
-<section><div class="tablewrap" id="splits"></div></section>
+<section><div id="splits"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">PC tokens</div><h2>Every machine that may upload</h2></div></section>
-<section><div class="tablewrap" id="pcs"></div></section>
+<section><div id="pcs"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Who can read</div><h2>Read tokens</h2>
 <p>A read token signs in to the pages. Add one per person, and revoke it when they leave.</p></div>
 <form class="tools" id="rform"><input type="text" name="name" placeholder="name, e.g. maria" pattern="[a-z0-9][a-z0-9_\\-]{0,39}" size="24" aria-label="Reader name" required><button class="btn solid">Add reader</button></form>
 <div id="newreader" class="alert ok" hidden></div></section>
-<section><div class="tablewrap" id="readers"></div></section>
+<section><div id="readers"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Admins</div><h2>Admin tokens</h2><p>Made on the VM with <code>manage.py add-admin</code>. Listed here for reference.</p></div></section>
-<section><div class="tablewrap" id="admins"></div></section>""",
+<section><div id="admins"></div></section>""",
     "search": """
 <section class="rule intro"><div class="cap">Logs and traces</div><h1>Search the <span class="of">logs</span></h1>
 <p>Plain text or a regular expression, over every PC's run logs and traces.</p></section>
-<section class="rule section"><form class="tools" id="sform"><input type="search" name="q" placeholder="text or regex" size="40" aria-label="Search text">
-<select name="pc" aria-label="PC"></select><label class="cap"><input type="checkbox" name="regex"> regex</label><button class="btn solid">Search</button></form>
-<div id="note" class="cap"></div></section>
+<section class="rule section"><form class="toolbar" id="sform">
+<div class="grp"><label class="cap" for="sq">Search for</label><input id="sq" type="search" name="q" placeholder="warn, rate limited, a repo…" size="38" autofocus></div>
+<div class="grp"><label class="cap" for="spc">In</label><select id="spc" name="pc"></select></div>
+<div class="grp"><span class="cap">Match</span><label class="check"><input type="checkbox" name="regex"> regular expression</label></div>
+<div class="grp"><span class="cap">&nbsp;</span><button class="btn solid">Search</button></div></form>
+<div id="note" class="cap" style="margin-top:12px"></div></section>
 <section id="hits"></section>""",
 }
 

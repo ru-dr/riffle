@@ -685,6 +685,7 @@ class RiffleTUI(App):
         Binding("ctrl+o", "view_test", "View test data"),
         Binding("f2", "join", "Join"),
         Binding("f3", "lead", "Lead tools"),
+        Binding("f4", "open_store", "Open store"),
         Binding("ctrl+g", "show_split", "Show split"),
         Binding("ctrl+k", "audit", "Audit data"),
         Binding("ctrl+l", "clear_log", "Clear log"),
@@ -735,6 +736,7 @@ class RiffleTUI(App):
                             compact=True)
                 yield Button("Join", id="join", variant="primary")
                 yield Button("Lead tools (F3)", id="lead_btn")
+                yield Button("Open the store (F4)", id="store_btn")
                 yield Label("Repos file")
                 yield Input("repos.txt", id="repos_file", compact=True)
                 yield Label("Output dataset")
@@ -1016,6 +1018,26 @@ class RiffleTUI(App):
     @on(Button.Pressed, "#join")
     def _join_btn(self) -> None:
         self.action_join()
+
+    @on(Button.Pressed, "#store_btn")
+    def _store_btn(self) -> None:
+        self.action_open_store()
+
+    def action_open_store(self) -> None:
+        """Open the store's pages in the browser; if a read token is saved (python doctor.py), copy it so you can paste it
+        on the sign-in page."""
+        url = (os.environ.get("RIFFLE_SYNC_URL") or "").rstrip("/")
+        if not url:
+            self.notify("Join first (paste the join code), then the store's address is known.", severity="warning")
+            return
+        token = os.environ.get("RIFFLE_READ_TOKEN")
+        copied = bool(token) and self._copy(token)
+        try:
+            webbrowser.open(url)
+        except Exception:                                   # noqa: BLE001
+            pass
+        self.notify(f"Opened {url}. " + ("The read token is copied: paste it to sign in." if copied else
+                    "No read token saved: run python doctor.py to save one, or ask the lead for one."), timeout=10)
 
     @on(Button.Pressed, "#lead_btn")
     def _lead_btn(self) -> None:

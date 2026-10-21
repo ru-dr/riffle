@@ -606,7 +606,7 @@ def make_handler(svc: Service):
                     return self._json({"key": key, "kind": views.kind_of(key), "size": f["size"], "updated": f["updated"],
                                        "uri": svc.store.uri(key), "sha256": f["sha256"]})
                 if route == "lines":
-                    return self._json(views.lines(path, _int(q, "offset", 0), _int(q, "limit", 200), q.get("q"), q.get("tail") == "1"))
+                    return self._json(views.lines(path, _int(q, "offset", 0), _int(q, "limit", 200), q.get("q"), q.get("tail") == "1", q.get("lvl") == "1"))
                 if route == "jsonl":
                     return self._json(views.jsonl_rows(path, _int(q, "offset", 0), _int(q, "limit", 50), q.get("q")))
                 if route == "json":

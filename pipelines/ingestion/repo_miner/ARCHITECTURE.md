@@ -1523,6 +1523,7 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.8.0 | 10-21 | TUI: Join code box and F2, form filled from the lead's flags, Start refused when shaping settings differ, store line and upload status, quit waits for the final upload; `build_dataset.build_parser()`, `join.differences()`; `sync` events for the TUI; output identical |
 | 6.9.0 | 10-21 | TUI Lead tools (F3): save the admin token, issue join codes for the form's settings (`join.shared_argv` keeps only what every PC must share), list and revoke PC tokens; `RIFFLE_DOTENV` and `RIFFLE_NO_DOTENV` for config; admin calls raise `AdminError`; output identical |
 | 6.9.1 | 10-21 | `--issue-tokens` also sends the plan's flags and the miner version to the store, so the admin page can rotate a split and rebuild its join codes; output identical |
+| 6.10.0 | 10-21 | `doctor.py` checks the join, read and admin tokens beside the GitHub token and can take a join code or a read token (`RIFFLE_READ_TOKEN`); TUI F4 opens the store and copies the read token; output identical |
 
 Contract versions: `mined_dataset` 1.0 (2026-10-18, miner 2.2.0) → 1.1 (provenance, `domain`; miner 4.0.0) → 1.2 (`outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer`; miner 5.0.0). `mined_snapshot` 1.0 (miner 3.1.0) → 1.1 → 1.2 → 1.3 (`snapshot_weight`, `moment_bucket`; miner 6.0.0). `mined_commit_features` 1.0 (miner 3.1.0). Full table: `docs/contracts.md`.
 
