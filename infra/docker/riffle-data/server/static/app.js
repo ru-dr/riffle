@@ -111,20 +111,27 @@
   var BV = { on: false, dim: false, model: null, lastOk: 0, lock: null, root: null, f: {}, kind: null, refresh: null, latest: {} };
   try { BV.dim = localStorage.getItem("riffle-big-dim") === "1"; } catch (e) { /* not remembered */ }
   function bvBuild() {
-    var r = h("div"), f = BV.f; r.id = "bigview"; r.setAttribute("role", "region"); r.setAttribute("aria-label", "Big picture");
-    var head = h("div", "bh"), left = h("div", "bhl"), right = h("div", "bhr");
-    f.state = h("span", "bstate", "CONNECTING"); f.sub = h("span", "cap", "Riffle data · team store"); left.append(f.state, f.sub);
-    f.clock = h("span", "bclock", "--:--"); f.seen = h("span", "cap", "connecting"); right.append(f.clock, f.seen); head.append(left, right);
-    f.kpis = h("div", "bk"); f.alert = h("div", "balert"); f.table = h("div", "bt");
-    var foot = h("div", "bf"); f.hint = h("span", "cap", "b or click to exit · d dim · Esc closes"); foot.append(f.hint);
-    r.append(head, f.kpis, f.alert, f.table, foot);
+    var r = h("div"), wrap = h("div", "wrap"), f = BV.f; r.id = "bigview"; r.setAttribute("role", "region"); r.setAttribute("aria-label", "Big picture");
+    var top = h("header", "top"), brand = document.querySelector("header.top .brand");
+    f.state = h("span", "tag", "CONNECTING"); f.clock = h("span", "bclock", "--:--"); f.seen = h("span", "cap", "connecting");
+    var mid = h("div", "bmid"); mid.append(f.state, f.seen); var rt = h("div", "bright"); rt.append(f.clock);
+    if (brand) top.append(brand.cloneNode(true)); top.append(mid, rt);
+    f.kpis = h("section", "rule grid bkpis"); f.alert = h("section", "rule balert"); f.table = h("section", "rule btable");
+    var foot = h("footer", "rule foot"); f.hint = h("span", "", "b or click to exit · d dim · Esc closes"); foot.append(f.hint);
+    wrap.append(top, f.kpis, f.alert, f.table, foot); r.append(wrap);
     if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) {
-      var dim = h("button", "bpbtn", "Dim"), exit = h("button", "bpbtn", "Exit"); dim.type = exit.type = "button";
+      var dim = h("button", "btn", "Dim"), exit = h("button", "btn", "Exit"); dim.type = exit.type = "button";
       dim.onclick = function (e) { e.stopPropagation(); bvDim(); }; exit.onclick = function (e) { e.stopPropagation(); bvToggle(false); };
-      f.hint.replaceChildren(dim, exit);
+      f.hint.replaceChildren(dim, " ", exit);
     } else r.onclick = function () { bvToggle(false); };
-    document.body.append(r); BV.root = r;
+    document.body.append(r); BV.root = r; BV.wrap = wrap; bvScale();
   }
+  function bvScale() {                                                    // the same page, drawn larger for a screen read from a distance
+    if (!BV.wrap) return;
+    var z = window.innerWidth < 768 ? 1 : Math.max(1, Math.min(2.4, Math.min(window.innerHeight / 560, window.innerWidth / 1100)));
+    BV.wrap.style.zoom = String(z); BV.wrap.style.minHeight = Math.ceil(window.innerHeight / z) + "px";
+  }
+  window.addEventListener("resize", bvScale);
   function bvWake(on) {
     try {
       if (on && "wakeLock" in navigator && document.visibilityState === "visible") navigator.wakeLock.request("screen").then(function (l) { BV.lock = l; }, function () { BV.lock = null; });
@@ -147,37 +154,34 @@
   document.addEventListener("visibilitychange", function () { if (BV.on) bvWake(true); });
   function bvRender() {
     if (!BV.on || !BV.root) return;
-    var f = BV.f, m = BV.model || { word: "CONNECTING", cls: "", kpis: [], headers: [], rows: [], cols: "1fr", alert: ["", ""] };
+    var f = BV.f, m = BV.model || { word: "CONNECTING", cls: "", kpis: [], headers: [], rows: [], alert: ["", ""] };
     var stale = BV.lastOk && Date.now() - BV.lastOk > 3 * POLL_MS + 5000, word = stale ? "OFFLINE" : m.word, cls = stale ? "bad" : m.cls;
-    f.state.textContent = word; f.state.className = "bstate " + cls;
+    f.state.textContent = word; f.state.className = "tag bstate " + ({ run: "green", warn: "amber", bad: "red", done: "blue" }[cls] || "");
     f.clock.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     var ago = BV.lastOk ? Math.round((Date.now() - BV.lastOk) / 1000) : null;
     f.seen.textContent = ago === null ? "connecting" : stale ? "OFFLINE · no update for " + ago + " s" : "updated " + ago + " s ago";
     f.kpis.replaceChildren(); f.kpis.style.gridTemplateColumns = "repeat(" + Math.max(1, (m.kpis || []).length) + ",1fr)";
-    (m.kpis || []).forEach(function (k) {
-      var box = h("div", "bki"); box.append(h("div", "cap", k.l), h("div", "bv", k.v), h("div", "bh2" + (k.c ? " " + k.c : ""), k.h || "")); f.kpis.append(box);
-    });
-    f.alert.textContent = (m.alert || [""])[0]; f.alert.className = "balert" + ((m.alert || [])[1] === "bad" ? " bad" : "");
-    f.table.replaceChildren();
-    var hd = h("div", "btr bth"); hd.style.gridTemplateColumns = m.cols;
-    (m.headers || []).forEach(function (t, i) { hd.append(h("div", "btc" + ((m.right || []).indexOf(i) >= 0 ? " n" : ""), t)); }); f.table.append(hd);
-    var rank = { bad: 0, warn: 1 }, rows = (m.rows || []).slice().sort(function (a, b) { return (rank[a.cls] == null ? 2 : rank[a.cls]) - (rank[b.cls] == null ? 2 : rank[b.cls]); });
-    rows.forEach(function (rw) {                                           // what needs attention first
-      var tr = h("div", "btr"); tr.style.gridTemplateColumns = m.cols;
-      rw.cells.forEach(function (c, i) {
-        var td = h("div", "btc" + ((m.right || []).indexOf(i) >= 0 ? " n" : ""));
-        if (c.t === "name") td.append(h("b", "", c.v));
-        else if (c.t === "state") td.append(h("span", "btag " + (rw.cls || ""), c.v));
-        else if (c.t === "bar") { var bar = h("div", "bbar"), fl = h("i"); fl.style.width = Math.round(100 * (c.f || 0)) + "%"; bar.append(fl); td.append(bar, h("span", "bsub", c.v)); }
-        else if (c.t === "upt") { var u = h("div", "bupt"); u.style.gridTemplateColumns = "repeat(" + c.b.length + ",1fr)"; c.b.forEach(function (b) { u.append(h("i", "b-" + b)); }); td.append(u); }
-        else td.textContent = c.v == null ? "—" : c.v;
-        tr.append(td);
-      });
-      f.table.append(tr);
-    });
-    var cut = 0;                                                           // whole rows only; the healthy ones drop off the end
-    while (f.table.children.length > 2 && f.table.lastChild.getBoundingClientRect().bottom > f.table.getBoundingClientRect().bottom + 1) { f.table.lastChild.remove(); cut++; }
-    if (cut) { var more = h("div", "bmore", "+ " + cut + " more PC" + (cut === 1 ? "" : "s") + " not shown"); f.table.append(more); }
+    (m.kpis || []).forEach(function (k) { f.kpis.append(stat(k.l, k.v, k.h, k.c)); });
+    var a = (m.alert || [""])[0]; f.alert.textContent = a; f.alert.className = "rule balert" + ((m.alert || [])[1] === "bad" ? " bad" : "") + (a ? "" : " none");
+    var rank = { bad: 0, warn: 1 }, rows = (m.rows || []).slice().sort(function (x, y) { return (rank[x.cls] == null ? 2 : rank[x.cls]) - (rank[y.cls] == null ? 2 : rank[y.cls]); });
+    var tbl = rows.length ? grid(m.headers, rows.map(function (r) { return r.vals.concat([r]); }), {
+      left: [], dash: true, hsm: [4, 5, 6], cell: function (v, i, row) {
+        var td = h("td"), rw = row[row.length - 1], c = { run: "green", warn: "amber", bad: "red", done: "green" }[rw.cls] || "";
+        if (i === 0) td.append(el("b", "bname", v));
+        else if (i === 1) td.append(tag(v, c));
+        else if (v && typeof v === "object" && v.bar != null) { var pct = Math.round(100 * v.bar), bar = el("span", "bar"), fill = h("i"); fill.style.width = pct + "%"; bar.append(fill); td.classList.add("prog"); td.append(v.t, bar); }
+        else if (v && typeof v === "object" && v.upt) { var u = h("div", "bupt"); u.style.gridTemplateColumns = "repeat(" + v.upt.length + ",1fr)"; v.upt.forEach(function (b) { u.append(h("i", "b-" + b)); }); td.append(u); }
+        else if (typeof v === "number") { td.className = "n"; td.textContent = v.toLocaleString(undefined, { maximumFractionDigits: 1 }); }
+        else td.textContent = v == null || v === "" ? "–" : v;
+        return td;
+      } }) : el("div", "empty", "Nothing to show yet.");
+    f.table.replaceChildren(tbl);
+    var tb = f.table.querySelector("tbody"), cutN = 0;
+    if (tb) {                                                             // whole rows only: the healthy ones drop off the end
+      var foot = f.hint.parentNode.getBoundingClientRect().height, limit = function () { return BV.root.getBoundingClientRect().bottom - foot - 2; };
+      while (tb.children.length > 1 && tb.lastChild.getBoundingClientRect().bottom > limit()) { tb.lastChild.remove(); cutN++; }
+      if (cutN) f.table.append(el("div", "bmore", "+ " + cutN + " more PC" + (cutN === 1 ? "" : "s") + " not shown"));
+    }
   }
   setInterval(bvRender, 1000);
   function bvFeed(kind) {
@@ -205,17 +209,15 @@
     var silent = runs.filter(function (r, i) { return st[i] === "silent"; });
     var alert = failed ? [failed + " repo" + (failed === 1 ? "" : "s") + " failed", "bad"] : silent.length ? [silent.map(function (r) { return r.pc.replace(/-.*/, ""); }).join(", ") + " offline · last seen " + ago(silent[0].updated), ""] : ["", ""];
     return { word: word, cls: cls, alert: alert,
-      kpis: [{ l: "Progress", v: n ? (100 * frac).toFixed(frac < 0.1 ? 1 : 0) + "%" : "—", h: "of all repositories" }, { l: "PRs mined", v: sum("prs_done").toLocaleString(), h: "rows written" },
-             { l: "Repositories", v: sum("repos_done") + " / " + total, h: failed ? failed + " failed" : "none failed", c: failed ? "bad" : "" }, { l: "PCs mining", v: active + " / " + n, h: count("done") + " finished" },
-             { l: "PRs per minute", v: rate == null ? "—" : rate.toFixed(rate < 10 ? 1 : 0), h: "last hour, all PCs" }, { l: "Time left", v: eta, h: elapsed ? "elapsed " + span(elapsed) : "" }],
-      headers: ["PC", "State", "Progress", "PRs mined", "PRs/min", "Now mining", "Last 24 hours"], right: [3, 4], cols: "1.1fr .9fr 1.5fr .9fr .7fr 2.3fr 2.4fr",
+      kpis: [{ l: "Progress", v: n ? (100 * frac).toFixed(frac < 0.1 ? 1 : 0) + "%" : "—", h: "of all repositories" }, { l: "PRs mined", v: sum("prs_done").toLocaleString(), h: rate == null ? "rows written" : rate.toFixed(rate < 10 ? 1 : 0) + " PRs per minute" },
+             { l: "Repositories", v: sum("repos_done") + " / " + total, h: failed ? failed + " failed" : "none failed" }, { l: "PCs mining", v: active + " / " + n, h: count("done") + " finished" },
+             { l: "Time left", v: eta, h: elapsed ? "elapsed " + span(elapsed) : "" }],
+      headers: ["PC", "State", "Progress", "PRs mined", "PRs/min", "Now mining", "Last 24 hours"],
       rows: runs.map(function (r, i) {
         var s = st[i], c = r.status, p = blocksOf[r.pc], cur = c.current && s === "mining" ? c.current + (((c.repos || {})[c.current] || {}).selected ? "  " + (c.repos[c.current].rows || 0) + "/" + c.repos[c.current].selected : "") : s === "done" ? "finished" : "last seen " + ago(r.updated);
-        var rcls = s === "silent" ? "bad" : s === "stopped" ? "warn" : s === "done" ? "done" : "run";
-        return { cls: rcls, cells: [{ t: "name", v: r.pc.replace(/-.*/, "") }, { t: "state", v: s === "silent" ? "OFFLINE" : s.toUpperCase() },
-          { t: "bar", f: (c.repos_total ? share(r) / c.repos_total : 0), v: (c.repos_done || 0) + " / " + (c.repos_total || 0) + " repos" }, { v: (c.prs_done || 0).toLocaleString() },
-          { v: p ? (p.blocks.slice(-4).reduce(function (a, b) { return a + (b[1] || 0); }, 0) / 60).toFixed(1) : "—" }, { v: cur },
-          p ? { t: "upt", b: p.blocks.map(function (b) { return b[0]; }) } : { v: "" }] };
+        return { cls: s === "silent" ? "bad" : s === "stopped" ? "warn" : s === "done" ? "done" : "run",
+          vals: [r.pc.replace(/-.*/, ""), s === "silent" ? "offline" : s, { bar: c.repos_total ? share(r) / c.repos_total : 0, t: (c.repos_done || 0) + "/" + (c.repos_total || 0) + " repos" }, c.prs_done || 0,
+                 p ? p.blocks.slice(-4).reduce(function (a, b) { return a + (b[1] || 0); }, 0) / 60 : null, cur, p ? { upt: p.blocks.map(function (b) { return b[0]; }) } : ""] };
       }) };
   }
   function bvAdmin(d) {
@@ -227,15 +229,14 @@
     var alert = bad ? [bad + " PC" + (bad === 1 ? "" : "s") + " silent or expired", "bad"] : expiring ? [expiring + " token" + (expiring === 1 ? "" : "s") + " expire within 3 days", ""] : never ? [never + " PC" + (never === 1 ? "" : "s") + " have not uploaded yet", ""] : ["", ""];
     var models = {}; (d.splits || []).forEach(function (x) { (x.models || []).forEach(function (m) { models[m] = 1; }); });
     return { word: word, cls: cls, alert: alert,
-      kpis: [{ l: "PC tokens", v: String(pcs.length), h: (d.splits || []).length + " split" + ((d.splits || []).length === 1 ? "" : "s") }, { l: "Uploaded", v: up + " / " + pcs.length, h: "have sent something" },
+      kpis: [{ l: "PC tokens", v: String(pcs.length), h: (d.splits || []).length + " split" + ((d.splits || []).length === 1 ? "" : "s") + (Object.keys(models).length ? " · " + Object.keys(models).join(", ") : "") }, { l: "Uploaded", v: up + " / " + pcs.length, h: "have sent something" },
              { l: "Mining now", v: String(mining), h: by("done") + " finished" }, { l: "Never uploaded", v: String(never), h: "token issued, nothing sent", c: never ? "warn" : "" },
-             { l: "Expiring in 3 days", v: String(expiring), h: "rotate to extend", c: expiring ? "warn" : "" }, { l: "LLM model", v: Object.keys(models).join(", ") || "—", h: (d.readers || []).length + " reader" + ((d.readers || []).length === 1 ? "" : "s") + " · " + (d.admins || []).length + " admin" + ((d.admins || []).length === 1 ? "" : "s") }],
-      headers: ["PC", "State", "Progress", "PRs mined", "Last upload", "Expires", "Host"], right: [3], cols: "1.3fr .9fr 1.6fr .9fr 1.2fr 1.1fr 1.4fr",
+             { l: "Expiring in 3 days", v: String(expiring), h: "rotate to extend", c: expiring ? "warn" : "" }],
+      headers: ["PC", "State", "Progress", "PRs mined", "Last upload", "Expires", "Host"],
       rows: pcs.map(function (p) {
-        var rcls = p.state === "silent" || p.state === "expired" ? "bad" : p.state === "stopped" ? "warn" : p.state === "done" ? "done" : p.state === "mining" ? "run" : "warn";
-        return { cls: rcls, cells: [{ t: "name", v: p.pc.replace(/-.*/, "") }, { t: "state", v: p.state.toUpperCase() },
-          { t: "bar", f: p.repos_total ? (p.repos_done || 0) / p.repos_total : 0, v: p.repos_total ? (p.repos_done || 0) + " / " + p.repos_total + " repos" : "no status yet" }, { v: p.prs_done == null ? "—" : p.prs_done.toLocaleString() },
-          { v: ago(p.last_upload) }, { v: p.expires ? new Date(p.expires * 1000).toISOString().slice(0, 10) : "never" }, { v: p.host || "—" }] };
+        return { cls: p.state === "silent" || p.state === "expired" ? "bad" : p.state === "stopped" ? "warn" : p.state === "done" ? "done" : p.state === "mining" ? "run" : "warn",
+          vals: [p.pc.replace(/-.*/, ""), p.state, { bar: p.repos_total ? (p.repos_done || 0) / p.repos_total : 0, t: p.repos_total ? (p.repos_done || 0) + "/" + p.repos_total + " repos" : "no status yet" },
+                 p.prs_done == null ? null : p.prs_done, ago(p.last_upload), p.expires ? new Date(p.expires * 1000).toISOString().slice(0, 10) : "never", p.host || "–"] };
       }) };
   }
   document.addEventListener("keydown", function (e) {
@@ -846,6 +847,23 @@
     if (!n) box.append(h("span", "cap", "no flags: the miner's defaults"));
     d.append(box); return d;
   }
+  /* storage: sizes of what the store holds, the VM disk, and an estimate (never the data) */
+  function mb(n) { return bytes(n); }
+  function drawStorage(d) {
+    var disk = d.disk, pctUsed = disk ? Math.round(100 * disk.used / disk.total) : null, freeShare = disk ? disk.free / disk.total : null;
+    var diskCls = freeShare == null ? "" : freeShare < 0.08 ? "bad" : freeShare < 0.15 ? "warn" : "good";
+    var today = new Date().toISOString().slice(0, 10), week = d.per_day.filter(function (x) { return x[0] >= new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10); }).reduce(function (a, x) { return a + x[1]; }, 0);
+    $("#storkpis").replaceChildren(
+      stat("In the bucket", bytes(d.bytes), d.files.toLocaleString() + " files" + (d.bucket ? " · " + d.bucket : " · local only")),
+      stat("VM disk free", disk ? bytes(disk.free) : "–", disk ? pctUsed + "% of " + bytes(disk.total) + " used" : "unknown", diskCls),
+      stat("Written this week", bytes(week), "files last updated in 7 days"),
+      stat("Estimated storage cost", "$" + (d.estimate.storage_month < 0.01 ? "<0.01" : d.estimate.storage_month.toFixed(2)) + " / month", "$" + d.estimate.price_gb_month + " per GB-month list price"));
+    C.hbar($("#c-kind"), d.by_kind.map(function (x) { return { l: x[0], v: x[1] }; }), { aria: "Bytes by kind", th: "Kind", vh: "Bytes", ml: 150, fv: bytes });
+    C.hbar($("#c-pcsize"), d.by_pc.map(function (x) { return { l: x[0], v: x[1] }; }), { aria: "Bytes by PC", th: "PC", vh: "Bytes", ml: 150, fv: bytes });
+    var rows = d.largest.map(function (f) { return [f.key.split("/")[0], f.key.split("/").slice(3).join("/"), f.size, f.updated]; });
+    $("#storfiles").replaceChildren(grid(["PC", "Largest files", "Size", "Updated"], rows, { left: [3], emptyText: "Nothing uploaded yet.",
+      cell: function (v, i) { var td = h("td"); if (i === 1) { td.className = "mut"; td.style.fontFamily = "var(--mono)"; td.style.fontSize = "12px"; td.textContent = v; } else if (i === 2) { td.className = "n"; td.textContent = bytes(v); } else if (i === 3) td.textContent = ago(v); else td.textContent = v; return td; } }));
+  }
   /* one PC's run in detail: what it is set to (including the LLM model), where it is, and the exact command */
   function runDetails(p, copyBtn) {
     var st = p.settings, d = h("details", "flags"), box = h("div", "flagbox"), chips = [];
@@ -922,6 +940,7 @@
     function draw() {
       return call("GET", "overview").then(function (d) {
         BV.latest.admin = d; bvFeed("admin");
+        call("GET", "storage").then(drawStorage).catch(function () { /* the rest of the page does not depend on it */ });
         var soon = Date.now() / 1000 + 3 * 86400;
         $("#kpis").replaceChildren(
           stat("PC tokens", String(d.pcs.length), d.splits.length + " split" + (d.splits.length === 1 ? "" : "s")),

@@ -27,6 +27,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -183,6 +184,52 @@ class Service:
         return {"pcs": pcs, "splits": splits, "readers": names("readers"), "admins": names("admins"),
                 "bucket": self.store.bucket_name,
                 "backup": dict(backup.STATE) if self.store.bucket_name else None,}
+
+    # -- storage: what the store holds and how full the disk is ---------------
+    PRICE_GCS_GB_MONTH = float(os.environ.get("RIFFLE_PRICE_GCS_GB_MONTH", "0.020"))   # list price for Standard storage; change it for your region
+
+    @staticmethod
+    def _storage_kind(key: str) -> str:
+        name = key.rsplit("/", 1)[-1]
+        if name.endswith(".parquet"):
+            return "commit features" if "_commit_features" in name else "snapshots" if "_snapshots" in name else "dataset"
+        if name.endswith(".trace.jsonl"):
+            return "traces"
+        if name.endswith(".log"):
+            return "logs"
+        if name.endswith(".partial.jsonl") or name.endswith(".jsonl"):
+            return "checkpoints"
+        if "/health/" in key:
+            return "health"
+        return "status and manifests"
+
+    def storage(self) -> dict:
+        """Sizes only (the admin cannot read data): what is in the bucket by kind and by PC, the largest files, bytes written
+        per day, and the VM disk. The cost is an estimate: stored GB times a list price. The VM's own price is not included."""
+        files = self.index.files()
+        by_kind, by_pc, by_day = {}, {}, {}
+        for f in files:
+            pc = f["key"].split("/", 1)[0]
+            k = self._storage_kind(f["key"])
+            by_kind[k] = by_kind.get(k, 0) + f["size"]
+            by_pc[pc] = by_pc.get(pc, 0) + f["size"]
+            day = time.strftime("%Y-%m-%d", time.gmtime(f["updated"]))
+            by_day[day] = by_day.get(day, 0) + f["size"]
+        total = sum(f["size"] for f in files)
+        try:
+            du = shutil.disk_usage(self.data)
+            disk = {"total": du.total, "used": du.used, "free": du.free}
+        except OSError:
+            disk = None
+        days = sorted(by_day)[-14:]
+        gb = total / 1024 ** 3
+        return {"files": len(files), "bytes": total, "bucket": self.store.bucket_name,
+                "by_kind": sorted(([k, v] for k, v in by_kind.items()), key=lambda x: -x[1]),
+                "by_pc": sorted(([k, v] for k, v in by_pc.items()), key=lambda x: -x[1]),
+                "largest": [{"key": f["key"], "size": f["size"], "updated": f["updated"]} for f in sorted(files, key=lambda f: -f["size"])[:8]],
+                "per_day": [[d, by_day[d]] for d in days], "disk": disk,
+                "estimate": {"storage_month": round(gb * self.PRICE_GCS_GB_MONTH, 4), "price_gb_month": self.PRICE_GCS_GB_MONTH,
+                             "note": "stored GB x list price; the VM, its disk and network are not included (see the billing console)"}}
 
     # -- activity: who mined when ---------------------------------------
     ACTIVITY_STEP = {1: 900, 7: 3600, 30: 21600}              # days -> seconds per block (96, 168 and 120 blocks)
@@ -678,6 +725,10 @@ def make_handler(svc: Service):
                 return self._admin_pcs()
             if path == "/v1/admin/overview":
                 return self._admin_overview()
+            if path == "/v1/admin/storage":
+                if self._admin():
+                    return self._json(svc.storage())
+                return
             if path == "/admin/login":
                 return self._send(200, ui.login(admin=True), html_t)
             if path == "/admin/logout":

@@ -62,6 +62,12 @@ BODIES = {
 <section><div id="splits"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">PC tokens</div><h2>Every machine that may upload</h2></div></section>
 <section><div id="pcs"></div></section>
+<section class="rule section"><div class="shead"><div class="cap">Storage</div><h2>What the store holds</h2>
+<p>Sizes only: this page cannot read the data. The cost is an estimate (stored GB times a list price); the VM and its disk are billed separately.</p></div></section>
+<section class="rule grid g4" id="storkpis"></section>
+<section class="rule grid g2 stack"><div class="panel"><div class="cap">By kind</div><h3>What takes the space</h3><div class="chart" id="c-kind"></div></div>
+<div class="panel"><div class="cap">By PC</div><h3>Who sent it</h3><div class="chart" id="c-pcsize"></div></div></section>
+<section><div id="storfiles"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Who can read</div><h2>Read tokens</h2>
 <p>A read token signs in to the pages. Add one per person, and revoke it when they leave.</p></div>
 <form class="tools" id="rform" novalidate><input type="text" name="name" placeholder="name, e.g. maria" size="24" aria-label="Reader name" autocomplete="off" spellcheck="false"><button class="btn solid">Add reader</button></form>

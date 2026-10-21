@@ -411,3 +411,20 @@ def test_log_search_filters_by_level_with_or_without_text(store):
     assert code == 200
     code, raw = req(store, "GET", "/api/raw?key=pcl/6.0.0/abc/logs/run.log&level=error", rdr)
     assert code == 200 and raw.decode().count("\n") == 1 and "ERROR" in raw.decode()
+
+
+def test_admin_storage_reports_sizes_by_kind_and_pc_and_the_disk_but_never_data(store):
+    pc = tokens.issue(store.tp, "pcs", "pcs1")
+    for key, body in (("data/dataset_pcs1.parquet", b"x" * 5000), ("data/dataset_pcs1_snapshots.parquet", b"y" * 3000), ("logs/run.log", b"l" * 700),
+                      ("logs/run.trace.jsonl", b"t" * 900), ("health/o_r.json", b"{}")):
+        assert req(store, "PUT", f"/v1/files/6.0.0/abc/{key}", pc, body)[0] == 200
+    code, body = req(store, "GET", "/v1/admin/storage", store.adm)
+    d = json.loads(body)
+    assert code == 200 and d["files"] == 5 and d["bytes"] == 5000 + 3000 + 700 + 900 + 2
+    kinds = dict(d["by_kind"])
+    assert kinds["dataset"] == 5000 and kinds["snapshots"] == 3000 and kinds["logs"] == 700 and kinds["traces"] == 900 and kinds["health"] == 2
+    assert d["by_pc"][0][0] == "pcs1" and d["disk"]["free"] > 0 and d["largest"][0]["size"] == 5000
+    assert d["estimate"]["storage_month"] >= 0 and "VM" in d["estimate"]["note"]
+    assert "content" not in json.dumps(d) and "xxxx" not in json.dumps(d)                       # sizes and names only
+    rdr = tokens.issue(store.tp, "readers", "rr")
+    assert req(store, "GET", "/v1/admin/storage", rdr)[0] == 401                                  # a read token is not an admin token
