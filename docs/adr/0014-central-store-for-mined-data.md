@@ -32,10 +32,20 @@ paused run to bring that place up to date. Real-time streaming is not needed.
   `RIFFLE_SYNC_TIMEOUT` seconds (default 120). Unchanged files are skipped.
 - Tokens are write-only and one per PC, so one can be revoked alone. Only the
   lead reads.
-- The store runs on one VM from a Compose file, following ADR 0013: an ingest
-  service, an object store and a small index of runs and repos, reachable on a
-  private network only. A viewer (log search, per-repo health, a page in
-  `site/`) is built on that index in later PRs.
+- The store runs on one GCP VM from a Compose file, following ADR 0013
+  (`infra/docker/riffle-data/`): one service for ingest and the pages, with a
+  SQLite index on the VM's disk. Logs, health files and `run.json` stay on the
+  disk so search is fast; every file is also in a GCS bucket, and datasets and
+  traces live only there. The VM uses its attached service account, not key
+  files. The service is reachable only through a tunnel (IAP or Tailscale) or a
+  TLS proxy, never as plain HTTP on the internet.
+- The pages on the VM show, per PC, repos done and total, the repo being mined,
+  PRs mined and PRs left, health flags and file lists, plus log search. PRs left
+  covers repos already started: the miner selects a repo's PRs when it begins
+  it, so a repo that has not started has no PR count.
+- BigQuery gets the parquet tables from the bucket with `bq_load.py`, as
+  `mined_dataset`, `mined_snapshot` and `mined_commit_features`, replacing each
+  table on every load. The tables stay three (ADR 0012 and the miner's design).
 
 ## Options not taken
 
@@ -45,7 +55,7 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 | DVC or a shared bucket by hand | Manual, and gives no view of logs or run state |
 | Continuous log streaming (Loki or similar) | Real-time is not needed, and a stopped PC would still lose its last minutes; sync on events covers it |
 | Syncing `ci_cache/` | Only the same PC resumes from it, and it can be large |
-| Managed cloud storage and dashboards | Ongoing cost, and the data would leave the team's own machine |
+| A hosted dashboard (Grafana Cloud and similar) | Ongoing cost and another account; the pages here are small and read the same index |
 
 ## Consequences
 
@@ -58,7 +68,8 @@ paused run to bring that place up to date. Real-time streaming is not needed.
   boundary exist only in its local checkpoint.
 - Sync needs the store reachable at stop time; a Stop with no network waits for
   the timeout, then leaves the files for the next sync.
-- A shared VM is a new thing to run, patch and back up.
+- A shared VM is a new thing to run, patch and back up, and a GCP project with billing is needed before anything runs.
+- The BigQuery tables can hold partly mined PCs unless `--only-finished` is used.
 
 ## Revisit if
 
@@ -69,7 +80,7 @@ paused run to bring that place up to date. Real-time streaming is not needed.
 
 ## Open
 
-- Where the VM lives and who pays for it.
+- Which GCP organisation and project hold the VM, bucket and BigQuery dataset, and who pays. Nothing has been created or run on GCP yet; only the laptop setup is tested.
 - How long the store keeps logs and traces.
 - Whether the lead's merge (`merge_shards.py`) should read from the store
   instead of from files sent by hand.
