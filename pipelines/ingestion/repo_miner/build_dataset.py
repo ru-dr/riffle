@@ -43,6 +43,7 @@ import time
 import naming
 import progress
 import runlog
+import sync
 from version import __version__
 
 
@@ -380,6 +381,28 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
             return proc.returncode, True
 
 
+# --- central sync (ADR 0014) ---------------------------------------------------
+# Set once the run's output name is final; run() reads it on a Stop. The counts
+# are as of the last repo boundary.
+_SYNC: dict | None = None
+
+
+def _sync_now(why: str, **counts) -> None:
+    """Send this PC's output to the central store, if one is configured. Never
+    fails or blocks the run (sync.py): an unreachable store is a warning."""
+    if _SYNC is None:
+        return
+    _SYNC["counts"].update(counts)
+    args = _SYNC["args"]
+    status = dict(_SYNC["counts"], reason=why, pc=args.shard, split_id=getattr(args, "split_id", None),
+                  miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:])
+    try:
+        prefix = f"{__version__}/{status['split_id'] or 'nosplit'}"
+        sync.report(sync.sync(args.out, prefix, status, health_dir=getattr(args, "health_dir", "health")), why)
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[sync] failed ({type(e).__name__}: {e}); the run is unaffected", file=sys.stderr, flush=True)
+
+
 def _write_shard_manifest(args, entries: list, ok: int, failed: list) -> None:
     """Beside a sharded dataset, record which split, PC and miner version made it
     (merge_shards.py checks these before joining the PCs' files)."""
@@ -504,6 +527,10 @@ def main():
                     help="mine only repos tagged [domain: NAME] in the repos file")
     ap.add_argument("--snapshots", action=argparse.BooleanOptionalAction, default=True,
                     help="capture what PR snapshots need (passed through; default on)")
+    ap.add_argument("--sync", action=argparse.BooleanOptionalAction, default=True,
+                    help="send logs, health, datasets and the shard manifest to the team store after each "
+                         "repo, on a Stop and at the end (default on, but only when RIFFLE_SYNC_URL and "
+                         "RIFFLE_SYNC_TOKEN are set; ci_cache/ stays on this PC)")
     ap.add_argument("--snapshot-root", default="snapshots_raw",
                     help="capture files go to <root>/<owner>_<name>/ (default snapshots_raw)")
     ap.add_argument("--skip-existing", action="store_true",
@@ -577,6 +604,10 @@ def main():
         runlog.info("batch", "start", argv=sys.argv[1:], out=args.out, version=__version__,
                     host=socket.gethostname(), level=args.log_level or "INFO")
 
+    global _SYNC
+    if args.sync and sync.settings() and not (args.test or args.audit or args.shard_plan):
+        _SYNC = {"args": args, "counts": {}}
+        print("[sync] on: output goes to the team store after each repo and on a Stop", flush=True)
     if args.audit:
         _audit(args.out)
         return
@@ -839,6 +870,7 @@ def main():
             print(f"[clone] keeping {target} so a rerun resumes without re-cloning",
                   flush=True)
         print(flush=True)
+        _sync_now("repo done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
 
     if args.test and os.path.isfile(TEST_OUT):
         _write_test_parquet(TEST_OUT)
@@ -846,6 +878,7 @@ def main():
           + (f" ({len(skipped)} skipped)" if skipped else ""))
     _assemble_snapshots(args)
     _write_shard_manifest(args, entries, ok, failed)
+    _sync_now("batch done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
     progress.emit("batch_done", ok=ok, n=len(entries), failed=failed, skipped=skipped)
     runlog.info("batch", "done", ok=ok, n=len(entries), failed=failed, skipped=skipped, out=args.out)
     if runlog.enabled("INFO"):
@@ -869,6 +902,10 @@ def run():
         # PRs in each repo's checkpoint, so this is not an error
         print("[stop] batch interrupted; finished repos and PRs are kept, so a rerun "
               "resumes", file=sys.stderr, flush=True)
+        try:
+            _sync_now("stopped")
+        except KeyboardInterrupt:           # a second Stop skips the sync
+            print("[sync] skipped; the next run syncs", file=sys.stderr, flush=True)
         sys.exit(130)
 
 

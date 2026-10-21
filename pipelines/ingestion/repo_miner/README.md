@@ -234,6 +234,14 @@ health flags. Scale the estimates for the full run from those.
   and `dataset_merged.merge.json`. The three tables stay three: they have one row
   per PR, per snapshot and per head commit, and are joined when training loads
   them (`pipelines/training/frames.py`), not stored merged.
+- Central sync (ADR 0014): with `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` in
+  `.env`, the miner sends its logs, traces, `health/*.json`, dataset, snapshot and
+  commit-feature tables, `.partial.jsonl` checkpoint and shard manifest to the
+  team store after each repo, on a Stop and at the end of a batch (`--no-sync`
+  turns it off). It is incremental and never fails a run; a store that cannot be
+  reached is a warning, and a Stop waits at most `RIFFLE_SYNC_TIMEOUT` seconds
+  (default 120). `ci_cache/`, `snapshots_raw/` and the clones are never sent: they
+  are what a resume reads, and a resume happens on the same PC.
 - Run trace: next to each run log, `logs/run-*.trace.jsonl` holds one JSON line
   per event (`runlog.py`): each run stage with its duration, one line per PR with
   its time split by stage (diff, history, git, api, llm, quota_wait, ...), GitHub
@@ -722,6 +730,7 @@ build_dataset.py batch driver: clone repos.txt + mine all into one dataset
 snapshot_capture.py / snapshots.py   PR snapshots: capture while mining, assemble at batch end
 naming.py        output names (PC tag, prefix/postfix), run stems
 merge_shards.py  join the PCs' files after checking manifests and consistency.py
+sync.py          send a PC's output to the team store (RIFFLE_SYNC_URL, ADR 0014)
 runlog.py        structured run trace (logs/run-*.trace.jsonl); trace_report.py summarises it
 ```
 

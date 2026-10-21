@@ -157,6 +157,7 @@ flowchart TD
 | `merge_shards.py` | Joins the tables of several PCs, refusing mismatched pieces. |
 | `naming.py` | Output/log naming for sharded runs, shard manifest path, snapshot table names. |
 | `health.py` | Per-repo health summary and flags. |
+| `sync.py` | Sends a PC's logs, health, datasets and shard manifest to the team store (ADR 0014); incremental, bounded, never fatal. |
 | `runlog.py` | Structured run trace (`*.trace.jsonl`), stage/step/span timing, heartbeat, stall detection. |
 | `trace_report.py` | Summarises a trace file. |
 | `progress.py` | Progress events (`RIFFLE_EVENTS`) for the TUI. |
@@ -345,6 +346,7 @@ Needs every PR's outcome, so it runs once all rows exist (and is skipped if the 
 
 - **Snapshot assembly** (section 11) runs at batch end.
 - **Shard manifest** (`dataset_pc1of3.shard.json`): split ID, PC, N, miner version, host, finish time, repos, mined-OK count, failures, file names.
+- **Central sync** (`sync.py`, ADR 0014), when `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` are set: after each repo, on a Stop and at batch end, `build_dataset.py` PUTs the run log and trace, `health/*.json`, the dataset, its snapshot and commit-feature tables, the `.partial.jsonl` checkpoint and the shard manifest under `<miner_version>/<split_id>/`, then a `run.json` with the counts and reason. Unchanged files (size and mtime in `.sync_state.json`) are skipped, each PUT carries a SHA-256, and a failure or an unreachable store is a warning that ends that sync, never the run. `ci_cache/`, `snapshots_raw/` and clones stay local. `--no-sync` turns it off.
 - **`merge_shards.py`** joins PCs (section 12).
 - **Training** reads the three tables with `pipelines/training/frames.py`: joins at load time, splits by PR or repo from a stable hash, nulls diff features on `open_snapshot == final`, drops `near_decided` snapshots, rescales snapshot weights per PR to 1, never offers outcome/id/metadata columns as inputs, and refuses snapshots that no longer match their dataset.
 
@@ -1514,6 +1516,7 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.5.1 | 10-21 | `--test` mines a fixed window (2020-01-01 to 2025-06-30, no age cutoff), so test runs pick the same PRs on every PC and day; before, the cap, `--min-age-days` and the stale-open cutoff moved with today's date and the form |
 | 6.5.2 | 10-21 | TUI only, output identical: the form no longer saves or restores `.tui_settings.json`, so every launch starts from the defaults (everything on except Git PR discovery, Keep clones, Auto re-mine and Skip big repos); the default LLM model in the TUI is now Haiku (the CLI default stays `sonnet`) |
 | 6.5.3 | 10-21 | output identical: the CI-history pre-pass checkpoints its pages (`ci_cache/<repo>.json.pages.json`) so a stopped run resumes at the next page, and a walk that ended on a failed page is no longer cached as complete |
+| 6.6.0 | 10-21 | `sync.py` and `--sync/--no-sync`: logs, health, datasets, shard manifest go to the team store after each repo, on a Stop and at the end; on only when `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` are set; output identical |
 
 Contract versions: `mined_dataset` 1.0 (2026-10-18, miner 2.2.0) → 1.1 (provenance, `domain`; miner 4.0.0) → 1.2 (`outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer`; miner 5.0.0). `mined_snapshot` 1.0 (miner 3.1.0) → 1.1 → 1.2 → 1.3 (`snapshot_weight`, `moment_bucket`; miner 6.0.0). `mined_commit_features` 1.0 (miner 3.1.0). Full table: `docs/contracts.md`.
 
