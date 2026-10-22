@@ -162,3 +162,36 @@ def test_a_heartbeat_sync_leaves_out_files_it_cannot_finish(tmp_path, monkeypatc
     sent.clear()
     sync.sync(out, "p", {}, logs=[str(tmp_path / "run.log")], state_path=str(tmp_path / "s.json"))   # a repo's end: no cap
     assert any("partial" in k for k in sent)
+
+
+def test_graphql_is_left_alone_once_its_quota_is_gone(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_get(self, path, params=None, body=None):
+        calls.append(path)
+        if path == "/graphql":
+            return 200, {"errors": [{"type": "RATE_LIMIT", "code": "graphql_rate_limit",
+                                     "message": "API rate limit already exceeded"}]}, {}
+        return 200, {"resources": {"graphql": {"reset": __import__("time").time() + 600}}}, {}
+    monkeypatch.setattr(github_api.GitHubAPI, "_get", fake_get)
+    api = _api(tmp_path, monkeypatch)
+    api.token = "t"
+    assert api.commit_counts([1, 2, 3]) == {1: None, 2: None, 3: None}      # REST will read them
+    n = len(calls)
+    assert api.review_events_batch([1, 2]) == {1: None, 2: None}
+    assert api.check_conclusion("abc") is not None
+    assert [c for c in calls[n:] if c == "/graphql"] == []                  # no more GraphQL until it resets
+    assert api._gql_blocked_until > __import__("time").time() + 500
+
+
+def test_a_bulk_review_read_stops_when_the_quota_runs_low(tmp_path, monkeypatch):
+    asked = []
+
+    def fake_get(self, path, params=None, body=None):
+        asked.append(body["query"])
+        return 200, {"data": {"rateLimit": {"remaining": 1500}, "repository": {}}}, {}
+    monkeypatch.setattr(github_api.GitHubAPI, "_get", fake_get)
+    api = _api(tmp_path, monkeypatch)
+    api.token = "t"
+    api.review_events_batch(list(range(1, 41)), reserve=2000)
+    assert len(asked) == 1                                                  # 4 batches of 10 were wanted; it stopped after one

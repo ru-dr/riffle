@@ -116,6 +116,7 @@ class GitHubAPI:
         self.merged_span: tuple[str, str] | None = None   # legacy mode: (oldest, newest) merge time of the kept merged PRs
         self.use_landed = False
         self._user_cache: dict[str, str | None] = {}
+        self._gql_blocked_until = 0.0                                     # GraphQL quota gone until then
         self._disk = api_cache.open_for(st.ci_cache_dir, owner, repo)     # None when switched off
         self._review_cache: dict[tuple[int, bool], dict] = {}
         self._user_lock = threading.Lock()
@@ -533,6 +534,41 @@ class GitHubAPI:
             self._disk.put(f"cc:{number}", c)
         return int(c) if isinstance(c, int) else None
 
+    GQL_RATE_TYPES = ("RATE_LIMITED", "RATE_LIMIT")
+
+    def _gql(self, query: str, strict: bool = False) -> dict | None:
+        """POST one GraphQL query. The `data` object, or None when it cannot be used: no token, the
+        quota is gone (then GraphQL is left alone until it resets, and callers read through REST), a
+        failed call or an errors-only answer. GitHub answers an exhausted quota with HTTP 200 and an
+        error of type RATE_LIMIT (or RATE_LIMITED), never with a 403. `strict`: any error at all gives
+        None (a query whose parts must all be there); otherwise a part that failed is null in the
+        data and the caller sees which."""
+        if not self.token or time.time() < self._gql_blocked_until:
+            return None
+        status, data, _ = self._get("/graphql", body={"query": query})
+        if status != 200 or not isinstance(data, dict):
+            return None
+        errs = data.get("errors") or []
+        if any(e.get("type") in self.GQL_RATE_TYPES or e.get("code") == "graphql_rate_limit" for e in errs):
+            self._gql_blocked_until = self._gql_reset_time()
+            runlog.warn("api", "graphql quota used up; reading through REST until it resets",
+                        wait_s=int(self._gql_blocked_until - time.time()))
+            return None
+        if errs and strict:
+            return None
+        return data.get("data") if isinstance(data.get("data"), dict) else None
+
+    def _gql_reset_time(self) -> float:
+        """When the GraphQL quota comes back (the rate-limit endpoint is free), else two minutes on."""
+        try:
+            status, data, _ = self._get("/rate_limit")
+            reset = ((data or {}).get("resources") or {}).get("graphql", {}).get("reset")
+            if status == 200 and isinstance(reset, (int, float)) and reset > time.time():
+                return float(reset)
+        except Exception:                                   # noqa: BLE001
+            pass
+        return time.time() + 120.0
+
     def commit_counts(self, numbers: list[int], batch: int = 50) -> dict[int, int | None]:
         """{pr_number: commit count} from GraphQL, `batch` PRs per call (one point of the
         GraphQL budget, which is separate from REST's), instead of one REST call per PR.
@@ -552,8 +588,7 @@ class GitHubAPI:
                               for n in part)
             q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
                  f'name: {json.dumps(self.repo)}) {{ {fields} }} }}')
-            status, data, _ = self._get("/graphql", body={"query": q})
-            repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
+            repo_data = (self._gql(q) or {}).get("repository")
             for n in part:
                 node = (repo_data or {}).get(f"p{n}")
                 c = ((node or {}).get("commits") or {}).get("totalCount")
@@ -620,11 +655,15 @@ class GitHubAPI:
         return out
 
     def review_events_batch(self, numbers: list[int], exclude_bots: bool = True,
-                            batch: int = 10) -> dict[int, dict | None]:
+                            batch: int = 10, reserve: int = 0) -> dict[int, dict | None]:
         """`review_events` for many PRs through GraphQL: `batch` PRs per call instead of two REST
         calls per PR. The same dict as `review_events` gives, built the same way. A PR whose
         reviews, threads or comments do not fit one page (100), or whose batch failed, is None
-        here: callers use `review_events` (REST) for it, so nothing is ever approximated."""
+        here: callers use `review_events` (REST) for it, so nothing is ever approximated. GraphQL
+        charges by the pages a query could return, not the ones it does (reviews, then a thread's
+        comments for each of up to `first` threads), so the limits are small: about 0.2 of the
+        hourly 5,000 points a PR, against 1 with the full 100s. It stops once less than `reserve`
+        points are left, so a bulk read cannot spend what the checks need."""
         out: dict[int, dict | None] = {n: None for n in numbers}
         if not self.token:
             return out
@@ -636,16 +675,22 @@ class GitHubAPI:
             part = numbers[i:i + batch]
             fields = " ".join(
                 f"p{n}: pullRequest(number: {int(n)}) {{ "
-                f"reviews(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ state submittedAt "
+                f"reviews(first: 30) {{ pageInfo {{ hasNextPage }} nodes {{ state submittedAt "
                 f"author {{ __typename login }} }} }} "
-                f"reviewThreads(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ "
-                f"comments(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ createdAt "
+                f"reviewThreads(first: 20) {{ pageInfo {{ hasNextPage }} nodes {{ "
+                f"comments(first: 50) {{ pageInfo {{ hasNextPage }} nodes {{ createdAt "
                 f"author {{ __typename login }} }} }} }} }} }}"
                 for n in part)
-            q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
+            q = (f'query {{ rateLimit {{ remaining }} repository(owner: {json.dumps(self.owner)}, '
                  f'name: {json.dumps(self.repo)}) {{ {fields} }} }}')
-            status, data, _ = self._get("/graphql", body={"query": q})
-            repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
+            data = self._gql(q)
+            if data is None:
+                if self._gql_blocked_until > time.time():
+                    break                                  # the quota is gone: REST reads the rest
+                continue
+            left = (data.get("rateLimit") or {}).get("remaining")
+            low = bool(reserve) and isinstance(left, int) and left < reserve     # this batch is read, the next ones are not
+            repo_data = data.get("repository")
             for n in part:
                 node = (repo_data or {}).get(f"p{n}")
                 if not node:
@@ -672,6 +717,8 @@ class GitHubAPI:
                         if c.get("createdAt"):
                             ev["comments"].append(c["createdAt"])
                 out[n] = {k: sorted(v) for k, v in ev.items()}      # chronological, as review_events returns
+            if low:
+                break
         return out
 
     def prefetch_reviews(self, numbers: list[int], exclude_bots: bool = True) -> int:
@@ -679,7 +726,7 @@ class GitHubAPI:
         answers from, so a repo's PRs cost a few GraphQL calls rather than two REST calls each.
         PRs GraphQL could not read whole are left out and go through REST as before."""
         todo = [n for n in numbers if not (self._disk and self._disk.get(f"rv:{n}:{int(exclude_bots)}") is not None)]
-        got = {n: ev for n, ev in self.review_events_batch(todo, exclude_bots).items() if ev is not None}
+        got = {n: ev for n, ev in self.review_events_batch(todo, exclude_bots, reserve=2000).items() if ev is not None}
         if self._disk:
             for n, ev in got.items():
                 self._disk.put(f"rv:{n}:{int(exclude_bots)}", ev)
@@ -828,15 +875,14 @@ class GitHubAPI:
                 for n in part)
             q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
                  f'name: {json.dumps(self.repo)}) {{ {fields} }} }}')
-            for attempt in range(4):
-                status, data, _ = self._get("/graphql", body={"query": q})
-                errs = (data or {}).get("errors") or [] if status == 200 else []
-                if not any(e.get("type") == "RATE_LIMITED" for e in errs):
+            for attempt in range(2):                # a used-up quota is waited out here (few calls, and an unknown
+                data = self._gql(q)                 # force-push would be a different answer), unlike the bulk reads
+                if data is not None or self._gql_blocked_until <= time.time():
                     break
-                runlog.warn("api", "graphql rate limit; waiting", path="/graphql",
-                            retry=attempt + 1, wait_s=60 * (attempt + 1))
-                time.sleep(60 * (attempt + 1))    # GraphQL quota: wait, then retry
-            repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
+                wait = min(3600.0, self._gql_blocked_until - time.time()) + 1
+                runlog.warn("api", "graphql quota used up; waiting for it", wait_s=int(wait))
+                time.sleep(wait)
+            repo_data = (data or {}).get("repository")             # None: unknown, not "no force-push"
             for n in part:
                 node = (repo_data or {}).get(f"p{n}")
                 if node is None:
@@ -904,15 +950,15 @@ class GitHubAPI:
         if not self.token or sha is None:
             return None
         q = ('query { repository(owner: %s, name: %s) { object(oid: %s) { ... on Commit { '
-             'checkSuites(first: 100) { pageInfo { hasNextPage } nodes { databaseId app { slug } '
+             'checkSuites(first: 30) { pageInfo { hasNextPage } nodes { databaseId app { slug } '
              'workflowRun { event } checkRuns(first: 100, filterBy: {checkType: ALL}) { '
              'pageInfo { hasNextPage } nodes { databaseId name conclusion completedAt startedAt } } } } '
              'status { contexts { context state } } } } } }'
              % (json.dumps(self.owner), json.dumps(self.repo), json.dumps(sha)))
-        status, data, _ = self._get("/graphql", body={"query": q})
-        if status != 200 or not isinstance(data, dict) or data.get("errors"):
+        data = self._gql(q, strict=True)
+        if data is None:
             return None
-        commit = (((data.get("data") or {}).get("repository") or {}).get("object"))
+        commit = ((data.get("repository") or {}).get("object"))
         if not isinstance(commit, dict) or "checkSuites" not in commit:
             return None
         suites = commit["checkSuites"] or {}
