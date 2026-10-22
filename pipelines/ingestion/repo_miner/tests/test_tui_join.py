@@ -346,3 +346,89 @@ def test_the_form_builds_split_by_into_the_command_only_when_it_is_not_the_defau
         assert cmd[cmd.index("--split-by") + 1] == "prs" and "--shard" in cmd
         assert "--split-by" in join.shared_argv(cmd[3:]), "the flag must reach the join code"
     _run(go)
+
+
+def test_a_join_that_fails_halfway_leaves_nothing_behind_and_can_be_retried(store, tmp_path, monkeypatch):
+    """The join used to save the token and then fetch the lead's repo list. A failure in between (disk, permissions) took the
+    TUI down with a token saved but no join code: the doctor said joined, the TUI said not."""
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    code = join.encode(store, "rw_good", "abc12345", 2, 3, LEAD)
+    real = join.apply_split
+
+    async def go(app, pilot):
+        monkeypatch.setattr(join, "apply_split", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+        await _join(app, pilot, code)                                               # must not crash the app
+        assert app.joined is None and not (tmp_path / ".join.json").exists()
+        assert not (tmp_path / ".env").exists() or "rw_good" not in (tmp_path / ".env").read_text()
+        assert not os.environ.get("RIFFLE_SYNC_TOKEN")
+        assert "Could not finish joining" in _text(app, "join_msg") and "disk full" in _text(app, "join_msg")
+        monkeypatch.setattr(join, "apply_split", real)                              # the disk is back: the same code works
+        await _join(app, pilot, code)
+        assert app.joined and (tmp_path / ".join.json").exists() and "rw_good" in (tmp_path / ".env").read_text()
+    _run(go)
+
+
+def test_a_failed_rejoin_keeps_the_previous_join_intact(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    code = join.encode(store, "rw_good", "abc12345", 2, 3, LEAD)
+
+    async def go(app, pilot):
+        await _join(app, pilot, code)
+        before = (tmp_path / ".join.json").read_text()
+        monkeypatch.setattr(join, "apply_split", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+        await _join(app, pilot, code)
+        assert (tmp_path / ".join.json").read_text() == before, "the earlier join code must still be there"
+    _run(go)
+
+
+def test_the_tui_follows_a_token_the_doctor_saved_while_it_was_open(tmp_path, monkeypatch):
+    import config
+    env = tmp_path / ".env"
+    monkeypatch.setenv("RIFFLE_DOTENV", str(env))
+    monkeypatch.delenv("RIFFLE_NO_DOTENV", raising=False)
+    for k in ("RIFFLE_SYNC_URL", "RIFFLE_SYNC_TOKEN", "RIFFLE_READ_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    env.write_text("RIFFLE_SYNC_URL=https://s.example\nRIFFLE_SYNC_TOKEN=rw_new\nRIFFLE_READ_TOKEN=rd_new\n")
+    config.refresh_from_env_file(tui.STORE_KEYS)
+    assert os.environ["RIFFLE_SYNC_TOKEN"] == "rw_new" and os.environ["RIFFLE_READ_TOKEN"] == "rd_new"
+    env.write_text("RIFFLE_SYNC_URL=https://s.example\nRIFFLE_SYNC_TOKEN=\n")             # cleared on disk: cleared here
+    config.refresh_from_env_file(tui.STORE_KEYS)
+    assert not os.environ.get("RIFFLE_SYNC_TOKEN") and not os.environ.get("RIFFLE_READ_TOKEN")
+    monkeypatch.setenv("RIFFLE_SYNC_TOKEN", "rw_shell")                                    # a real environment variable still wins
+    config.refresh_from_env_file(tui.STORE_KEYS)
+    assert os.environ["RIFFLE_SYNC_TOKEN"] == "rw_shell"
+    for k in ("RIFFLE_SYNC_URL", "RIFFLE_SYNC_TOKEN", "RIFFLE_READ_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_an_empty_environment_variable_does_not_hide_the_token_in_dot_env(tmp_path):
+    """config used to treat KEY= in the environment as set, so it ignored .env while the doctor (which reads .env) saw the token."""
+    env = tmp_path / ".env"
+    env.write_text("RIFFLE_SYNC_URL=https://s.example\nRIFFLE_SYNC_TOKEN=rw_in_file\n")
+    code = "import sync; print(sync.settings())"
+    out = __import__("subprocess").run([sys.executable, "-c", code], cwd=os.path.dirname(os.path.abspath(tui.__file__)),
+                                       env={**{k: v for k, v in os.environ.items() if k != "RIFFLE_NO_DOTENV"}, "RIFFLE_DOTENV": str(env),
+                                            "RIFFLE_SYNC_TOKEN": "", "RIFFLE_SYNC_URL": ""}, capture_output=True, text=True, timeout=60).stdout
+    assert "rw_in_file" in out, out
+
+
+def test_the_log_buttons_the_footer_has_no_room_for_are_on_screen_and_work(tmp_path, monkeypatch):
+    """Clear log, Copy log, Skip repo and Test data were keyboard-only (hidden from the footer); they are buttons again."""
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    copied = []
+
+    async def go(app, pilot):
+        for wid in ("clear_log", "copy_log", "skip_repo", "view_test", "web_view"):
+            b = app.query_one(f"#{wid}")
+            assert b.display and b.region.width > 0 and b.region.height > 0, wid
+        monkeypatch.setattr(app, "_copy", lambda text: copied.append(text) or True)
+        from textual.widgets import Log
+        app._log("hello log")
+        await pilot.pause()
+        app._copy_log_btn()
+        assert any("hello log" in c for c in copied)
+        app._clear_log_btn()
+        await pilot.pause()
+        assert len(app.log_lines) == 0 and "hello log" not in "\n".join(app.query_one("#log", Log).lines)
+        assert app.query_one("#split_by").display, "the split-by select is in the form"
+    _run(go)

@@ -113,6 +113,7 @@ def form_values(argv: list[str]) -> dict:
     return vals
 
 
+STORE_KEYS = ("RIFFLE_SYNC_URL", "RIFFLE_SYNC_TOKEN", "RIFFLE_READ_TOKEN", "RIFFLE_ADMIN_TOKEN")
 SPLIT_BY = [("Commits (the default)", "commits"), ("PRs (balances a Full repo run)", "prs")]
 MODELS = [("Haiku (default, fast/cheap)", "haiku"), ("Sonnet", "sonnet"), ("Opus", "opus"),
           ("Fable 5.1", "claude-fable-5-1")]
@@ -762,6 +763,8 @@ class RiffleTUI(App):
     #overall { height: 1; margin: 0 0 1 0; }
     #repos { height: 1fr; min-height: 6; border: round $secondary; }
     #log { height: 1fr; min-height: 6; border: round $secondary; }
+    #logbtns { height: 1; margin-top: 1; }
+    #logbtns Button { width: auto; min-width: 11; margin-right: 1; }
     #token_warn { color: $warning; margin-top: 1; }
     #store_line { margin-top: 1; }
     .breaker { color: $error; text-style: bold; }
@@ -912,6 +915,12 @@ class RiffleTUI(App):
                 yield Static("Idle. Configure on the left, then Start (ctrl+r).", id="stats")
                 yield ProgressBar(id="overall", show_eta=False)
                 yield DataTable(id="repos", zebra_stripes=True, cursor_type="row")
+                with Horizontal(id="logbtns"):                 # the keys the footer has no room for, as buttons
+                    yield Button("Clear log", id="clear_log", compact=True)
+                    yield Button("Copy log", id="copy_log", compact=True)
+                    yield Button("Skip repo", id="skip_repo", compact=True)
+                    yield Button("Test data", id="view_test", compact=True)
+                    yield Button("Web view", id="web_view", compact=True)
                 yield Log(id="log", max_lines=5000, highlight=True)
         yield Footer()
 
@@ -1100,6 +1109,8 @@ class RiffleTUI(App):
         """Ask the store who this PC's token is, off the UI thread, and show the answer."""
         def work() -> None:
             import sync
+            import config
+            config.refresh_from_env_file(STORE_KEYS)             # the doctor or join.py may have saved a token since we started
             r = sync.whoami()
             self.call_from_thread(self._show_store, r)
         self.run_worker(work, thread=True, group="store", exclusive=True)
@@ -1138,6 +1149,8 @@ class RiffleTUI(App):
         if not url:
             self.notify("Join first (paste the join code), then the store's address is known.", severity="warning")
             return
+        import config
+        config.refresh_from_env_file(("RIFFLE_READ_TOKEN",))
         token = os.environ.get("RIFFLE_READ_TOKEN")
         copied = bool(token) and self._copy(token)
         try:
@@ -1176,12 +1189,26 @@ class RiffleTUI(App):
 
         def work() -> None:
             import sync
-            r = sync.whoami(doc["u"], doc["t"])
-            d2 = doc
-            if r["ok"]:
-                join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
-                os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
-                d2 = join.apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), HERE)    # the lead's repo list, not our own file
+            state = os.path.join(HERE, join.STATE_FILE)
+            before = join.load_state(state)
+            try:
+                r = sync.whoami(doc["u"], doc["t"])
+                d2 = doc
+                if r["ok"]:
+                    # the order matters: anything that can fail goes first, and the saved join code goes in before the token,
+                    # so a crash or a Ctrl+C between the steps can never leave a token without its join code
+                    d2 = join.apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), HERE)    # the lead's repo list, not our own file
+                    join.save_state(state, d2)
+                    join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
+                    os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
+            except Exception as e:                              # noqa: BLE001  (a thread worker that raises takes the whole TUI down)
+                if before is None:
+                    join.clear_state(state)
+                else:
+                    join.save_state(state, before)               # put back what was there: the old join still works
+                self.call_from_thread(self._join_msg, f"Could not finish joining ({type(e).__name__}: {e}). Nothing was changed; "
+                                      f"try again, or ask the lead for a new code.", "bad")
+                return
             self.call_from_thread(self._joined, d2, r)
         self.run_worker(work, thread=True, group="join", exclusive=True)
 
@@ -1643,6 +1670,26 @@ class RiffleTUI(App):
                          if self.store_state and self.store_state.get("ok") else ""), style="yellow")
         except ProcessLookupError:
             pass
+
+    @on(Button.Pressed, "#clear_log")
+    def _clear_log_btn(self) -> None:
+        self.action_clear_log()
+
+    @on(Button.Pressed, "#copy_log")
+    def _copy_log_btn(self) -> None:
+        self.action_copy_log()
+
+    @on(Button.Pressed, "#skip_repo")
+    def _skip_repo_btn(self) -> None:
+        self.action_skip_repo()
+
+    @on(Button.Pressed, "#view_test")
+    def _view_test_btn(self) -> None:
+        self.action_view_test()
+
+    @on(Button.Pressed, "#web_view")
+    def _web_view_btn(self) -> None:
+        self.action_open_dashboard()
 
     def action_clear_log(self) -> None:
         self.query_one("#log", Log).clear()

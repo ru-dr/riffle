@@ -199,3 +199,18 @@ def test_the_read_fix_only_accepts_a_read_token(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "pcs token, not a read token" in out.replace("pc token", "pcs token") or "not a read token" in out
     assert "RIFFLE_READ_TOKEN=rd_good" in (tmp_path / ".env").read_text()
+
+
+def test_the_join_check_warns_when_a_token_has_no_saved_join_code(monkeypatch, tmp_path):
+    """A token in .env without .join.json means the lead's settings are not applied on this PC: that is not 'joined'."""
+    import doctor
+    import sync
+    monkeypatch.setattr(doctor, "ENV_PATH", str(tmp_path / ".env"))
+    (tmp_path / ".env").write_text("RIFFLE_SYNC_URL=https://s.example\nRIFFLE_SYNC_TOKEN=rw_x\n")
+    for k in ("RIFFLE_SYNC_URL", "RIFFLE_SYNC_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(sync, "whoami", lambda u, t, **k: {"ok": True, "name": "pc1of2-abc", "split": "abc"})
+    name, status, detail, fix = doctor._team_store_check()
+    assert status == doctor.WARN and "no saved join code" in detail and fix == "join"
+    (tmp_path / ".join.json").write_text("{}")
+    assert doctor._team_store_check()[1] == doctor.OK

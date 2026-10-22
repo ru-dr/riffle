@@ -18,6 +18,38 @@ from dataclasses import dataclass, field
 # GITHUB_TOKEN / LLM_API_KEY are picked up automatically without the user
 # exporting them in the shell. A real shell env var always wins over .env.
 # Looks in the package directory first, then the current working directory.
+_FROM_FILE: set[str] = set()                    # the keys whose value came from .env (a real environment variable is never overridden)
+
+
+def refresh_from_env_file(keys, path: str | None = None) -> None:
+    """Re-read `keys` from .env for a running program: another process (the doctor, join.py) may have saved or cleared a token
+    since this one started. Only a value that came from .env, or one not set at all, follows the file; a real environment
+    variable still wins."""
+    if os.environ.get("RIFFLE_NO_DOTENV"):
+        return
+    path = path or os.environ.get("RIFFLE_DOTENV") or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    vals: dict[str, str] = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    vals[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        return
+    for k in keys:
+        if os.environ.get(k) and k not in _FROM_FILE:
+            continue
+        v = vals.get(k, "")
+        if v:
+            os.environ[k] = v
+            _FROM_FILE.add(k)
+        else:
+            os.environ.pop(k, None)
+            _FROM_FILE.discard(k)
+
+
 def _parse_env_file(path: str) -> None:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -28,8 +60,9 @@ def _parse_env_file(path: str) -> None:
                 key, _, val = line.partition("=")
                 key = key.strip()
                 val = val.strip().strip('"').strip("'")
-                if key and val and key not in os.environ:
+                if key and val and not os.environ.get(key):        # an empty variable is "not set", as the doctor reads it
                     os.environ[key] = val
+                    _FROM_FILE.add(key)
     except OSError:
         pass
 
