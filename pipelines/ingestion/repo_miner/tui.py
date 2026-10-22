@@ -98,7 +98,7 @@ def form_values(argv: list[str]) -> dict:
             "full_repo": bool(ns.full_repo), "only_domain": ns.only_domain or "", "llm": bool(ns.llm),
             "snapshots": bool(ns.snapshots), "szz": bool(ns.szz), "ci_history": bool(ns.ci_history),
             "merge_outcome": bool(ns.merge_outcome), "scanners": not ns.no_scanners,
-            "api_contract": not ns.no_api_contract, "git_discovery": ns.pr_discovery == "git"}
+            "api_contract": not ns.no_api_contract, "git_discovery": ns.pr_discovery == "git", "split_by": ns.split_by}
     if ns.lead_in_days is not None:
         vals["lead_in"] = str(ns.lead_in_days)
     if ns.llm_scope:
@@ -113,6 +113,7 @@ def form_values(argv: list[str]) -> dict:
     return vals
 
 
+SPLIT_BY = [("Commits (the default)", "commits"), ("PRs (balances a Full repo run)", "prs")]
 MODELS = [("Haiku (default, fast/cheap)", "haiku"), ("Sonnet", "sonnet"), ("Opus", "opus"),
           ("Fable 5.1", "claude-fable-5-1")]
 
@@ -121,7 +122,7 @@ MODELS = [("Haiku (default, fast/cheap)", "haiku"), ("Sonnet", "sonnet"), ("Opus
 LOCKED_IDS = frozenset((
     "repos_file", "out", "out_prefix", "out_postfix", "pcs", "pc_index", "max_prs", "min_age", "window_from",
     "window_to", "cap_training", "full_repo", "lead_in", "only_domain", "llm", "llm_model", "llm_training",
-    "close_other_only", "snapshots", "szz", "ci_history", "merge_outcome", "scanners", "api_contract", "git_discovery"))
+    "close_other_only", "snapshots", "szz", "ci_history", "merge_outcome", "scanners", "api_contract", "git_discovery", "split_by"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(HERE, "build_dataset.py")
@@ -844,6 +845,8 @@ class RiffleTUI(App):
                     yield Input("1", id="pcs", type="integer", compact=True)
                     yield Label("This PC # (1..PCs)")
                     yield Input("1", id="pc_index", type="integer", compact=True)
+                    yield Label("Split repos between PCs by")
+                    yield Select(SPLIT_BY, value="commits", allow_blank=False, id="split_by", compact=True)
                     yield Label("Clone dir")
                     yield Input("cloned_repos", id="clone_dir", compact=True)
                     yield Checkbox("Full repo: every closed PR, no cap or window", False, id="full_repo",
@@ -1326,7 +1329,7 @@ class RiffleTUI(App):
                 w.value = bool(v)
             elif isinstance(w, Input):
                 w.value = str(v)
-            elif isinstance(w, Select) and v in [m[1] for m in MODELS]:
+            elif isinstance(w, Select) and v in [m[1] for m in MODELS + SPLIT_BY]:
                 w.value = v
 
     def _lead_differences(self) -> list[tuple[str, object, object]]:
@@ -1342,6 +1345,10 @@ class RiffleTUI(App):
 
     def _on(self, wid: str) -> bool:
         return self.query_one(f"#{wid}", Checkbox).value
+
+    def _select(self, wid: str) -> str:
+        v = self.query_one(f"#{wid}", Select).value
+        return v if isinstance(v, str) else ""
 
     def _build_cmd(self) -> list[str]:
         cmd = [sys.executable, "-u", BUILD,
@@ -1370,6 +1377,8 @@ class RiffleTUI(App):
         shard = self._shard()
         if shard:
             cmd += ["--shard", shard]
+            if self._select("split_by") == "prs":                    # only a non-default value travels
+                cmd += ["--split-by", "prs"]
         if self._val("out_prefix"):
             cmd += ["--out-prefix", self._val("out_prefix")]
         if self._val("out_postfix"):
@@ -1494,7 +1503,7 @@ class RiffleTUI(App):
     async def _run_split(self) -> None:
         proc = await asyncio.create_subprocess_exec(
             sys.executable, BUILD, "--repos-file", self._val("repos_file") or "repos.txt",
-            "--shard-plan", self._val("pcs") or "1", cwd=HERE,
+            "--shard-plan", self._val("pcs") or "1", "--split-by", self._select("split_by") or "commits", cwd=HERE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         out, _ = await proc.communicate()
         me = self._val("pc_index") or "1"

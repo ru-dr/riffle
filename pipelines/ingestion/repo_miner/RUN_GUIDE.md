@@ -35,6 +35,7 @@ or move any of these that exist: `dataset_pc*of2*` (a rerun with the same output
    "joined" from an earlier test, press **Leave**: that token was revoked.
 2. Set the form the way both PCs should run. For this test:
    - Repos file `repos_test.txt`, Only repos tagged `test`, Number of PCs `2`, Max PRs per repo `20`.
+   - **Split repos between PCs by**: `Commits` for this test; for a Full repo run use `PRs`, which balances the per-PR work.
    - Untick **LLM flags**, **SZZ label** and **Scanners** (they are slow and need extra setup; a real run keeps them).
 3. Press **F3** (Lead tools). Set the days (7), press **Issue codes**. Two rows appear: `PC 1/2` and `PC 2/2`.
 4. Select `PC 2/2`, press **Copy selected**, and send it to PC B privately (a message to yourself is fine for a test).
