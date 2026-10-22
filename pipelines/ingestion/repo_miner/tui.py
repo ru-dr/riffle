@@ -1305,12 +1305,11 @@ class RiffleTUI(App):
         if self.lead_argv is None:                              # only a token on this PC (no saved join code): forget the token
             if not os.environ.get("RIFFLE_SYNC_TOKEN"):
                 return
-            join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": "", "RIFFLE_SYNC_TOKEN": ""})
-            os.environ.pop("RIFFLE_SYNC_URL", None)
+            join.write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_TOKEN": ""})      # the URL stays: Lead tools need it
             os.environ.pop("RIFFLE_SYNC_TOKEN", None)
             self._update_leave()
             self._check_store()
-            self._join_msg("Left the team store: this PC no longer uploads. Join again with a code from the lead.", "warn")
+            self._join_msg("Left the team: this PC no longer uploads. The store address is kept; join again with a code from the lead.", "warn")
             return
         self.joined = self.lead_argv = None
         join.clear_state(os.path.join(HERE, join.STATE_FILE))
