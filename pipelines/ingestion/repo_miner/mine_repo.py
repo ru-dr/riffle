@@ -192,6 +192,7 @@ def _make_base_resolver(repo: str, api, prs: list[dict], st: config.Settings):
           file=sys.stderr)
 
     count_cache: dict = {}
+    prefetched: list = []
 
     def resolver(pr: dict, head_sha: str):
         if not do_rebase:
@@ -199,6 +200,13 @@ def _make_base_resolver(repo: str, api, prs: list[dict], st: config.Settings):
         num = pr.get("number")
         if num is None:
             return None
+        if not prefetched:
+            prefetched.append(True)            # one GraphQL pass for the whole list, not a REST call per PR
+            nums = [p["number"] for p in prs if p.get("number") is not None]
+            try:
+                count_cache.update({k: v for k, v in api.commit_counts(nums).items() if v is not None})
+            except Exception:                  # noqa: BLE001  (the per-PR REST call below still works)
+                pass
         if num not in count_cache:
             count_cache[num] = api.pr_commit_count(num)
         n = count_cache[num]
@@ -1166,6 +1174,11 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     base_resolver = _make_base_resolver(repo, api, prs, st)
     if unmerged:
         prs = prs + unmerged
+    if api is not None and st.enable_review_history:
+        runlog.stage("reviews prefetch")                    # GraphQL, 10 PRs a call; the rest go through REST
+        got = api.prefetch_reviews([p["number"] for p in prs if p.get("number") is not None],
+                                   st.scrutiny_exclude_bot_reviews)
+        print(f"[reviews] {got} of {len(prs)} PRs' review activity read through GraphQL", file=sys.stderr)
     # every PR's timeline, read once up front (mine_pr reuses pr["_events"]):
     # maintainers are confirmed from all of them, point-in-time (maintainers.py)
     runlog.stage("timelines")
@@ -1445,6 +1458,7 @@ def _infer_owner_name(repo: str):
 
 
 def main():
+    config.stop_on_break()
     ap = argparse.ArgumentParser(description="Extract Riffle v1 features from a clone.")
     ap.add_argument("--repo", default=None, help="path to local clone (required unless --llm-test)")
     ap.add_argument("--owner", default=None,

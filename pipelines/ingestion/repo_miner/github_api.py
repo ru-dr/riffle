@@ -20,6 +20,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 
+import api_cache
 import config
 import progress
 import runlog
@@ -81,6 +82,20 @@ def _reduce_conclusions(concls: list) -> str | None:
     return None
 
 
+RATE_WAIT_FILE = os.path.join("ci_cache", ".rate_wait")
+
+
+def _note_rate_wait(seconds: float) -> None:
+    """Leave the time the quota comes back for the batch driver, which reports it to the team
+    store ("waiting for GitHub until 14:05" rather than a PC that looks stuck). Never raises."""
+    try:
+        os.makedirs(os.path.dirname(RATE_WAIT_FILE), exist_ok=True)
+        with open(RATE_WAIT_FILE, "w", encoding="utf-8") as fh:
+            fh.write(str(int(time.time() + seconds)))
+    except OSError:
+        pass
+
+
 class GitHubAPI:
     def __init__(self, owner: str, repo: str, st: config.Settings):
         self.owner = owner
@@ -101,6 +116,8 @@ class GitHubAPI:
         self.merged_span: tuple[str, str] | None = None   # legacy mode: (oldest, newest) merge time of the kept merged PRs
         self.use_landed = False
         self._user_cache: dict[str, str | None] = {}
+        self._disk = api_cache.open_for(st.ci_cache_dir, owner, repo)     # None when switched off
+        self._review_cache: dict[tuple[int, bool], dict] = {}
         self._user_lock = threading.Lock()
 
     def load_required_contexts(self, branch: str) -> set | None:
@@ -199,6 +216,7 @@ class GitHubAPI:
                                     code=e.code, wait_s=min(wait, 3600))
                         progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}",
                                       wait=min(wait, 3600))
+                        _note_rate_wait(min(wait, 3600))
                         time.sleep(min(wait, 3600))
                         continue
                     # a 403 without rate-limit signals is a genuine permission
@@ -504,11 +522,46 @@ class GitHubAPI:
         """Number of commits in a PR (the single-PR endpoint returns `commits`,
         which the list endpoint omits). Used to recover a rebase-merged PR's base
         as head~N. One call per PR; callers cache. None if unreadable."""
+        hit = self._disk.get(f"cc:{number}") if self._disk else None
+        if isinstance(hit, int):
+            return hit
         status, data, _ = self._get(f"/repos/{self.owner}/{self.repo}/pulls/{number}")
         if status != 200 or not isinstance(data, dict):
             return None
         c = data.get("commits")
+        if isinstance(c, int) and self._disk:
+            self._disk.put(f"cc:{number}", c)
         return int(c) if isinstance(c, int) else None
+
+    def commit_counts(self, numbers: list[int], batch: int = 50) -> dict[int, int | None]:
+        """{pr_number: commit count} from GraphQL, `batch` PRs per call (one point of the
+        GraphQL budget, which is separate from REST's), instead of one REST call per PR.
+        None for a PR that could not be read; callers fall back to `pr_commit_count`."""
+        out: dict[int, int | None] = {n: None for n in numbers}
+        if self._disk:
+            for n in numbers:
+                hit = self._disk.get(f"cc:{n}")
+                if isinstance(hit, int):
+                    out[n] = hit
+            numbers = [n for n in numbers if out[n] is None]
+        if not self.token:
+            return out                                # GraphQL needs auth
+        for i in range(0, len(numbers), batch):
+            part = numbers[i:i + batch]
+            fields = " ".join(f"p{n}: pullRequest(number: {int(n)}) {{ commits {{ totalCount }} }}"
+                              for n in part)
+            q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
+                 f'name: {json.dumps(self.repo)}) {{ {fields} }} }}')
+            status, data, _ = self._get("/graphql", body={"query": q})
+            repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
+            for n in part:
+                node = (repo_data or {}).get(f"p{n}")
+                c = ((node or {}).get("commits") or {}).get("totalCount")
+                if isinstance(c, int):
+                    out[n] = c
+                    if self._disk:
+                        self._disk.put(f"cc:{n}", c)
+        return out
 
     def review_events(self, number: int, exclude_bots: bool = True) -> dict | None:
         """
@@ -518,6 +571,13 @@ class GitHubAPI:
         comments are inline comments. Two paginated calls per PR. None if the
         API is unreadable (the scrutiny feature then treats the PR as unknown).
         """
+        with self._user_lock:
+            hit = self._review_cache.get((number, exclude_bots))
+        if hit is None and self._disk:
+            hit = self._disk.get(f"rv:{number}:{int(exclude_bots)}")
+        if hit is not None:
+            return {k: list(v) for k, v in hit.items()}
+
         def _is_bot(user) -> bool:
             user = user or {}
             return user.get("type") == "Bot" or str(user.get("login", "")).endswith("[bot]")
@@ -554,7 +614,79 @@ class GitHubAPI:
                 continue
             if c.get("created_at"):
                 out["comments"].append(c["created_at"])
+        out = {k: sorted(v) for k, v in out.items()}
+        if self._disk:
+            self._disk.put(f"rv:{number}:{int(exclude_bots)}", out)
         return out
+
+    def review_events_batch(self, numbers: list[int], exclude_bots: bool = True,
+                            batch: int = 10) -> dict[int, dict | None]:
+        """`review_events` for many PRs through GraphQL: `batch` PRs per call instead of two REST
+        calls per PR. The same dict as `review_events` gives, built the same way. A PR whose
+        reviews, threads or comments do not fit one page (100), or whose batch failed, is None
+        here: callers use `review_events` (REST) for it, so nothing is ever approximated."""
+        out: dict[int, dict | None] = {n: None for n in numbers}
+        if not self.token:
+            return out
+
+        def _is_bot(a) -> bool:
+            return bool(a) and (a.get("__typename") == "Bot" or str(a.get("login", "")).endswith("[bot]"))
+
+        for i in range(0, len(numbers), batch):
+            part = numbers[i:i + batch]
+            fields = " ".join(
+                f"p{n}: pullRequest(number: {int(n)}) {{ "
+                f"reviews(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ state submittedAt "
+                f"author {{ __typename login }} }} }} "
+                f"reviewThreads(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ "
+                f"comments(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ createdAt "
+                f"author {{ __typename login }} }} }} }} }} }}"
+                for n in part)
+            q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
+                 f'name: {json.dumps(self.repo)}) {{ {fields} }} }}')
+            status, data, _ = self._get("/graphql", body={"query": q})
+            repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
+            for n in part:
+                node = (repo_data or {}).get(f"p{n}")
+                if not node:
+                    continue
+                rv, th = node.get("reviews") or {}, node.get("reviewThreads") or {}
+                threads = th.get("nodes") or []
+                if ((rv.get("pageInfo") or {}).get("hasNextPage") or (th.get("pageInfo") or {}).get("hasNextPage")
+                        or any(((t.get("comments") or {}).get("pageInfo") or {}).get("hasNextPage") for t in threads)):
+                    continue                                  # too big for one page: REST reads it whole
+                ev = {"comments": [], "changes_requested": [], "rounds": []}
+                for r in rv.get("nodes") or []:
+                    if exclude_bots and _is_bot(r.get("author")):
+                        continue
+                    t = r.get("submittedAt")
+                    if not t or r.get("state") == "PENDING":
+                        continue
+                    ev["rounds"].append(t)
+                    if r.get("state") == "CHANGES_REQUESTED":
+                        ev["changes_requested"].append(t)
+                for t in threads:
+                    for c in (t.get("comments") or {}).get("nodes") or []:
+                        if exclude_bots and _is_bot(c.get("author")):
+                            continue
+                        if c.get("createdAt"):
+                            ev["comments"].append(c["createdAt"])
+                out[n] = {k: sorted(v) for k, v in ev.items()}      # chronological, as review_events returns
+        return out
+
+    def prefetch_reviews(self, numbers: list[int], exclude_bots: bool = True) -> int:
+        """Read the review activity of `numbers` through GraphQL into a cache that `review_events`
+        answers from, so a repo's PRs cost a few GraphQL calls rather than two REST calls each.
+        PRs GraphQL could not read whole are left out and go through REST as before."""
+        todo = [n for n in numbers if not (self._disk and self._disk.get(f"rv:{n}:{int(exclude_bots)}") is not None)]
+        got = {n: ev for n, ev in self.review_events_batch(todo, exclude_bots).items() if ev is not None}
+        if self._disk:
+            for n, ev in got.items():
+                self._disk.put(f"rv:{n}:{int(exclude_bots)}", ev)
+        with self._user_lock:
+            for n, ev in got.items():
+                self._review_cache[(n, exclude_bots)] = ev
+        return len(got)
 
     def fetch_pr(self, number: int) -> dict | None:
         """Full PR object from the single-PR endpoint, used to ENRICH git-primary
@@ -661,6 +793,9 @@ class GitHubAPI:
         None if unreadable, if any page fails, or past 2000 events: the lost
         part would be the newest events (the close), so a partial timeline
         would mislabel the PR rather than leave it unobserved."""
+        hit = self._disk.get(f"tl:{number}") if self._disk else None
+        if hit is not None:
+            return hit
         events: list[dict] = []
         for page in range(1, 21):
             status, data, _ = self._get(
@@ -670,6 +805,8 @@ class GitHubAPI:
                 return None
             events.extend(data)
             if len(data) < 100:
+                if self._disk:
+                    self._disk.put(f"tl:{number}", events)
                 return events
         return None
 
@@ -696,6 +833,8 @@ class GitHubAPI:
                 errs = (data or {}).get("errors") or [] if status == 200 else []
                 if not any(e.get("type") == "RATE_LIMITED" for e in errs):
                     break
+                runlog.warn("api", "graphql rate limit; waiting", path="/graphql",
+                            retry=attempt + 1, wait_s=60 * (attempt + 1))
                 time.sleep(60 * (attempt + 1))    # GraphQL quota: wait, then retry
             repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
             for n in part:
@@ -727,33 +866,9 @@ class GitHubAPI:
                 break
         return suites
 
-    def check_conclusion(self, sha: str, events: tuple[str, ...] | None = None) -> dict:
-        """
-        CI conclusion on a commit, split into gating ('required') vs auxiliary
-        ('optional') checks. Returns {"required": c, "optional": c} where each c
-        is 'failure' | 'success' | None (None = no verdict observed, NOT a pass).
-        Auxiliary checks (CodeQL, Scorecards, dependency-review, coverage bots,
-        etc.) are classified as optional so they don't corrupt the build-failure
-        label — only a real build/test failure should count as label_ci_fail.
-
-        Reads BOTH the Checks API (GitHub Actions etc., paginated) AND the legacy
-        commit-status API (Jenkins/Buildkite/CircleCI/Travis), merging them — a
-        repo can gate on either, and reading only one would miss failures.
-
-        events: count a GitHub Actions check run only when its workflow was started by
-        one of these events (the merge commit's real CI is its `push` runs; issue,
-        schedule and comment workflows are not). Check runs from other apps (CircleCI,
-        Buildkite) have no workflow event and are always counted. None counts everything.
-        """
-        req: list = []
-        opt: list = []
+    def _check_runs_rest(self, sha: str, events) -> tuple[dict, bool]:
+        """{check name: [(completed_at, id, conclusion), ...]} and whether any check run had a verdict."""
         saw_any = False
-        checks: list[dict] = []      # required checks: latest verdict, rerun-pass
-
-        # 1) Checks API (GitHub Actions, paginated — big matrices exceed one page).
-        # filter=all includes reruns: each check's verdict is its LATEST run, and
-        # a check whose earlier run failed but latest passed is a rerun-pass,
-        # which flaky detection counts (flaky.py).
         by_name: dict[str, list] = {}
         suites = self._suites_for_events(sha, events) if events else None
         page = 1
@@ -780,6 +895,84 @@ class GitHubAPI:
             if len(runs) < 100:
                 break
             page += 1
+        return by_name, saw_any
+
+    def _checks_graphql(self, sha: str, events) -> tuple[dict, list] | None:
+        """The same data `_check_runs_rest` and the status call give, from one GraphQL query:
+        ({check name: [(completed_at, id, conclusion)]}, [{"state", "context"}]). None when it
+        cannot be read whole (no token, a failed query, a page that is full), so REST decides."""
+        if not self.token or sha is None:
+            return None
+        q = ('query { repository(owner: %s, name: %s) { object(oid: %s) { ... on Commit { '
+             'checkSuites(first: 100) { pageInfo { hasNextPage } nodes { databaseId app { slug } '
+             'workflowRun { event } checkRuns(first: 100, filterBy: {checkType: ALL}) { '
+             'pageInfo { hasNextPage } nodes { databaseId name conclusion completedAt startedAt } } } } '
+             'status { contexts { context state } } } } } }'
+             % (json.dumps(self.owner), json.dumps(self.repo), json.dumps(sha)))
+        status, data, _ = self._get("/graphql", body={"query": q})
+        if status != 200 or not isinstance(data, dict) or data.get("errors"):
+            return None
+        commit = (((data.get("data") or {}).get("repository") or {}).get("object"))
+        if not isinstance(commit, dict) or "checkSuites" not in commit:
+            return None
+        suites = commit["checkSuites"] or {}
+        if (suites.get("pageInfo") or {}).get("hasNextPage"):
+            return None
+        wanted = {e.lower() for e in events} if events else None
+        by_name: dict[str, list] = {}
+        for suite in suites.get("nodes") or []:
+            runs = suite.get("checkRuns") or {}
+            if (runs.get("pageInfo") or {}).get("hasNextPage"):
+                return None
+            actions = ((suite.get("app") or {}).get("slug")) == "github-actions"
+            if wanted is not None and actions:
+                ev = ((suite.get("workflowRun") or {}).get("event") or "").lower()
+                if ev not in wanted:
+                    continue                    # automation on this commit, not its CI
+            for r in runs.get("nodes") or []:
+                if not r.get("conclusion"):
+                    continue
+                by_name.setdefault((r.get("name") or "").lower(), []).append(
+                    (r.get("completedAt") or r.get("startedAt") or "", r.get("databaseId") or 0,
+                     r["conclusion"].lower()))
+        ctxs = ((commit.get("status") or {}).get("contexts")) or []
+        if len(ctxs) > 30:                      # REST's status call returns 30 and is not paged: keep its answer
+            return None
+        return by_name, [{"state": (c.get("state") or "").lower(), "context": c.get("context")} for c in ctxs]
+
+    def check_conclusion(self, sha: str, events: tuple[str, ...] | None = None) -> dict:
+        """
+        CI conclusion on a commit, split into gating ('required') vs auxiliary
+        ('optional') checks. Returns {"required": c, "optional": c} where each c
+        is 'failure' | 'success' | None (None = no verdict observed, NOT a pass).
+        Auxiliary checks (CodeQL, Scorecards, dependency-review, coverage bots,
+        etc.) are classified as optional so they don't corrupt the build-failure
+        label — only a real build/test failure should count as label_ci_fail.
+
+        Reads BOTH the Checks API (GitHub Actions etc., paginated) AND the legacy
+        commit-status API (Jenkins/Buildkite/CircleCI/Travis), merging them — a
+        repo can gate on either, and reading only one would miss failures.
+
+        events: count a GitHub Actions check run only when its workflow was started by
+        one of these events (the merge commit's real CI is its `push` runs; issue,
+        schedule and comment workflows are not). Check runs from other apps (CircleCI,
+        Buildkite) have no workflow event and are always counted. None counts everything.
+        """
+        req: list = []
+        opt: list = []
+        saw_any = False
+        checks: list[dict] = []      # required checks: latest verdict, rerun-pass
+
+        # One GraphQL call per commit replaces the Actions-runs, check-runs and status calls (3-4 REST
+        # calls); anything it cannot give whole (too many runs, a failed query) is read through REST.
+        gql = self._checks_graphql(sha, events)
+        by_name: dict[str, list] = {}
+        if gql is not None:
+            by_name, statuses = gql
+            saw_any = bool(by_name)
+        else:
+            by_name, saw_any = self._check_runs_rest(sha, events)
+            statuses = None
         FAIL = {"failure", "timed_out", "startup_failure", "action_required"}
         for name, runs in by_name.items():
             runs.sort()
@@ -792,10 +985,12 @@ class GitHubAPI:
                                "rerun_pass": latest == "success" and any(c in FAIL for *_x, c in runs[:-1])})
 
         # 2) legacy commit statuses — merge in, don't replace
-        s2, d2, _ = self._get(
-            f"/repos/{self.owner}/{self.repo}/commits/{sha}/status")
-        if s2 == 200 and d2 and d2.get("statuses"):
-            for stt in d2["statuses"]:
+        if statuses is None:
+            s2, d2, _ = self._get(
+                f"/repos/{self.owner}/{self.repo}/commits/{sha}/status")
+            statuses = d2.get("statuses") if s2 == 200 and d2 else None
+        if statuses:
+            for stt in statuses:
                 state = stt.get("state")
                 c = ("failure" if state in ("failure", "error")
                      else "success" if state == "success" else None)
@@ -811,6 +1006,7 @@ class GitHubAPI:
 
         if not saw_any:
             return {"required": None, "optional": None, "checks": []}
+        checks.sort(key=lambda c: c["name"])             # one order whichever API answered
         return {"required": _reduce_conclusions(req),
                 "optional": _reduce_conclusions(opt), "checks": checks}
 

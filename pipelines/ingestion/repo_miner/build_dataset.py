@@ -432,7 +432,7 @@ def _stop_child(proc, signal) -> None:
     if proc.poll() is not None:
         return
     try:
-        proc.send_signal(signal.SIGINT if os.name != "nt" else signal.SIGTERM)
+        proc.send_signal(signal.SIGINT if os.name != "nt" else signal.CTRL_BREAK_EVENT)
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
         proc.kill()
@@ -446,7 +446,7 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
     Returns (exit code, skipped). The miner gets SIGINT first so it stops
     cleanly with its checkpoint, then is killed if it doesn't exit."""
     import signal
-    proc = subprocess.Popen(cmd)
+    proc = subprocess.Popen(cmd, **({"creationflags": 0x00000200} if os.name == "nt" else {}))   # Windows: its own group, so CTRL_BREAK reaches it alone
     while True:
         try:
             return proc.wait(timeout=1), False
@@ -473,6 +473,9 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
 # each repo's state for the store's progress page: pending, mining, done, failed
 # or skipped, with its finished rows and, once selected, how many PRs it has.
 _SYNC: dict | None = None
+LOG_BEAT_S = 900           # everything that changed (log, trace, checkpoint, finished tables, health) goes to the store this often
+BEAT_SYNC_BUDGET_S = 120   # ...and a heartbeat sync never holds the batch loop longer than this
+BEAT_MAX_FILE_BYTES = 48 * 1024 ** 2   # a bigger file is left for the repo's end or Stop (about 0.5 MB/s fits 120 s)
 HEARTBEAT_S = 180          # status-only update (progress, current repo) while a long repo mines
 
 
@@ -553,7 +556,9 @@ def _run_settings(args) -> dict:
 def _sync_status(why: str) -> dict:
     """The run.json body: counts per repo and totals. PRs of repos not yet
     started are unknown (their selection does not exist yet), so `prs_remaining`
-    covers the started repos only and `repos_pending` says how many are left."""
+    covers the started repos only and `repos_pending` says how many are left.
+    `prs_total` is the split plan's PR share for this PC (an estimate; never below the
+    PRs already counted), or None when there is no plan."""
     args = _SYNC["args"]
     repos = _SYNC.get("repos", {})
     out_partial = args.out + ".partial.jsonl"
@@ -565,16 +570,27 @@ def _sync_status(why: str) -> dict:
                     rec["rows"] = sum(1 for line in fh if line.strip())
             except OSError:
                 rec["rows"] = 0
+    if why == "stopped":                                    # a Stop leaves nothing mining: the store must not say so
+        repos = {k: (dict(r, state="stopped") if r["state"] == "mining" else r) for k, r in repos.items()}
     states = [r["state"] for r in repos.values()]
-    mining = next(((k, r) for k, r in repos.items() if r["state"] == "mining"), None)
+    mining = next(((k, r) for k, r in repos.items() if r["state"] in ("mining", "stopped")), None)
     prs_done = sum(r.get("rows", 0) for r in repos.values())
     remaining = (max(0, (mining[1].get("selected") or 0) - mining[1].get("rows", 0)) if mining else 0)
-    return dict(_SYNC["counts"], reason=why, pc=args.shard, split_id=getattr(args, "split_id", None),
+    wait_until = None                                       # the child's GitHub quota wait, if it is in one
+    try:
+        with open(os.path.join("ci_cache", ".rate_wait"), encoding="utf-8") as fh:
+            until = int(fh.read().strip())
+        if until > time.time():
+            wait_until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until))
+    except (OSError, ValueError):
+        pass
+    return dict(_SYNC["counts"], reason=why, rate_wait_until=wait_until, pc=args.shard, split_id=getattr(args, "split_id", None),
                 miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:], settings=_run_settings(args),
-                started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining else None,
+                started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining and mining[1]["state"] == "mining" else None,
                 repos_total=len(repos), repos_done=states.count("done"), repos_failed=states.count("failed"),
                 repos_skipped=states.count("skipped"), repos_pending=states.count("pending"),
-                prs_done=prs_done, prs_remaining=remaining)
+                prs_done=prs_done, prs_remaining=remaining,
+                prs_total=(max(getattr(args, "plan_prs", None) or 0, prs_done + remaining) or None))
 
 
 def _sync_prefix(status: dict) -> str:
@@ -607,6 +623,15 @@ def _sync_beat(force: bool = False, why: str = "heartbeat") -> None:
     try:
         status = _sync_status(why)
         sync.put_status(_sync_prefix(status), status)
+        if time.monotonic() - _SYNC.get("log_beat", -LOG_BEAT_S) >= LOG_BEAT_S:
+            _SYNC["log_beat"] = time.monotonic()
+            args = _SYNC["args"]                            # the full sync: only what changed goes, so a failed send is retried
+            res = sync.sync(args.out, _sync_prefix(status), status,
+                            health_dir=getattr(args, "health_dir", "health"),
+                            repos=set(_SYNC.get("repos", {})), budget_s=BEAT_SYNC_BUDGET_S,
+                            max_bytes=BEAT_MAX_FILE_BYTES)
+            if res["sent"] or res["failed"]:
+                sync.report(res, "heartbeat")
     except Exception:                                       # noqa: BLE001
         pass
 
@@ -797,6 +822,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main():
+    import config
+    config.stop_on_break()
     ap = build_parser()
     args = ap.parse_args()
     if sys.stdin.isatty() and not (args.test or args.shard_plan or args.audit):
@@ -882,6 +909,7 @@ def main():
             mine = balanced_shards(basis, n)[k - 1]
             total = sum(weights[i] or 0 for i in mine)
             prs_total = sum(pr_counts[i] or 0 for i in mine)
+            args.plan_prs = prs_total or None             # this PC's PR share, for the status's total
             entries = [entries[i] for i in mine]
             print(f"[shard] split ID {sid} · PC {k}/{n}: {len(entries)} repos, ~{total:,} "
                   f"commits" + (f", {prs_total:,} PRs" if prs_total else "") + f" (balanced by {args.split_by}). Every PC must show the same split ID "
