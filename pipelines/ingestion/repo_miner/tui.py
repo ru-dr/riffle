@@ -255,6 +255,7 @@ class RepoStat:
     slowest: float = 0.0                 # slowest PR (s)
     first_pr: float | None = None        # first PR finished this run (for the ETA)
     llm_usage: dict | None = None        # cumulative claude usage of this repo's miner
+    halted: float | None = None          # the batch ended while this repo was mid-mine (stopped, killed)
 
 
 @dataclass
@@ -1792,6 +1793,11 @@ class RiffleTUI(App):
         elif _exit_reason(rc):
             msg = f"{_exit_reason(rc)}, exit {rc}"
         self._final_state = msg
+        for r in self.repos.values():                 # a repo cut off mid-mine is not "mining" any more
+            if r.started and not r.ended and r.stage != "queued":
+                r.halted = self.stats.ended
+                self._update_row(r)
+        self._render_stats()
         self._log(f"[tui] batch {msg} after {_fmt_secs(self.stats.ended - self.stats.started)}",
                   style="bold green" if rc == 0 else "bold red")
         self.notify(f"Batch {msg}", severity="information" if rc == 0 else "error")
@@ -1997,6 +2003,9 @@ class RiffleTUI(App):
             pass
 
     def _stage_text(self, r: RepoStat, now: float) -> Text:
+        if r.halted:                                  # the batch is over: nothing is mining
+            return Text(f"{self._final_state} at {r.done}/{r.total if r.total is not None else '?'}",
+                        style="yellow")
         if r.rl_until and now < r.rl_until:
             return Text(f"rate-limited {_fmt_secs(r.rl_until - now)}", style="bold yellow")
         idle = now - r.last_event if r.last_event else 0
@@ -2016,11 +2025,11 @@ class RiffleTUI(App):
         llm = f"{r.llm_ok}/{r.llm_fail}" if (r.llm_ok or r.llm_fail) else "—"
         el = None
         if r.started:
-            el = (r.ended or now) - r.started
+            el = (r.ended or r.halted or now) - r.started
         # per-repo ETA from this run's PR rate (resumed PRs excluded)
         eta = "—"
         mined = r.done - r.resumed
-        if not r.ended and r.total and r.first_pr and mined >= 2 and now > r.first_pr:
+        if not r.ended and not r.halted and r.total and r.first_pr and mined >= 2 and now > r.first_pr:
             rate = (mined - 1) / (now - r.first_pr)
             if rate > 0:
                 eta = _fmt_secs((r.total - r.done) / rate)
@@ -2089,7 +2098,7 @@ class RiffleTUI(App):
                       f"({_fmt_secs(until - time.time())})")
         lat = (sum(self.stats.llm_secs) / len(self.stats.llm_secs)) if self.stats.llm_secs else None
         repos_done = sum(1 for r in self.repos.values() if r.ended)
-        state = "running" if self.proc else "finished"
+        state = "running" if self.proc else (self._final_state or "finished")
         parts = [f"[b]{state}[/b]", f"elapsed {_fmt_secs(elapsed)}",
                  f"repos {repos_done}/{len(self.repos)}",
                  f"PRs {done}/{total if total and not unknown else '?'}"]
@@ -2129,7 +2138,7 @@ class RiffleTUI(App):
         if total and not unknown:
             bar.update(total=total, progress=done)
         for r in self.repos.values():
-            if r.started and not r.ended or r.rl_until:
+            if r.started and not r.ended and not r.halted or r.rl_until:
                 self._update_row(r)
         self._publish({
             "state": state if self.proc or not self.stats.ended else self._final_state,

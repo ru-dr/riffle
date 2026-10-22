@@ -101,6 +101,7 @@ class GitHubAPI:
         self.merged_span: tuple[str, str] | None = None   # legacy mode: (oldest, newest) merge time of the kept merged PRs
         self.use_landed = False
         self._user_cache: dict[str, str | None] = {}
+        self._review_cache: dict[tuple[int, bool], dict] = {}
         self._user_lock = threading.Lock()
 
     def load_required_contexts(self, branch: str) -> set | None:
@@ -540,6 +541,11 @@ class GitHubAPI:
         comments are inline comments. Two paginated calls per PR. None if the
         API is unreadable (the scrutiny feature then treats the PR as unknown).
         """
+        with self._user_lock:
+            hit = self._review_cache.get((number, exclude_bots))
+        if hit is not None:
+            return {k: list(v) for k, v in hit.items()}
+
         def _is_bot(user) -> bool:
             user = user or {}
             return user.get("type") == "Bot" or str(user.get("login", "")).endswith("[bot]")
@@ -576,7 +582,72 @@ class GitHubAPI:
                 continue
             if c.get("created_at"):
                 out["comments"].append(c["created_at"])
+        return {k: sorted(v) for k, v in out.items()}
+
+    def review_events_batch(self, numbers: list[int], exclude_bots: bool = True,
+                            batch: int = 10) -> dict[int, dict | None]:
+        """`review_events` for many PRs through GraphQL: `batch` PRs per call instead of two REST
+        calls per PR. The same dict as `review_events` gives, built the same way. A PR whose
+        reviews, threads or comments do not fit one page (100), or whose batch failed, is None
+        here: callers use `review_events` (REST) for it, so nothing is ever approximated."""
+        out: dict[int, dict | None] = {n: None for n in numbers}
+        if not self.token:
+            return out
+
+        def _is_bot(a) -> bool:
+            return bool(a) and (a.get("__typename") == "Bot" or str(a.get("login", "")).endswith("[bot]"))
+
+        for i in range(0, len(numbers), batch):
+            part = numbers[i:i + batch]
+            fields = " ".join(
+                f"p{n}: pullRequest(number: {int(n)}) {{ "
+                f"reviews(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ state submittedAt "
+                f"author {{ __typename login }} }} }} "
+                f"reviewThreads(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ "
+                f"comments(first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ createdAt "
+                f"author {{ __typename login }} }} }} }} }} }}"
+                for n in part)
+            q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
+                 f'name: {json.dumps(self.repo)}) {{ {fields} }} }}')
+            status, data, _ = self._get("/graphql", body={"query": q})
+            repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
+            for n in part:
+                node = (repo_data or {}).get(f"p{n}")
+                if not node:
+                    continue
+                rv, th = node.get("reviews") or {}, node.get("reviewThreads") or {}
+                threads = th.get("nodes") or []
+                if ((rv.get("pageInfo") or {}).get("hasNextPage") or (th.get("pageInfo") or {}).get("hasNextPage")
+                        or any(((t.get("comments") or {}).get("pageInfo") or {}).get("hasNextPage") for t in threads)):
+                    continue                                  # too big for one page: REST reads it whole
+                ev = {"comments": [], "changes_requested": [], "rounds": []}
+                for r in rv.get("nodes") or []:
+                    if exclude_bots and _is_bot(r.get("author")):
+                        continue
+                    t = r.get("submittedAt")
+                    if not t or r.get("state") == "PENDING":
+                        continue
+                    ev["rounds"].append(t)
+                    if r.get("state") == "CHANGES_REQUESTED":
+                        ev["changes_requested"].append(t)
+                for t in threads:
+                    for c in (t.get("comments") or {}).get("nodes") or []:
+                        if exclude_bots and _is_bot(c.get("author")):
+                            continue
+                        if c.get("createdAt"):
+                            ev["comments"].append(c["createdAt"])
+                out[n] = {k: sorted(v) for k, v in ev.items()}      # chronological, as review_events returns
         return out
+
+    def prefetch_reviews(self, numbers: list[int], exclude_bots: bool = True) -> int:
+        """Read the review activity of `numbers` through GraphQL into a cache that `review_events`
+        answers from, so a repo's PRs cost a few GraphQL calls rather than two REST calls each.
+        PRs GraphQL could not read whole are left out and go through REST as before."""
+        got = {n: ev for n, ev in self.review_events_batch(numbers, exclude_bots).items() if ev is not None}
+        with self._user_lock:
+            for n, ev in got.items():
+                self._review_cache[(n, exclude_bots)] = ev
+        return len(got)
 
     def fetch_pr(self, number: int) -> dict | None:
         """Full PR object from the single-PR endpoint, used to ENRICH git-primary

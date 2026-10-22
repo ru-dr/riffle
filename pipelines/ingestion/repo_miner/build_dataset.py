@@ -473,6 +473,7 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
 # each repo's state for the store's progress page: pending, mining, done, failed
 # or skipped, with its finished rows and, once selected, how many PRs it has.
 _SYNC: dict | None = None
+LOG_BEAT_S = 900           # this run's log, trace and checkpoint go to the store this often while it mines
 HEARTBEAT_S = 180          # status-only update (progress, current repo) while a long repo mines
 
 
@@ -610,6 +611,9 @@ def _sync_beat(force: bool = False, why: str = "heartbeat") -> None:
     try:
         status = _sync_status(why)
         sync.put_status(_sync_prefix(status), status)
+        if time.monotonic() - _SYNC.get("log_beat", -LOG_BEAT_S) >= LOG_BEAT_S:
+            _SYNC["log_beat"] = time.monotonic()
+            sync.put_logs(_sync_prefix(status), _SYNC['args'].out)
     except Exception:                                       # noqa: BLE001
         pass
 

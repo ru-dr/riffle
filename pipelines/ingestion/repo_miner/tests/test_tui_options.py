@@ -113,3 +113,17 @@ def test_full_repo_drops_the_cap_and_window():
     cmd = _run(fn)
     assert "--full-repo" in cmd
     assert "--max-prs" not in cmd and "--window-from" not in cmd
+
+
+def test_a_repo_cut_off_by_stop_is_not_shown_as_mining():
+    def check(app):
+        r = tui.RepoStat(name="a/b", stage="mining", total=100, done=40, started=1000.0, last_event=1000.0)
+        r.first_pr, r.resumed = 1010.0, 0
+        app._final_state = "stopped"
+        assert "mining" in app._row_values(r, 5000.0)["stage"]          # while it runs, the stall is shown
+        r.halted = 2000.0
+        v = app._row_values(r, 5000.0)
+        assert v["stage"] == "stopped at 40/100"
+        assert v["eta"] == "—"                                          # no ETA for a stopped repo
+        assert v["time"] == tui._fmt_secs(1000.0)                       # its clock stopped when the batch did
+    _run(check)

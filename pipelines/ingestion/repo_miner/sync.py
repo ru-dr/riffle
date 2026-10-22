@@ -297,6 +297,40 @@ def put_status(prefix: str, status: dict) -> bool:
         return False
 
 
+def put_logs(prefix: str, out: str | None = None, state_path: str = STATE_FILE) -> int:
+    """Send this run's log and trace, and the checkpoint of the repo in progress (`out` + .partial.jsonl),
+    only what changed, so the store has them while a PC mines and not only after a repo ends or on Stop.
+    Time-boxed; the checkpoint may end mid-line until the next send. Never raises."""
+    cfg = settings()
+    if not cfg:
+        return 0
+    url, token = cfg
+    sent = 0
+    deadline = time.monotonic() + 60.0
+    try:
+        all_state = _load_state(state_path)
+        state = all_state.setdefault(f"{url}#{hashlib.sha256(token.encode()).hexdigest()[:12]}", {})
+        files = [(p, "logs/") for p in this_run_logs()]
+        if out and os.path.isfile(out + ".partial.jsonl"):
+            files.append((out + ".partial.jsonl", "data/"))
+        for path, folder in files:
+            st = os.stat(path)
+            key = f"{prefix}/{folder}{os.path.basename(path)}"
+            sig = [st.st_size, st.st_mtime_ns]
+            left = deadline - time.monotonic()
+            if state.get(key) == sig or st.st_size > MAX_FILE_BYTES or left <= 0:
+                continue
+            with open(path, "rb") as fh:
+                _put(url, token, key, _Prefix(fh, st.st_size, deadline), st.st_size,
+                     _sha256(path, st.st_size), min(CONNECT_S + st.st_size / 2e6, left))
+            state[key] = sig
+            sent += 1
+        _save_state(state_path, all_state)
+    except Exception:                                       # noqa: BLE001  (a log upload must never hold a run up)
+        pass
+    return sent
+
+
 def report(r: dict, why: str) -> None:
     """One log line for a finished sync, and an event for the TUI's status line."""
     if r["stopped"] == "off":

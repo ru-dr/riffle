@@ -38,3 +38,29 @@ def test_counts_are_prefetched_once_and_rest_fills_the_gaps(monkeypatch):
         assert resolve(pr, "head") == "base"
     assert api.graphql_calls == 1
     assert api.rest_calls == 1                 # only PR 3, which GraphQL could not read
+
+
+def test_review_batch_matches_review_events(monkeypatch):
+    import github_api
+    api = github_api.GitHubAPI("o", "r", config.Settings())
+    api.token = "t"
+    node = {"reviews": {"pageInfo": {"hasNextPage": False}, "nodes": [
+                {"state": "APPROVED", "submittedAt": "2026-01-02T00:00:00Z", "author": {"__typename": "User", "login": "a"}},
+                {"state": "CHANGES_REQUESTED", "submittedAt": "2026-01-01T00:00:00Z", "author": {"__typename": "User", "login": "b"}},
+                {"state": "COMMENTED", "submittedAt": "2026-01-03T00:00:00Z", "author": {"__typename": "Bot", "login": "ci"}},
+                {"state": "PENDING", "submittedAt": None, "author": None}]},
+            "reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": [{"comments": {
+                "pageInfo": {"hasNextPage": False}, "nodes": [
+                    {"createdAt": "2026-01-02T05:00:00Z", "author": {"__typename": "User", "login": "a"}},
+                    {"createdAt": "2026-01-02T04:00:00Z", "author": None}]}}]}}
+    big = {"reviews": {"pageInfo": {"hasNextPage": True}, "nodes": []},
+           "reviewThreads": {"pageInfo": {"hasNextPage": False}, "nodes": []}}
+    monkeypatch.setattr(api, "_get", lambda path, params=None, body=None:
+                        (200, {"data": {"repository": {"p1": node, "p2": big}}}, {}))
+    got = api.review_events_batch([1, 2])
+    assert got[1] == {"comments": ["2026-01-02T04:00:00Z", "2026-01-02T05:00:00Z"],
+                      "changes_requested": ["2026-01-01T00:00:00Z"],
+                      "rounds": ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"]}
+    assert got[2] is None                       # does not fit one page: REST reads it
+    api.prefetch_reviews([1, 2])
+    assert api.review_events(1) == got[1]       # answered from the cache, no REST call

@@ -1174,6 +1174,11 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     base_resolver = _make_base_resolver(repo, api, prs, st)
     if unmerged:
         prs = prs + unmerged
+    if api is not None and st.enable_review_history:
+        runlog.stage("reviews prefetch")                    # GraphQL, 10 PRs a call; the rest go through REST
+        got = api.prefetch_reviews([p["number"] for p in prs if p.get("number") is not None],
+                                   st.scrutiny_exclude_bot_reviews)
+        print(f"[reviews] {got} of {len(prs)} PRs' review activity read through GraphQL", file=sys.stderr)
     # every PR's timeline, read once up front (mine_pr reuses pr["_events"]):
     # maintainers are confirmed from all of them, point-in-time (maintainers.py)
     runlog.stage("timelines")
