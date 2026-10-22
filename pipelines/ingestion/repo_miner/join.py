@@ -268,9 +268,16 @@ def main(argv: list[str] | None = None) -> int:
     if not r["ok"]:
         print(f"Not saved: {r['why']}. Ask the lead for a new code.", file=sys.stderr)
         return 1
-    write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
-    doc = apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), HERE)
-    save_state(os.path.join(HERE, STATE_FILE), doc)
+    state = os.path.join(HERE, STATE_FILE)
+    before = load_state(state)
+    try:                                                    # anything that can fail first; the join code before the token
+        doc = apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), HERE)
+        save_state(state, doc)
+        write_env(os.path.join(HERE, ".env"), {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
+    except (OSError, ValueError) as e:
+        save_state(state, before) if before else clear_state(state)
+        print(f"Could not finish joining ({type(e).__name__}: {e}). Nothing was changed; try again.", file=sys.stderr)
+        return 1
     if doc["lead"].get("local_repos_file"):
         print(f"The lead's repo list ({doc['lead'].get('repos_name')}, {doc['lead'].get('n_repos')} repos) is saved at "
               f"{doc['lead']['local_repos_file']}; the command below uses it, so you need no matching file of your own.")

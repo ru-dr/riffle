@@ -504,6 +504,9 @@ def _team_store_check() -> tuple[str, str, str, str | None]:
         return ("Join token", WARN, "not joined: your output stays on this PC. Paste the join code the lead sent you",
                 "join")
     r = sync.whoami(url, token)
+    if r["ok"] and not os.path.isfile(os.path.join(os.path.dirname(ENV_PATH), ".join.json")):
+        return ("Join token", WARN, f"{r['name']} works, but there is no saved join code, so the lead's settings are not applied "
+                                    f"on this PC. Paste the join code again (here, or in the TUI after Leave)", "join")
     if r["ok"]:
         return ("Join token", OK, f"{r['name']} · split {r.get('split') or 'any'} · output is sent after each repo", None)
     return ("Join token", WARN, f"{r['why']}. The run still works and keeps everything locally; "
@@ -706,8 +709,15 @@ def _fix_join(plat: Platform) -> None:
             doc = join.apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), base)      # the lead's repo list, not our own file
         except OSError as e:
             print(f"  {_sym(WARN)} could not save the lead's repo list ({e}); the code's own flags stand.")
-        join.write_env(ENV_PATH, {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
-        join.save_state(os.path.join(base, join.STATE_FILE), doc)
+        state = os.path.join(base, join.STATE_FILE)
+        before = join.load_state(state)
+        try:                                                   # join code first, then the token: never a token without its code
+            join.save_state(state, doc)
+            join.write_env(ENV_PATH, {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
+        except OSError as e:
+            join.save_state(state, before) if before else join.clear_state(state)
+            print(f"  {_sym(FAIL)} could not save the join ({e}); nothing was changed. Try again.")
+            return
         os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
         print(f"  {_sym(OK)} joined as {r['name']} (PC {doc['k']} of {doc['n']}) · saved to {ENV_PATH}")
         print(f"  Run this, exactly: {join.command(doc)}   (or open the TUI: it fills the form from the code)")
