@@ -210,6 +210,18 @@ def revoke_split(path: str, split: str) -> list[str]:
         return sorted(gone)
 
 
+def remove_split(path: str, split: str) -> bool:
+    """Forget a split's record (its flags, repo list and who issued it). Its PC tokens are revoked first, so nothing is left
+    that could upload under it, and it cannot be rotated again."""
+    with locked(path):
+        data = load(path, strict=True)
+        for n in [n for n, r in data["pcs"].items() if r.get("split") == split]:
+            del data["pcs"][n]
+        hit = data["splits"].pop(split, None) is not None
+        save(path, data)
+        return hit
+
+
 def lookup(path: str, token: str | None) -> dict | None:
     """{kind, name, split, expires} for a valid, unexpired token, else None."""
     if not token:

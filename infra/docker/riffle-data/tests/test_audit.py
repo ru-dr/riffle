@@ -428,3 +428,18 @@ def test_admin_storage_reports_sizes_by_kind_and_pc_and_the_disk_but_never_data(
     assert "content" not in json.dumps(d) and "xxxx" not in json.dumps(d)                       # sizes and names only
     rdr = tokens.issue(store.tp, "readers", "rr")
     assert req(store, "GET", "/v1/admin/storage", rdr)[0] == 401                                  # a read token is not an admin token
+
+
+def test_an_admin_can_remove_a_split_and_the_page_keeps_a_confirm_open_across_refreshes(store):
+    pcs = json.loads(req(store, "POST", "/v1/admin/splits", store.adm, {"split_id": "abc", "n": 2, "flags": ["--max-prs", "20"], "repos_name": "r.txt"})[1])["pcs"]
+    code, body = req(store, "POST", "/v1/admin/revoke", store.adm, {"split_id": "abc"})                  # revoke all keeps the record
+    assert code == 200 and len(json.loads(body)["revoked"]) == 2 and "abc" in tokens.load(store.tp)["splits"]
+    assert tokens.who(store.tp, pcs[0]["token"]) is None
+    code, body = req(store, "POST", "/v1/admin/revoke", store.adm, {"split_id": "abc", "remove": True})   # remove takes it off the page
+    d = json.loads(body)
+    assert code == 200 and d["removed"] is True and "abc" not in tokens.load(store.tp)["splits"]
+    assert json.loads(req(store, "GET", "/v1/admin/overview", store.adm)[1])["splits"] == []
+    again = json.loads(req(store, "POST", "/v1/admin/revoke", store.adm, {"split_id": "abc", "remove": True})[1])
+    assert again["removed"] is False                                                                      # nothing left to remove
+    js = open(os.path.join(os.path.dirname(store_app.__file__), "static", "app.js"), encoding="utf-8").read()
+    assert "if (pending) return Promise.resolve(lastActive)" in js, "a refresh resets the open confirm and the second press does nothing"
