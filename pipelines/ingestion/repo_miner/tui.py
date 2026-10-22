@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -87,6 +88,28 @@ from textual.screen import ModalScreen  # noqa: E402
 from textual.widgets import (Button, Checkbox, DataTable, Footer, Header, Input,  # noqa: E402
                              Label, Log, ProgressBar, Select, Static)
 from rich.highlighter import Highlighter  # noqa: E402
+
+
+# The miner runs in its own process group so a Stop reaches it and its children.
+# POSIX has sessions and killpg; Windows has process groups, CTRL_BREAK and taskkill.
+_NEW_GROUP = ({"creationflags": 0x00000200} if os.name == "nt"   # CREATE_NEW_PROCESS_GROUP
+              else {"start_new_session": True})
+
+
+def _signal_group(pid: int, kill: bool) -> None:
+    """Stop (SIGINT / CTRL_BREAK) or kill the miner's whole group; a gone process is fine."""
+    try:
+        if os.name == "nt":
+            if kill:
+                import subprocess
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                               capture_output=True, check=False)
+            else:
+                os.kill(pid, signal.CTRL_BREAK_EVENT)
+        else:
+            os.killpg(pid, signal.SIGKILL if kill else signal.SIGINT)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
 
 def form_values(argv: list[str]) -> dict:
     """The form fields a command line means (the lead's, from a join code), parsed the way the miner parses it."""
@@ -232,6 +255,7 @@ class RepoStat:
     slowest: float = 0.0                 # slowest PR (s)
     first_pr: float | None = None        # first PR finished this run (for the ETA)
     llm_usage: dict | None = None        # cumulative claude usage of this repo's miner
+    halted: float | None = None          # the batch ended while this repo was mid-mine (stopped, killed)
 
 
 @dataclass
@@ -797,6 +821,7 @@ class RiffleTUI(App):
         self.repos: dict[str, RepoStat] = {}
         self.stats = RunStats()
         self.max_prs: int | None = None
+        self.plan_prs: int | None = None          # this PC's PR share, from the "[shard]" line (an estimate)
         self.test_mode = False
         self.out_paths: list[str] = []
         self.assembly: dict | None = None      # snapshot-table build: running | done | failed
@@ -1627,6 +1652,7 @@ class RiffleTUI(App):
                             severity="warning", timeout=10)
         mp = self._val("max_prs")
         self.max_prs = int(mp) if mp.isdigit() and not self._on("full_repo") else None
+        self.plan_prs = None
         self.test_mode = test
         if test:
             tp = self._val("test_prs")
@@ -1663,7 +1689,7 @@ class RiffleTUI(App):
         if self.proc is None:
             return
         try:
-            os.killpg(self.proc.pid, signal.SIGINT)
+            _signal_group(self.proc.pid, kill=False)
             self._log("[stop] SIGINT sent; the checkpoint keeps finished PRs. "
                       "Start again with 'Reuse clones' on to resume."
                       + (" The miner uploads what it has before it exits (up to two minutes)."
@@ -1699,10 +1725,7 @@ class RiffleTUI(App):
         proc = self.proc
         if proc is not None:
             if self._quitting:                       # a second ctrl+q: do not wait for the upload
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                _signal_group(proc.pid, kill=True)
                 self.exit()
                 return
             self._quitting = True
@@ -1715,10 +1738,7 @@ class RiffleTUI(App):
             try:
                 await asyncio.wait_for(proc.wait(), timeout=wait)
             except (asyncio.TimeoutError, ProcessLookupError):
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                _signal_group(proc.pid, kill=True)
         self.exit()
 
     def _set_running(self, running: bool) -> None:
@@ -1742,13 +1762,16 @@ class RiffleTUI(App):
         self.proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=HERE, env=env, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True)
+            **_NEW_GROUP)
         assert self.proc.stdout is not None
         while True:
             line = await self.proc.stdout.readline()
             if not line:
                 break
             text = line.decode("utf-8", "replace").rstrip()
+            m = re.search(r"\[shard\] split ID .*?, ([\d,]+) PRs ", text)
+            if m:
+                self.plan_prs = int(m.group(1).replace(",", ""))
             if text.startswith("[pr "):
                 if self.log_fh:   # per-PR lines go to the table, but keep them on disk
                     self.log_fh.write(time.strftime("%H:%M:%S ") + text + "\n")
@@ -1770,6 +1793,11 @@ class RiffleTUI(App):
         elif _exit_reason(rc):
             msg = f"{_exit_reason(rc)}, exit {rc}"
         self._final_state = msg
+        for r in self.repos.values():                 # a repo cut off mid-mine is not "mining" any more
+            if r.started and not r.ended and r.stage != "queued":
+                r.halted = self.stats.ended
+                self._update_row(r)
+        self._render_stats()
         self._log(f"[tui] batch {msg} after {_fmt_secs(self.stats.ended - self.stats.started)}",
                   style="bold green" if rc == 0 else "bold red")
         self.notify(f"Batch {msg}", severity="information" if rc == 0 else "error")
@@ -1778,7 +1806,9 @@ class RiffleTUI(App):
                 self._log(f"[tui] saved: {path} ({self._row_count(path)} rows, "
                           f"{os.path.getsize(path) / 1024:.0f} KB)", style="bold cyan")
             else:
-                self._log(f"[tui] not written: {path}", style="yellow")
+                self._log(f"[tui] not written: {path} (a table is written when a repo finishes; "
+                          f"finished PRs of a stopped repo stay in its .partial.jsonl checkpoint)",
+                          style="yellow")
         if self.test_mode and rc == 0 and os.path.isfile(TEST_OUT):
             self._log(f"[test] saved -> {TEST_OUT} (+ .parquet)  ctrl+o to view, p to switch",
                       style="bold green")
@@ -1973,6 +2003,9 @@ class RiffleTUI(App):
             pass
 
     def _stage_text(self, r: RepoStat, now: float) -> Text:
+        if r.halted:                                  # the batch is over: nothing is mining
+            return Text(f"{self._final_state} at {r.done}/{r.total if r.total is not None else '?'}",
+                        style="yellow")
         if r.rl_until and now < r.rl_until:
             return Text(f"rate-limited {_fmt_secs(r.rl_until - now)}", style="bold yellow")
         idle = now - r.last_event if r.last_event else 0
@@ -1992,11 +2025,11 @@ class RiffleTUI(App):
         llm = f"{r.llm_ok}/{r.llm_fail}" if (r.llm_ok or r.llm_fail) else "—"
         el = None
         if r.started:
-            el = (r.ended or now) - r.started
+            el = (r.ended or r.halted or now) - r.started
         # per-repo ETA from this run's PR rate (resumed PRs excluded)
         eta = "—"
         mined = r.done - r.resumed
-        if not r.ended and r.total and r.first_pr and mined >= 2 and now > r.first_pr:
+        if not r.ended and not r.halted and r.total and r.first_pr and mined >= 2 and now > r.first_pr:
             rate = (mined - 1) / (now - r.first_pr)
             if rate > 0:
                 eta = _fmt_secs((r.total - r.done) / rate)
@@ -2046,6 +2079,8 @@ class RiffleTUI(App):
                 total += self.max_prs
             else:
                 unknown = True
+        if unknown and self.plan_prs:        # repos not started yet have no total: use the plan's share
+            total, unknown = max(total, self.plan_prs), False
         # throughput over the recent window (robust to slow pre-passes)
         rate = None
         pts = self.stats.pr_times
@@ -2063,7 +2098,7 @@ class RiffleTUI(App):
                       f"({_fmt_secs(until - time.time())})")
         lat = (sum(self.stats.llm_secs) / len(self.stats.llm_secs)) if self.stats.llm_secs else None
         repos_done = sum(1 for r in self.repos.values() if r.ended)
-        state = "running" if self.proc else "finished"
+        state = "running" if self.proc else (self._final_state or "finished")
         parts = [f"[b]{state}[/b]", f"elapsed {_fmt_secs(elapsed)}",
                  f"repos {repos_done}/{len(self.repos)}",
                  f"PRs {done}/{total if total and not unknown else '?'}"]
@@ -2103,7 +2138,7 @@ class RiffleTUI(App):
         if total and not unknown:
             bar.update(total=total, progress=done)
         for r in self.repos.values():
-            if r.started and not r.ended or r.rl_until:
+            if r.started and not r.ended and not r.halted or r.rl_until:
                 self._update_row(r)
         self._publish({
             "state": state if self.proc or not self.stats.ended else self._final_state,

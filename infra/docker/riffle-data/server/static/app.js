@@ -196,7 +196,7 @@
     function share(r) {                                                   // one PC's progress: finished repos plus the part of the one in progress
       var m = r.status.repos || {}, ks = Object.keys(m), tot = r.status.repos_total || ks.length, g = 0;
       if (!ks.length) return tot ? (r.status.repos_done || 0) / tot : 0;
-      ks.forEach(function (k) { var x = m[k]; g += x.state === "done" ? 1 : x.state === "mining" && x.selected ? Math.min(1, (x.rows || 0) / x.selected) : 0; });
+      ks.forEach(function (k) { var x = m[k]; g += x.state === "done" ? 1 : (x.state === "mining" || x.state === "stopped") && x.selected ? Math.min(1, (x.rows || 0) / x.selected) : 0; });
       return g;
     }
     runs.forEach(function (r) { got += share(r); });
@@ -209,12 +209,12 @@
     var silent = runs.filter(function (r, i) { return st[i] === "silent"; });
     var alert = failed ? [failed + " repo" + (failed === 1 ? "" : "s") + " failed", "bad"] : silent.length ? [silent.map(function (r) { return r.pc.replace(/-.*/, ""); }).join(", ") + " offline · last seen " + ago(silent[0].updated), ""] : ["", ""];
     return { word: word, cls: cls, alert: alert,
-      kpis: [{ l: "Progress", v: n ? (100 * frac).toFixed(frac < 0.1 ? 1 : 0) + "%" : "—", h: "of all repositories" }, { l: "PRs mined", v: sum("prs_done").toLocaleString(), h: rate == null ? "rows written" : rate.toFixed(rate < 10 ? 1 : 0) + " PRs per minute" },
+      kpis: [{ l: "Progress", v: n ? (100 * frac).toFixed(frac < 0.1 ? 1 : 0) + "%" : "—", h: "of all repositories" }, { l: "PRs mined", v: sum("prs_done").toLocaleString(), h: rate == null ? (sum("prs_total") ? "of about " + sum("prs_total").toLocaleString() : "rows written") : rate.toFixed(rate < 10 ? 1 : 0) + " PRs per minute" },
              { l: "Repositories", v: sum("repos_done") + " / " + total, h: failed ? failed + " failed" : "none failed" }, { l: "PCs mining", v: active + " / " + n, h: count("done") + " finished" },
              { l: "Time left", v: eta, h: elapsed ? "elapsed " + span(elapsed) : "" }],
       headers: ["PC", "State", "Progress", "PRs mined", "PRs/min", "Now mining", "Last 24 hours"],
       rows: runs.map(function (r, i) {
-        var s = st[i], c = r.status, p = blocksOf[r.pc], cur = c.current && s === "mining" ? c.current + (((c.repos || {})[c.current] || {}).selected ? "  " + (c.repos[c.current].rows || 0) + "/" + c.repos[c.current].selected : "") : s === "done" ? "finished" : "last seen " + ago(r.updated);
+        var s = st[i], c = r.status, p = blocksOf[r.pc], wait = c.rate_wait_until && Date.parse(c.rate_wait_until) > Date.now() ? "  · waiting for GitHub until " + new Date(c.rate_wait_until).toTimeString().slice(0, 5) : "", cur = c.current && s === "mining" ? c.current + (((c.repos || {})[c.current] || {}).selected ? "  " + (c.repos[c.current].rows || 0) + "/" + c.repos[c.current].selected : "") + wait : s === "done" ? "finished" : "last seen " + ago(r.updated);
         return { cls: s === "silent" ? "bad" : s === "stopped" ? "warn" : s === "done" ? "done" : "run",
           vals: [r.pc.replace(/-.*/, ""), s === "silent" ? "offline" : s, { bar: c.repos_total ? share(r) / c.repos_total : 0, t: (c.repos_done || 0) + "/" + (c.repos_total || 0) + " repos" }, c.prs_done || 0,
                  p ? p.blocks.slice(-4).reduce(function (a, b) { return a + (b[1] || 0); }, 0) / 60 : null, cur, p ? { upt: p.blocks.map(function (b) { return b[0]; }) } : ""] };
@@ -320,8 +320,8 @@
         $("#kpis").replaceChildren(
           stat("PCs", runs.length, active + " mining now", active ? "good" : ""),
           stat("Repos done", sum("repos_done").toLocaleString(), "of " + sum("repos_total").toLocaleString() + " assigned"),
-          stat("PRs mined", sum("prs_done").toLocaleString(), "rows written so far"),
-          stat("PRs left", sum("prs_remaining").toLocaleString(), "in repos already started"),
+          stat("PRs mined", sum("prs_done").toLocaleString(), sum("prs_total") ? "of about " + sum("prs_total").toLocaleString() + " planned" : "rows written so far"),
+          stat("PRs left", sum("prs_total") ? Math.max(0, sum("prs_total") - sum("prs_done")).toLocaleString() : sum("prs_remaining").toLocaleString(), sum("prs_total") ? "about, from the split plan" : "in repos already started"),
           stat("Failed repos", sum("repos_failed").toLocaleString(), sum("repos_pending") + " not started", sum("repos_failed") ? "bad" : ""));
         BV.latest.runs = runs; bvFeed("overview");
         if (BV.on) api("activity", { days: 1 }).then(function (a) { BV.latest.act = a; bvFeed("overview"); });
@@ -369,8 +369,8 @@
       $("#r-sub").textContent = "Last sync " + ago(r.updated) + " (" + s.reason + ") from " + (s.host || "unknown host") + ".";
       $("#kpis").replaceChildren(
         stat("Repos", (s.repos_done || 0) + "/" + (s.repos_total || 0), (s.repos_pending || 0) + " waiting"),
-        stat("PRs mined", (s.prs_done || 0).toLocaleString(), "rows written"),
-        stat("PRs left", (s.prs_remaining || 0).toLocaleString(), s.current ? "in " + s.current : "no repo in progress"),
+        stat("PRs mined", (s.prs_done || 0).toLocaleString(), s.prs_total ? "of about " + s.prs_total.toLocaleString() + " planned" : "rows written"),
+        stat("PRs left", (s.prs_total ? Math.max(0, s.prs_total - (s.prs_done || 0)) : (s.prs_remaining || 0)).toLocaleString(), s.prs_total ? "about, from the split plan" : s.current ? "in " + s.current : "no repo in progress"),
         stat("Failed", String(s.repos_failed || 0), (s.repos_skipped || 0) + " skipped", s.repos_failed ? "bad" : ""),
         stat("Files", String(d.files.length), bytes(d.files.reduce(function (a, f) { return a + f.size; }, 0))));
       var repos = Object.keys(s.repos || {});
@@ -381,7 +381,7 @@
       if (flagged.length) C.hbar($("#c-health"), flagged, { aria: "Health flags per repo", ml: 170, c: "var(--s2)", th: "Repo", vh: "Flags" });
       else C.empty($("#c-health"), Object.keys(d.health).length ? "No repo has a health flag." : "No health files yet.");
       var all = repos.map(function (k) {
-        var x = s.repos[k], hh = d.health[k], left = x.state === "mining" && x.selected != null ? Math.max(0, x.selected - (x.rows || 0)) : null;
+        var x = s.repos[k], hh = d.health[k], left = (x.state === "mining" || x.state === "stopped") && x.selected != null ? Math.max(0, x.selected - (x.rows || 0)) : null;
         return [k, x.state, x.rows == null ? null : x.rows, x.selected == null ? null : x.selected, left, hh ? (hh.flags || []).join("; ") || "ok" : null];
       }).sort(function (a, b) { return (REPO_RANK[a[1]] - REPO_RANK[b[1]]) || a[0].localeCompare(b[0]); });
       var seg = el("div", "seg"), host = el("div"), box = $("#repos");

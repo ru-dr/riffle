@@ -153,10 +153,13 @@ def _put(url: str, token: str, key: str, body, size: int, sha256: str | None, ti
 
 def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
          logs: list[str] | None = None, state_path: str = STATE_FILE,
-         budget_s: float | None = None, repos: set[str] | None = None) -> dict:
+         budget_s: float | None = None, repos: set[str] | None = None,
+         max_bytes: int | None = None) -> dict:
     """Send what changed since the last sync under `prefix` (`<miner_version>/<split>`),
     then `run.json` (`status` plus host and time). Returns
-    {"sent", "skipped", "failed", "stopped"}; never raises."""
+    {"sent", "skipped", "failed", "stopped"}; never raises. `max_bytes` leaves out files bigger than
+    that (a heartbeat must not start an upload its time budget cannot finish: it would be cut off
+    and begin again from zero every time); they go at a repo's end and on Stop."""
     cfg = settings()
     result = {"sent": 0, "skipped": 0, "failed": [], "stopped": None}
     if not cfg:
@@ -188,6 +191,9 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
             continue
         sig = [st.st_size, st.st_mtime_ns]
         if state.get(key) == sig:
+            result["skipped"] += 1
+            continue
+        if max_bytes is not None and st.st_size > max_bytes:
             result["skipped"] += 1
             continue
         if st.st_size > MAX_FILE_BYTES:
