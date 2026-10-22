@@ -472,10 +472,11 @@ def assemble(dataset_rows: list[dict], raw_root: str, st: config.Settings) -> tu
     for key in sorted(chosen, key=lambda k: (str(k[0]), k[1] or 0)):
         d, rec = chosen[key]
         history, evidence = folders[d]
-        commits.extend(commit_feature_rows(rec))
         row = at_open.get(key)
-        if row is not None:
-            snaps.extend(build(rec, row, history, st, evidence))
+        if row is None:                 # a capture from an earlier run or another repo: no row in this dataset, so no rows here
+            continue
+        commits.extend(commit_feature_rows(rec))
+        snaps.extend(build(rec, row, history, st, evidence))
     # every commit row carries every feature column (null where not computed)
     cols = sorted({k for r in commits for k in r} - set(_COMMIT_BASE))
     commits = [{**{c: None for c in cols}, **r} for r in commits]

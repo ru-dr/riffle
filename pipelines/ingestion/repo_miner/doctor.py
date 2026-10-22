@@ -36,6 +36,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -494,6 +495,52 @@ def _path_note(tool: str, added: list[str]) -> str:
 
 
 # -------------------------------------------------------------------- checks
+def _team_store_check() -> tuple[str, str, str, str | None]:
+    """The join token (the write token inside the lead's join code): (name, status, detail, fix). Optional, so a
+    problem is a warning, never a failure."""
+    import sync
+    url, token = _env("RIFFLE_SYNC_URL"), _env("RIFFLE_SYNC_TOKEN")
+    if not url or not token:
+        return ("Join token", WARN, "not joined: your output stays on this PC. Paste the join code the lead sent you",
+                "join")
+    r = sync.whoami(url, token)
+    if r["ok"] and not os.path.isfile(os.path.join(os.path.dirname(ENV_PATH), ".join.json")):
+        return ("Join token", WARN, f"{r['name']} works, but there is no saved join code, so the lead's settings are not applied "
+                                    f"on this PC. Paste the join code again (here, or in the TUI after Leave)", "join")
+    if r["ok"]:
+        return ("Join token", OK, f"{r['name']} · split {r.get('split') or 'any'} · output is sent after each repo", None)
+    return ("Join token", WARN, f"{r['why']}. The run still works and keeps everything locally; "
+                                f"paste a new join code from the lead", "join")
+
+
+def _read_token_check() -> tuple[str, str, str, str | None]:
+    """The read token: signs in to the store's pages (never used by the miner itself)."""
+    import sync
+    url, token = _env("RIFFLE_SYNC_URL"), _env("RIFFLE_READ_TOKEN")
+    if not url:
+        return ("Read token", WARN, "needs the store address: join first (the join code carries it)", None)
+    if not token:
+        return ("Read token", WARN, f"optional: lets you open {url} and read the mined data. The lead makes one on "
+                                    f"the Admin page", "read")
+    r = sync.whoami(url, token)
+    if r.get("kind") == "readers":
+        return ("Read token", OK, f"{r['name']} · open {url} and paste it to sign in", None)
+    why = r["why"] if not r.get("kind") else f"that is a {str(r['kind']).rstrip('s')} token, not a read token"
+    return ("Read token", WARN, f"{why}", "read")
+
+
+def _admin_token_check() -> tuple[str, str, str, str | None] | None:
+    """The lead's admin token; only shown when one is set (volunteers have none)."""
+    import sync
+    url, token = _env("RIFFLE_SYNC_URL"), _env("RIFFLE_ADMIN_TOKEN")
+    if not token:
+        return None
+    r = sync.whoami(url, token) if url else {"ok": False, "why": "needs RIFFLE_SYNC_URL"}
+    if r.get("kind") == "admins":
+        return ("Admin token", OK, f"{r['name']} · can issue and revoke PC tokens (TUI Lead tools, F3)", None)
+    return ("Admin token", WARN, r["why"] if not r.get("kind") else f"that is a {str(r['kind']).rstrip('s')} token, not an admin token", None)
+
+
 def run_checks(plat: Platform | None = None) -> list[Result]:
     plat = plat or detect_platform()
     added = deps.extend_path()      # tools installed to ~/go/bin, ~/.local/bin, npm -g count
@@ -559,6 +606,10 @@ def run_checks(plat: Platform | None = None) -> list[Result]:
     tok = _env("GITHUB_TOKEN")
     st, detail = _github_token_status(tok)
     add("GITHUB_TOKEN", st, detail, fix="token" if st == FAIL else None, group="Credentials")
+
+    for chk in (_team_store_check(), _read_token_check(), _admin_token_check()):
+        if chk:
+            add(chk[0], chk[1], chk[2], fix=chk[3], group="Credentials")
 
     backend = _env("LLM_BACKEND") or "claude_cli"
     if backend == "claude_cli":
@@ -630,6 +681,71 @@ def _fix_token(plat: Platform) -> None:
         _set_env_value("GITHUB_TOKEN", tok)
         where = "private, gitignored" if os.name != "nt" else "gitignored"
         print(f"  {_sym(st)} {detail} · saved to {ENV_PATH} ({where})")
+        return
+
+
+def _fix_join(plat: Platform) -> None:
+    """Paste the lead's join code: check it with the store, save it, and say what to run."""
+    import join
+    import sync
+    for _ in range(3):
+        try:
+            code = getpass.getpass("  Paste the join code (hidden, Enter to skip): ").strip()
+        except EOFError:
+            return
+        if not code:
+            return
+        try:
+            doc = join.decode(code)
+        except ValueError as e:
+            print(f"  {_sym(FAIL)} {e}; try again.")
+            continue
+        r = sync.whoami(doc["u"], doc["t"])
+        if not r["ok"]:
+            print(f"  {_sym(FAIL)} {r['why']}. Ask the lead for a new code.")
+            return
+        base = os.path.dirname(ENV_PATH)
+        try:
+            doc = join.apply_split(doc, sync.fetch_split(doc["u"], doc["t"]), base)      # the lead's repo list, not our own file
+        except OSError as e:
+            print(f"  {_sym(WARN)} could not save the lead's repo list ({e}); the code's own flags stand.")
+        state = os.path.join(base, join.STATE_FILE)
+        before = join.load_state(state)
+        try:                                                   # join code first, then the token: never a token without its code
+            join.save_state(state, doc)
+            join.write_env(ENV_PATH, {"RIFFLE_SYNC_URL": doc["u"], "RIFFLE_SYNC_TOKEN": doc["t"]})
+        except OSError as e:
+            join.save_state(state, before) if before else join.clear_state(state)
+            print(f"  {_sym(FAIL)} could not save the join ({e}); nothing was changed. Try again.")
+            return
+        os.environ["RIFFLE_SYNC_URL"], os.environ["RIFFLE_SYNC_TOKEN"] = doc["u"], doc["t"]
+        print(f"  {_sym(OK)} joined as {r['name']} (PC {doc['k']} of {doc['n']}) · saved to {ENV_PATH}")
+        print(f"  Run this, exactly: {join.command(doc)}   (or open the TUI: it fills the form from the code)")
+        return
+
+
+def _fix_read(plat: Platform) -> None:
+    """Save a read token so the TUI can copy it and open the store's pages."""
+    import sync
+    url = _env("RIFFLE_SYNC_URL")
+    if not url:
+        print(f"  {_sym(WARN)} join first: the store address comes with the join code")
+        return
+    for _ in range(3):
+        try:
+            tok = getpass.getpass("  Paste the read token (starts with rd_; hidden, Enter to skip): ").strip()
+        except EOFError:
+            return
+        if not tok:
+            return
+        r = sync.whoami(url, tok)
+        if r.get("kind") != "readers":
+            why = r["why"] if not r.get("kind") else f"that is a {str(r['kind']).rstrip('s')} token, not a read token"
+            print(f"  {_sym(FAIL)} {why}; try again.")
+            continue
+        _set_env_value("RIFFLE_READ_TOKEN", tok)
+        print(f"  {_sym(OK)} read token for {r['name']} saved to {ENV_PATH}. Open {url} and paste it to sign in "
+              f"(in the TUI: F4 copies it and opens the page).")
         return
 
 
@@ -705,6 +821,8 @@ FIXERS: dict[str, tuple[str, Callable[[Platform], None]]] = {
     "venv": ("Install the Python venv module now?", _fix_venv),
     "pip": ("Install the missing Python packages now?", _fix_pip),
     "token": ("Set up a GitHub token now?", _fix_token),
+    "join": ("Paste the lead's join code now?", _fix_join),
+    "read": ("Save a read token for the store's pages now?", _fix_read),
     "llm_key": ("Set LLM_API_KEY now?", _fix_llm_key),
     "openai": ("Install the openai package now?", _fix_openai),
     "git": ("Install git now?", lambda p: _fix_system("git", p)),
@@ -766,12 +884,71 @@ def _safe_checks(plat: Platform) -> list[Result]:
         return [Result("doctor", WARN, f"internal error, checks skipped: {type(e).__name__}: {e}")]
 
 
+_VERSION_RE = re.compile(r'__version__\s*=\s*"([^"]+)"')
+
+
+def auto_update(root: str | None = None, version_file: str | None = None, reexec: bool = True, say=print) -> str:
+    """Keep this checkout on the latest `main`, so every PC mines with the same miner version.
+
+    Runs once per launch (the TUI, `doctor.py` and `build_dataset.py` all call it; RIFFLE_UPDATE_CHECKED stops a child
+    process from checking again). It fetches origin/main and fast-forwards, and only when that is safe: on `main`, no
+    uncommitted changes to tracked files, and the checkout is simply behind. Anything else is reported, never forced, so
+    nobody's work is touched. After an update it restarts the program once (RIFFLE_NO_AUTO_UPDATE=1 turns all of this off).
+    Returns off, no-git, offline, current, updated or blocked."""
+    if os.environ.get("RIFFLE_NO_AUTO_UPDATE") or os.environ.get("RIFFLE_UPDATE_CHECKED"):
+        return "off"
+    os.environ["RIFFLE_UPDATE_CHECKED"] = "1"
+    git = shutil.which("git")
+    if not git:
+        return "no-git"
+
+    def g(*args: str, timeout: int = 20) -> subprocess.CompletedProcess:
+        return subprocess.run([git, "-C", root or HERE, *args], capture_output=True, text=True, timeout=timeout)
+    try:
+        top = g("rev-parse", "--show-toplevel")
+        if top.returncode != 0:
+            return "no-git"                                     # a zip download, not a checkout: nothing to update
+        top_dir = top.stdout.strip()
+        rel = os.path.relpath(version_file or os.path.join(HERE, "version.py"), top_dir).replace(os.sep, "/")
+        if g("fetch", "--quiet", "origin", "main", timeout=30).returncode != 0:
+            return "offline"
+        local, remote = g("rev-parse", "HEAD").stdout.strip(), g("rev-parse", "origin/main").stdout.strip()
+        if not local or not remote or local == remote:
+            return "current"
+        if g("merge-base", "--is-ancestor", local, remote).returncode != 0:
+            return "current"                                    # ahead of main or diverged: a developer's checkout, leave it
+
+        def version_at(ref: str) -> str:
+            m = _VERSION_RE.search(g("show", f"{ref}:{rel}").stdout)
+            return m.group(1) if m else "?"
+        old, new = version_at("HEAD"), version_at("origin/main")
+        branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        dirty = g("status", "--porcelain", "--untracked-files=no").stdout.strip()
+        if branch != "main" or dirty:
+            why = f"it is on branch {branch}, not main" if branch != "main" else "it has uncommitted changes"
+            say(f"[update] main has a newer miner ({new}, you have {old}) but this checkout was not updated: {why}. "
+                f"Run `git checkout main && git pull` yourself, or set RIFFLE_NO_AUTO_UPDATE=1 to stop this message.")
+            return "blocked"
+        if g("merge", "--ff-only", "origin/main", timeout=60).returncode != 0:
+            say(f"[update] main has a newer miner ({new}) but it could not be applied; run `git pull` yourself.")
+            return "blocked"
+        say(f"[update] miner {old} -> {new} (fast-forwarded main)" + ("; restarting" if reexec else ""))
+        if reexec:
+            sys.stdout.flush()
+            os.environ["RIFFLE_UPDATE_CHECKED"] = "1"           # the restarted process does not check again
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+        return "updated"
+    except (OSError, subprocess.SubprocessError):
+        return "offline"
+
+
 def run(interactive: bool | None = None) -> tuple[bool, list[Result]]:
     """Check, offer fixes, re-check. Returns (usable, final results); usable is
     False if a required check still fails (tui.py then exits instead of opening
     a broken UI)."""
     if interactive is None:
         interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    auto_update()                                              # first: everything below should check the newest miner
     plat = detect_platform()
     _header(plat)
     results = _safe_checks(plat)
@@ -787,7 +964,7 @@ def run(interactive: bool | None = None) -> tuple[bool, list[Result]]:
                 asked.add(r.fix)
                 question, fixer = FIXERS[r.fix]
                 prompt = question if r.fix == "api_tools" else f"{r.name}: {question}"
-                if _ask(prompt, default=r.status == FAIL):
+                if _ask(prompt, default=r.status == FAIL or r.fix == "join"):
                     try:
                         fixer(plat)
                     except Exception as e:      # noqa: BLE001 (one bad fix must not stop the rest)

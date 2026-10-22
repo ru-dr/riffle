@@ -43,6 +43,7 @@ import time
 import naming
 import progress
 import runlog
+import sync
 from version import __version__
 
 
@@ -98,33 +99,37 @@ def balanced_shards(weights: list[int | None], n: int) -> list[list[int]]:
     return [sorted(sh) for sh in shards]           # keep file order within a shard
 
 
-def split_id(entries, weights, n: int) -> str:
+def split_id(entries, weights, n: int, by: str = "commits") -> str:
     """Short fingerprint of everything the split depends on (ordered repo list,
-    sizes, PC count). PCs that print the same ID got disjoint shares of the
-    same list; a different ID means a different repos.txt or PC count."""
+    the sizes it balances, PC count and what it balances by). PCs that print the same ID got disjoint shares
+    of the same list; a different ID means a different repos.txt, PC count or --split-by."""
     import hashlib
-    key = "\n".join(f"{o}/{r}={w}" for (o, r, _), w in zip(entries, weights)) + f"\n{n}"
+    key = "\n".join(f"{o}/{r}={w}" for (o, r, _), w in zip(entries, weights)) + f"\n{n}" + ("" if by == "commits" else f"\nby={by}")
     return hashlib.sha256(key.encode()).hexdigest()[:8]
 
 
-def _warn_untagged(entries, weights) -> None:
-    """Repos without a [~N commits] tag are balanced as the median size, so
+def _warn_untagged(entries, weights, by: str = "commits") -> None:
+    """Repos without the tag the split balances on ([~N commits] or [N PRs]) count as the median size, so
     the split can drift; say so instead of splitting quietly wrong."""
     missing = [f"{o}/{r}" for (o, r, _), w in zip(entries, weights) if not w]
     if missing:
-        print(f"[shard] WARNING: {len(missing)} repo(s) have no [~N commits] tag and "
+        tag = "[~N commits]" if by == "commits" else "[N PRs]"
+        print(f"[shard] WARNING: {len(missing)} repo(s) have no {tag} tag and "
               f"count as median size, so the split may be unbalanced: "
-              f"{', '.join(missing)}. Add a tag, e.g. from `git rev-list --count HEAD`.",
+              f"{', '.join(missing)}. Add a tag" + (", e.g. from `git rev-list --count HEAD`." if by == "commits" else "."),
               flush=True)
 
 
-def _print_shard_plan(entries, weights, n: int, prs=None) -> None:
-    _warn_untagged(entries, weights)
+def _print_shard_plan(entries, weights, n: int, prs=None, by: str = "commits") -> str:
     prs = prs or [None] * len(entries)
-    shards = balanced_shards(weights, n)
+    basis = prs if by == "prs" else weights                 # what the split balances
+    _warn_untagged(entries, basis, by)
+    shards = balanced_shards(basis, n)
     totals = [sum(weights[i] or 0 for i in sh) for sh in shards]
-    print(f"[shard-plan] split ID {split_id(entries, weights, n)}: {len(entries)} repos over {n} PCs "
-          f"(heaviest/lightest PC: {max(totals) / max(1, min(totals)):.2f}x)")
+    sid = split_id(entries, basis, n, by)
+    bt = [sum(basis[i] or 0 for i in sh) for sh in shards]
+    print(f"[shard-plan] split ID {sid}: {len(entries)} repos over {n} PCs, balanced by {by} "
+          f"(heaviest/lightest PC: {max(bt) / max(1, min(bt)):.2f}x)")
     for k, sh in enumerate(shards, 1):
         pr_total = sum(prs[i] or 0 for i in sh)
         pr_note = f", {pr_total:,} PRs" if any(prs[i] for i in sh) else ""
@@ -134,6 +139,84 @@ def _print_shard_plan(entries, weights, n: int, prs=None) -> None:
             if prs[i]:
                 w += f", {prs[i]:,} PRs"
             print(f"    - {entries[i][0]}/{entries[i][1]}  ({w})")
+    return sid
+
+
+PLAN_ONLY_FLAGS = {"--shard-plan": 1, "--issue-tokens": 0, "--token-days": 1, "--tokens-out": 1}
+
+
+def _run_flags(argv: list[str]) -> list[str]:
+    """This command line without the flags that only make the plan: what every PC should run
+    (join.py adds --shard K/N)."""
+    out, i = [], 0
+    while i < len(argv):
+        name = argv[i].split("=", 1)[0]
+        if name in PLAN_ONLY_FLAGS:
+            i += 1 + (PLAN_ONLY_FLAGS[name] if "=" not in argv[i] else 0)
+            continue
+        out.append(argv[i])
+        i += 1
+    return out
+
+
+def _issue_tokens(args, sid: str, n: int) -> None:
+    """Ask the team store for one write token per PC, bound to this split, and print each
+    PC's join code. Needs RIFFLE_SYNC_URL and RIFFLE_ADMIN_TOKEN (the lead's admin token)."""
+    import urllib.error
+    import urllib.request
+    import join
+    url, admin = (os.environ.get("RIFFLE_SYNC_URL") or "").rstrip("/"), os.environ.get("RIFFLE_ADMIN_TOKEN") or ""
+    if not url or not admin:
+        sys.exit("[tokens] set RIFFLE_SYNC_URL and RIFFLE_ADMIN_TOKEN (an admin token from the store: "
+                 "`manage.py add-admin NAME`) in .env to issue tokens")
+    flags = _run_flags(sys.argv[1:])
+    repos_file = getattr(args, "repos_file", None)
+    repos_text = None
+    if repos_file:
+        try:                                 # the repo list itself travels, so another PC does not need the same file
+            with open(repos_file, encoding="utf-8") as fh:
+                repos_text = fh.read()
+        except OSError:
+            pass
+    payload = {"split_id": sid, "n": n, "days": args.token_days, "flags": flags, "miner_version": __version__}
+    if repos_text is not None:
+        payload.update(repos_name=os.path.basename(repos_file), repos_text=repos_text)
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(f"{url}/v1/admin/splits", data=body, method="POST",
+                                 headers={"Authorization": f"Bearer {admin}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            pcs = json.loads(r.read())["pcs"]
+    except urllib.error.HTTPError as e:
+        sys.exit(f"[tokens] the store refused: HTTP {e.code} {e.read()[:200].decode('utf-8', 'replace')}")
+    except (urllib.error.URLError, OSError) as e:
+        sys.exit(f"[tokens] cannot reach the store: {e}")
+    print(f"\n[tokens] one write token per PC, valid for split {sid} only"
+          + (f", for {args.token_days:g} days" if args.token_days else "") + ". Send each code ONLY to that PC's owner:")
+    lines = []
+    for p in pcs:
+        code = join.encode(url, p["token"], sid, p["k"], p["n"], flags)
+        lines.append(f"PC {p['k']}/{p['n']}\t{code}")
+        print(f"\n  PC {p['k']} of {p['n']}  ({p['pc']})\n  python join.py {code}")
+    if args.tokens_out:
+        fd = os.open(args.tokens_out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        print(f"\n[tokens] also saved to {args.tokens_out} (private to you). Delete it when the codes are sent.")
+    print("\n[tokens] running this again for the same split issues new tokens and revokes the old ones.")
+
+
+def plan_shares(repos_file: str, only_domain: str | None, n: int, by: str = "commits") -> list[list[tuple[str, int | None]]]:
+    """Who mines what: the repos file split over n PCs the way a run splits it, as [(owner/name, commits tag)] per PC
+    (index 0 is PC 1). Used to show a volunteer which repos are theirs."""
+    with open(repos_file, encoding="utf-8") as fh:
+        lines = [line for line in fh if _parse_url(line)]
+    if only_domain:
+        lines = [ln for ln in lines if _parse_domain(ln) == only_domain]
+    entries = [_parse_url(ln) for ln in lines]
+    weights = [_parse_weight(ln) for ln in lines]
+    basis = [_parse_prs(ln) for ln in lines] if by == "prs" else weights
+    return [[(f"{entries[i][0]}/{entries[i][1]}", weights[i]) for i in sh] for sh in balanced_shards(basis, n)]
 
 
 def _mined_repos(out: str) -> dict[str, int]:
@@ -374,10 +457,158 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
             # process group), then let main() end the batch quietly
             _stop_child(proc, signal)
             raise
+        try:
+            _sync_beat()
+        except KeyboardInterrupt:                           # a Stop during the heartbeat stops the miner too
+            _stop_child(proc, signal)
+            raise
         if _skip_requested(repo):
             print(f"[skip] {repo}: skip requested; stopping it", flush=True)
             _stop_child(proc, signal)
             return proc.returncode, True
+
+
+# --- central sync (ADR 0015) ---------------------------------------------------
+# Set once the run's output name is final; run() reads it on a Stop. "repos" is
+# each repo's state for the store's progress page: pending, mining, done, failed
+# or skipped, with its finished rows and, once selected, how many PRs it has.
+_SYNC: dict | None = None
+HEARTBEAT_S = 180          # status-only update (progress, current repo) while a long repo mines
+
+
+def _sync_begin(entries: list, done_repos: dict) -> None:
+    global _SYNC
+    if _SYNC is None:
+        return
+    try:
+        me = sync.whoami()
+    except Exception as e:                                  # noqa: BLE001  (sync must never stop a run)
+        me = {"ok": False, "why": f"{type(e).__name__}: {e}"}
+    sid = getattr(_SYNC["args"], "split_id", None)
+    if not me["ok"]:
+        print(f"[sync] OFF for this run: {me['why']}. Fix it with `python join.py --check`; the run goes on "
+              f"and writes everything locally.", flush=True)
+        progress.emit("sync", off=me["why"])
+        _SYNC = None
+        return
+    if me.get("split") and me["split"] != sid:
+        print(f"[sync] OFF for this run: your token is for split {me['split']}, but these flags make split "
+              f"{sid or 'none'}. The repos file, domain, shard count or sizes differ from the lead's plan; "
+              f"use the command join.py printed.", flush=True)
+        progress.emit("sync", off=f"token is for split {me['split']}, these flags make {sid or 'none'}")
+        _SYNC = None
+        return
+    print(f"[sync] on as {me['name']}: output goes to the team store after each repo and on a Stop", flush=True)
+    progress.emit("sync", on=me["name"])
+    _SYNC["repos"] = {f"{o}/{n}": ({"state": "done", "rows": done_repos[f"{o}/{n}".lower()]}
+                                   if f"{o}/{n}".lower() in done_repos else {"state": "pending"})
+                      for o, n, _ in entries}
+    _SYNC["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _SYNC["beat"] = time.monotonic()
+    _sync_beat(True, "started")
+
+
+def _sync_mark(repo: str, state: str, args=None) -> None:
+    """Record a repo's state; for a finished one also its row count, read from
+    the dataset (the repo column only)."""
+    if _SYNC is None or repo not in _SYNC.get("repos", {}):
+        return
+    rec = {"state": state}
+    if state == "done" and args is not None:
+        rec["rows"] = _mined_repos(args.out).get(repo.lower(), 0)
+    _SYNC["repos"][repo] = rec
+    if state == "mining":
+        _sync_beat(True, "repo started")
+
+
+def _selected_count(repo: str) -> int | None:
+    """PRs a started repo selected, from its pinned selection (None: not yet)."""
+    owner, _, name = repo.partition("/")
+    try:
+        with open(os.path.join("ci_cache", f"{owner}_{name}.selection.json"), encoding="utf-8") as fh:
+            sel = json.load(fh)
+        return sum(len(sel.get(k) or []) for k in ("merged", "unmerged", "stale"))
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError):
+        return None
+
+
+def _run_settings(args) -> dict:
+    """What this PC's run is set to, for the admin's per-run view. Names and switches only: no keys, no paths."""
+    import config
+    g = lambda n: getattr(args, n, None)                    # noqa: E731
+    llm = bool(g("llm"))
+    try:
+        cfg = config.Settings()
+        model, backend = (g("llm_model") or cfg.llm_model), cfg.llm_backend
+    except Exception:                                       # noqa: BLE001  (a status must never fail the run)
+        model, backend = g("llm_model"), None
+    return {"llm": llm, "llm_model": model if llm else None, "llm_backend": backend if llm else None,
+            "llm_scope": g("llm_scope") if llm else None, "llm_concurrency": g("llm_concurrency") if llm else None,
+            "szz": bool(g("szz")), "ci_history": bool(g("ci_history")), "scanners": not g("no_scanners"),
+            "workers": g("workers"), "max_prs": g("max_prs"), "window_from": g("window_from"), "window_to": g("window_to"),
+            "full_repo": bool(g("full_repo")), "cap_on": g("cap_on"), "only_domain": g("only_domain"),
+            "repos_file": os.path.basename(g("repos_file") or "") or None, "shard": g("shard")}
+
+
+def _sync_status(why: str) -> dict:
+    """The run.json body: counts per repo and totals. PRs of repos not yet
+    started are unknown (their selection does not exist yet), so `prs_remaining`
+    covers the started repos only and `repos_pending` says how many are left."""
+    args = _SYNC["args"]
+    repos = _SYNC.get("repos", {})
+    out_partial = args.out + ".partial.jsonl"
+    for repo, rec in repos.items():
+        if rec["state"] == "mining":
+            rec["selected"] = _selected_count(repo)
+            try:
+                with open(out_partial, "rb") as fh:
+                    rec["rows"] = sum(1 for line in fh if line.strip())
+            except OSError:
+                rec["rows"] = 0
+    states = [r["state"] for r in repos.values()]
+    mining = next(((k, r) for k, r in repos.items() if r["state"] == "mining"), None)
+    prs_done = sum(r.get("rows", 0) for r in repos.values())
+    remaining = (max(0, (mining[1].get("selected") or 0) - mining[1].get("rows", 0)) if mining else 0)
+    return dict(_SYNC["counts"], reason=why, pc=args.shard, split_id=getattr(args, "split_id", None),
+                miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:], settings=_run_settings(args),
+                started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining else None,
+                repos_total=len(repos), repos_done=states.count("done"), repos_failed=states.count("failed"),
+                repos_skipped=states.count("skipped"), repos_pending=states.count("pending"),
+                prs_done=prs_done, prs_remaining=remaining)
+
+
+def _sync_prefix(status: dict) -> str:
+    return f"{__version__}/{status['split_id'] or 'nosplit'}"
+
+
+def _sync_now(why: str, **counts) -> None:
+    """Send this PC's output to the central store, if one is configured. Never
+    fails or blocks the run (sync.py): an unreachable store is a warning."""
+    if _SYNC is None:
+        return
+    _SYNC["counts"].update(counts)
+    try:
+        status = _sync_status(why)
+        args = _SYNC["args"]
+        sync.report(sync.sync(args.out, _sync_prefix(status), status,
+                              health_dir=getattr(args, "health_dir", "health"),
+                              repos=set(_SYNC.get("repos", {}))), why)
+        _SYNC["beat"] = time.monotonic()
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[sync] failed ({type(e).__name__}: {e}); the run is unaffected", file=sys.stderr, flush=True)
+
+
+def _sync_beat(force: bool = False, why: str = "heartbeat") -> None:
+    """A status-only update (no files): every HEARTBEAT_S while a child runs, and at once when `force` (the run
+    started, a repo started), so the store shows a PC the moment it begins instead of after its first repo."""
+    if _SYNC is None or not _SYNC.get("repos") or (not force and time.monotonic() - _SYNC.get("beat", 0) < HEARTBEAT_S):
+        return
+    _SYNC["beat"] = time.monotonic()
+    try:
+        status = _sync_status(why)
+        sync.put_status(_sync_prefix(status), status)
+    except Exception:                                       # noqa: BLE001
+        pass
 
 
 def _write_shard_manifest(args, entries: list, ok: int, failed: list) -> None:
@@ -435,9 +666,11 @@ def _assemble_snapshots(args) -> None:
     progress.emit("assemble", state="done", **r)
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """The command line, on its own so join.py and the TUI can parse a command the way the miner will."""
     ap = argparse.ArgumentParser(
-        description="Clone a list of GitHub repos and mine them into one dataset.")
+        description="Clone a list of GitHub repos and mine them into one dataset.",
+        allow_abbrev=False)                                 # _run_flags and join.py match flags by their full names
     ap.add_argument("--repos-file", default="repos.txt",
                     help="file with one GitHub URL per line (# comments allowed)")
     ap.add_argument("--out", default="dataset.parquet",
@@ -500,10 +733,18 @@ def main():
     ap.add_argument("--full-repo", action="store_true",
                     help="mine each repo's whole history (every closed PR), not a date window or "
                          "a --max-prs cap (passed through)")
+    ap.add_argument("--split-by", choices=["commits", "prs"], default="commits",
+                    help="what --shard balances between PCs: the repos' commit counts (the [~N commits] tags; clone, history and "
+                         "SZZ cost) or their PR counts (the [N PRs] tags; the per-PR cost that dominates a --full-repo run). "
+                         "Every PC must use the same value")
     ap.add_argument("--only-domain", default=None,
                     help="mine only repos tagged [domain: NAME] in the repos file")
     ap.add_argument("--snapshots", action=argparse.BooleanOptionalAction, default=True,
                     help="capture what PR snapshots need (passed through; default on)")
+    ap.add_argument("--sync", action=argparse.BooleanOptionalAction, default=True,
+                    help="send logs, health, datasets and the shard manifest to the team store after each "
+                         "repo, on a Stop and at the end (default on, but only when RIFFLE_SYNC_URL and "
+                         "RIFFLE_SYNC_TOKEN are set; ci_cache/ stays on this PC)")
     ap.add_argument("--snapshot-root", default="snapshots_raw",
                     help="capture files go to <root>/<owner>_<name>/ (default snapshots_raw)")
     ap.add_argument("--skip-existing", action="store_true",
@@ -521,6 +762,14 @@ def main():
                          "[~N commits] tags), and every PC computes the same split")
     ap.add_argument("--shard-plan", type=int, default=None, metavar="N",
                     help="print how the repos split over N PCs, then exit")
+    ap.add_argument("--issue-tokens", action="store_true",
+                    help="with --shard-plan: also ask the team store for one write token per PC, bound to "
+                         "this split, and print each PC's join code (needs RIFFLE_SYNC_URL and "
+                         "RIFFLE_ADMIN_TOKEN in .env). Give the plan the flags every PC should run with")
+    ap.add_argument("--token-days", type=float, default=None, metavar="D",
+                    help="with --issue-tokens: the tokens stop working after D days")
+    ap.add_argument("--tokens-out", default=None, metavar="FILE",
+                    help="with --issue-tokens: also write the join codes to FILE (kept private to you)")
     ap.add_argument("--remine", action="store_true",
                     help="mine every repo even if it's already in --out (default: "
                          "skip finished repos, so a rerun after a stop resumes)")
@@ -544,7 +793,15 @@ def main():
     ap.add_argument("--test-repo", default="https://github.com/pallets/flask",
                     help="repo used by --test instead of the repos file (default: "
                          "pallets/flask, the smallest repo in the corpus)")
+    return ap
+
+
+def main():
+    ap = build_parser()
     args = ap.parse_args()
+    if sys.stdin.isatty() and not (args.test or args.shard_plan or args.audit):
+        import doctor                                       # a run started from a terminal starts on the newest main (not under the TUI,
+        doctor.auto_update()                                # which already checked, and not in automation: no TTY)
     if args.llm and not (args.shard_plan or args.audit):     # plan and audit need no LLM
         import config
         from features import llm_flags
@@ -577,6 +834,9 @@ def main():
         runlog.info("batch", "start", argv=sys.argv[1:], out=args.out, version=__version__,
                     host=socket.gethostname(), level=args.log_level or "INFO")
 
+    global _SYNC
+    if args.sync and sync.settings() and not (args.test or args.audit or args.shard_plan):
+        _SYNC = {"args": args, "counts": {}}
     if args.audit:
         _audit(args.out)
         return
@@ -605,7 +865,9 @@ def main():
         size_of = {f"{o}/{n}".lower(): w for (o, n, _), w in zip(entries, weights)}
         domain_of.update({f"{o}/{n}".lower(): d for (o, n, _), d in zip(entries, domains)})
         if args.shard_plan:
-            _print_shard_plan(entries, weights, args.shard_plan, pr_counts)
+            sid = _print_shard_plan(entries, weights, args.shard_plan, pr_counts, args.split_by)
+            if args.issue_tokens:
+                _issue_tokens(args, sid, args.shard_plan)
             return
         if args.shard:
             try:
@@ -613,15 +875,17 @@ def main():
                 assert 1 <= k <= n
             except (ValueError, AssertionError):
                 sys.exit(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
-            _warn_untagged(entries, weights)
-            sid = split_id(entries, weights, n)
+            basis = pr_counts if args.split_by == "prs" else weights      # what the split balances
+            _warn_untagged(entries, basis, args.split_by)
+            sid = split_id(entries, basis, n, args.split_by)
             args.split_id = sid
-            mine = balanced_shards(weights, n)[k - 1]
+            mine = balanced_shards(basis, n)[k - 1]
             total = sum(weights[i] or 0 for i in mine)
+            prs_total = sum(pr_counts[i] or 0 for i in mine)
             entries = [entries[i] for i in mine]
             print(f"[shard] split ID {sid} · PC {k}/{n}: {len(entries)} repos, ~{total:,} "
-                  f"commits. Every PC must show the same split ID (same repos.txt and "
-                  f"PC count) or shares may overlap.", flush=True)
+                  f"commits" + (f", {prs_total:,} PRs" if prs_total else "") + f" (balanced by {args.split_by}). Every PC must show the same split ID "
+                  f"(same repos.txt, PC count and --split-by) or shares may overlap.", flush=True)
     if not entries:
         sys.exit("no valid GitHub URLs found in the repos file")
     if args.test:
@@ -676,6 +940,7 @@ def main():
 
     print(f"[batch] {len(entries)} repos -> {args.out}\n", flush=True)
     progress.emit("batch_start", repos=[f"{o}/{n}" for o, n, _ in entries], out=args.out)
+    _sync_begin(entries, done_repos)
     attempts = max(1, args.repo_retries + 1)
     ok, failed, skipped = 0, [], []
     if args.skip_big and not args.test:
@@ -684,6 +949,7 @@ def main():
         if big:
             print(f"[skip] {len(big)} repos over {args.skip_big:,} commits will be skipped this run: "
                   + ", ".join(big), flush=True)
+    aborted = False
     for i, (owner, name, url) in enumerate(entries, 1):
         target = os.path.join(args.clone_dir, f"{owner}_{name}")
         print(f"=== [{i}/{len(entries)}] {owner}/{name} ===", flush=True)
@@ -703,7 +969,9 @@ def main():
             skipped.append(f"{owner}/{name} ({why})")
             progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped",
                           skip=why, commits=commits)
+            _sync_mark(f"{owner}/{name}", "skipped")
             continue
+        _sync_mark(f"{owner}/{name}", "mining")
         progress.emit("repo_queue", repo=f"{owner}/{name}", i=i, n=len(entries), stage="clone")
 
         # --- clone (retried) — one clone kept across mine retries -------------
@@ -735,11 +1003,13 @@ def main():
             print(f"[skip] {owner}/{name}: skipped while cloning\n", flush=True)
             skipped.append(f"{owner}/{name} (requested)")
             progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped", skip="requested")
+            _sync_mark(f"{owner}/{name}", "skipped")
             continue
         if not cloned:
             print("[clone] giving up after retries; skipping repo\n", flush=True)
             failed.append(f"{owner}/{name} (clone)")
             progress.emit("repo_failed", repo=f"{owner}/{name}", stage="clone", rc=rc)
+            _sync_mark(f"{owner}/{name}", "failed")
             continue
 
         # --- mine (retried; checkpoint makes a retry resume, not redo) --------
@@ -810,12 +1080,15 @@ def main():
                   "dataset isn't left with half-populated LLM columns. Fix the LLM, "
                   "then rerun with --skip-existing to resume.", flush=True)
             failed.append(f"{owner}/{name} (llm breaker)")
+            aborted = True
+            _sync_mark(f"{owner}/{name}", "failed")
             break
         if was_skipped:
             print(f"[skip] {owner}/{name}: stopped mid-mine; finished PRs stay in the "
                   f"checkpoint, so a later run resumes it", flush=True)
             skipped.append(f"{owner}/{name} (requested)")
             progress.emit("repo_done", repo=f"{owner}/{name}", rows=0, status="skipped", skip="requested")
+            _sync_mark(f"{owner}/{name}", "skipped")
             if not args.keep_clones and os.path.isdir(target):
                 print(f"[clone] removing {target} (skipped)", flush=True)
                 _rmtree(target)
@@ -839,6 +1112,8 @@ def main():
             print(f"[clone] keeping {target} so a rerun resumes without re-cloning",
                   flush=True)
         print(flush=True)
+        _sync_mark(f"{owner}/{name}", "done" if mined else "failed", args)
+        _sync_now("repo done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
 
     if args.test and os.path.isfile(TEST_OUT):
         _write_test_parquet(TEST_OUT)
@@ -846,6 +1121,8 @@ def main():
           + (f" ({len(skipped)} skipped)" if skipped else ""))
     _assemble_snapshots(args)
     _write_shard_manifest(args, entries, ok, failed)
+    # an aborted batch (the LLM breaker) is not "done": the store treats only "batch done" as a finished PC
+    _sync_now("batch aborted" if aborted else "batch done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
     progress.emit("batch_done", ok=ok, n=len(entries), failed=failed, skipped=skipped)
     runlog.info("batch", "done", ok=ok, n=len(entries), failed=failed, skipped=skipped, out=args.out)
     if runlog.enabled("INFO"):
@@ -869,6 +1146,10 @@ def run():
         # PRs in each repo's checkpoint, so this is not an error
         print("[stop] batch interrupted; finished repos and PRs are kept, so a rerun "
               "resumes", file=sys.stderr, flush=True)
+        try:
+            _sync_now("stopped")
+        except KeyboardInterrupt:           # a second Stop skips the sync
+            print("[sync] skipped; the next run syncs", file=sys.stderr, flush=True)
         sys.exit(130)
 
 

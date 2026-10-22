@@ -184,3 +184,50 @@ def test_full_repo_window_keeps_every_eligible_pr():
     kept = api.window_prs() + api.unmerged
     assert len(kept) == sum(1 for p in _prs() if not p["draft"])
     assert not api.lead_in
+
+
+# -- legacy mode (no window): the unmerged rows come from the merged PRs' own time span -----------------------
+
+def test_legacy_unmerged_rows_are_closed_inside_the_span_of_the_kept_merged_prs():
+    """A cap of 20 merged PRs used to leave the unmerged PRs unbounded, so a repo with 20 merges in three weeks came out
+    with unmerged rows from the months around them (real runs: 130 of 168 closed before the oldest merge)."""
+    st = _st(max_prs=20, enable_merge_outcome=True)
+    api = FakeAPI(_prs(), st)
+    merged = api.merged_prs()
+    lo, hi = min(p["merged_at"] for p in merged), max(p["merged_at"] for p in merged)
+    assert len(merged) == 20 and api.merged_span == (lo, hi)
+    assert api.unmerged, "the span holds some unmerged PRs"
+    assert all(lo <= p["closed_at"] <= hi for p in api.unmerged), "an unmerged PR closed outside the merged span was kept"
+    mix = len(merged) / (len(merged) + len(api.unmerged))
+    assert 0.5 < mix < 0.8, f"the merged share should be near the repo's real two thirds, got {mix:.2f}"
+
+
+def test_a_commit_with_over_a_hundred_check_runs_is_read_not_crashed():
+    """The check-runs loop used names that belong to the CI-history loop (pages_path, raw), so any commit with a second
+    page of check runs raised NameError and the PR was dropped from the dataset."""
+    st = _st()
+
+    class Fake(GitHubAPI):
+        def __init__(self):
+            super().__init__("o", "r", st)
+
+        def _get(self, path, params=None, body=None):
+            if path.endswith("/check-runs"):
+                page = (params or {}).get("page", 1)
+                n = 100 if page == 1 else 30
+                return 200, {"check_runs": [{"conclusion": "success", "name": f"job-{page}-{i}", "id": page * 1000 + i,
+                                             "completed_at": "2026-01-01T00:00:00Z"} for i in range(n)]}, {}
+            return 200, {"statuses": []}, {}
+    out = Fake().check_conclusion("abc")
+    assert out["required"] == "success"
+
+
+def test_health_flags_prs_dropped_by_errors():
+    """Two PRs of a real run were dropped by a NameError and the health file said nothing; a skip caused by an error is now
+    a flag (a PR with no diff is not)."""
+    import health
+    rows = [{"repo": "o/r", "label_merged": True, "merged_at": "2026-01-01T00:00:00Z"}] * 60
+    ok = health.check(rows, skipped={"no-rows (no diff / missing commit / shallow clone)": 3})
+    assert not any("dropped" in f for f in ok["flags"]) and ok["stats"]["skipped_errors"] == 0
+    bad = health.check(rows, skipped={"exc:NameError": 2, "no-rows (no diff / missing commit / shallow clone)": 1})
+    assert any("2 PRs dropped by errors" in f and "NameError" in f for f in bad["flags"]) and bad["stats"]["skipped_errors"] == 2
