@@ -101,3 +101,23 @@ def test_the_batch_status_carries_the_quota_wait(tmp_path, monkeypatch):
     assert build_dataset._sync_status("heartbeat")["rate_wait_until"]
     open("ci_cache/.rate_wait", "w").write(str(int(time.time()) - 5))
     assert build_dataset._sync_status("heartbeat")["rate_wait_until"] is None
+
+
+def test_a_stopped_batch_reports_no_repo_as_mining(tmp_path, monkeypatch):
+    import build_dataset
+    monkeypatch.chdir(tmp_path)
+
+    class A:
+        out = "d.parquet"
+        shard = "1/2"
+        split_id = "x"
+    repos = {"a/b": {"state": "mining", "rows": 5, "selected": 20}, "c/d": {"state": "pending"}}
+    monkeypatch.setattr(build_dataset, "_SYNC", {"args": A(), "repos": repos, "counts": {}})
+    monkeypatch.setattr(build_dataset, "_run_settings", lambda a: {})
+    monkeypatch.setattr(build_dataset, "_selected_count", lambda r: 20)
+    live = build_dataset._sync_status("heartbeat")
+    assert live["current"] == "a/b" and live["repos"]["a/b"]["state"] == "mining"
+    stopped = build_dataset._sync_status("stopped")
+    assert stopped["current"] is None and stopped["repos"]["a/b"]["state"] == "stopped"
+    assert stopped["prs_remaining"] == live["prs_remaining"]       # the repo's unfinished PRs still count
+    assert repos["a/b"]["state"] == "mining"                       # the live record is not touched

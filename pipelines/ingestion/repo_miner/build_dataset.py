@@ -568,8 +568,10 @@ def _sync_status(why: str) -> dict:
                     rec["rows"] = sum(1 for line in fh if line.strip())
             except OSError:
                 rec["rows"] = 0
+    if why == "stopped":                                    # a Stop leaves nothing mining: the store must not say so
+        repos = {k: (dict(r, state="stopped") if r["state"] == "mining" else r) for k, r in repos.items()}
     states = [r["state"] for r in repos.values()]
-    mining = next(((k, r) for k, r in repos.items() if r["state"] == "mining"), None)
+    mining = next(((k, r) for k, r in repos.items() if r["state"] in ("mining", "stopped")), None)
     prs_done = sum(r.get("rows", 0) for r in repos.values())
     remaining = (max(0, (mining[1].get("selected") or 0) - mining[1].get("rows", 0)) if mining else 0)
     wait_until = None                                       # the child's GitHub quota wait, if it is in one
@@ -582,7 +584,7 @@ def _sync_status(why: str) -> dict:
         pass
     return dict(_SYNC["counts"], reason=why, rate_wait_until=wait_until, pc=args.shard, split_id=getattr(args, "split_id", None),
                 miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:], settings=_run_settings(args),
-                started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining else None,
+                started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining and mining[1]["state"] == "mining" else None,
                 repos_total=len(repos), repos_done=states.count("done"), repos_failed=states.count("failed"),
                 repos_skipped=states.count("skipped"), repos_pending=states.count("pending"),
                 prs_done=prs_done, prs_remaining=remaining,

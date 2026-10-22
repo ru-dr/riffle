@@ -196,7 +196,7 @@
     function share(r) {                                                   // one PC's progress: finished repos plus the part of the one in progress
       var m = r.status.repos || {}, ks = Object.keys(m), tot = r.status.repos_total || ks.length, g = 0;
       if (!ks.length) return tot ? (r.status.repos_done || 0) / tot : 0;
-      ks.forEach(function (k) { var x = m[k]; g += x.state === "done" ? 1 : x.state === "mining" && x.selected ? Math.min(1, (x.rows || 0) / x.selected) : 0; });
+      ks.forEach(function (k) { var x = m[k]; g += x.state === "done" ? 1 : (x.state === "mining" || x.state === "stopped") && x.selected ? Math.min(1, (x.rows || 0) / x.selected) : 0; });
       return g;
     }
     runs.forEach(function (r) { got += share(r); });
@@ -381,7 +381,7 @@
       if (flagged.length) C.hbar($("#c-health"), flagged, { aria: "Health flags per repo", ml: 170, c: "var(--s2)", th: "Repo", vh: "Flags" });
       else C.empty($("#c-health"), Object.keys(d.health).length ? "No repo has a health flag." : "No health files yet.");
       var all = repos.map(function (k) {
-        var x = s.repos[k], hh = d.health[k], left = x.state === "mining" && x.selected != null ? Math.max(0, x.selected - (x.rows || 0)) : null;
+        var x = s.repos[k], hh = d.health[k], left = (x.state === "mining" || x.state === "stopped") && x.selected != null ? Math.max(0, x.selected - (x.rows || 0)) : null;
         return [k, x.state, x.rows == null ? null : x.rows, x.selected == null ? null : x.selected, left, hh ? (hh.flags || []).join("; ") || "ok" : null];
       }).sort(function (a, b) { return (REPO_RANK[a[1]] - REPO_RANK[b[1]]) || a[0].localeCompare(b[0]); });
       var seg = el("div", "seg"), host = el("div"), box = $("#repos");
