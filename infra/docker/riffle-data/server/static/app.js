@@ -904,7 +904,7 @@
         if (pending && pending.what === what) { pending = null; b.disabled = true; act(); return; }
         if (pending) pending.btn.textContent = pending.label;
         pending = { what: what, btn: b, label: label }; b.textContent = "Press again to confirm";
-        setTimeout(function () { if (pending && pending.btn === b) { b.textContent = label; pending = null; } }, 6000);
+        setTimeout(function () { if (pending && pending.btn === b) { b.textContent = label; pending = null; } }, 8000);
       };
       return b;
     }
@@ -937,7 +937,9 @@
       }));
       $("#newcodes").scrollIntoView({ block: "start" });
     }
+    var lastActive = false;
     function draw() {
+      if (pending) return Promise.resolve(lastActive);                    // a button is waiting for its second press: a refresh would reset it
       return call("GET", "overview").then(function (d) {
         BV.latest.admin = d; bvFeed("admin");
         call("GET", "storage").then(drawStorage).catch(function () { /* the rest of the page does not depend on it */ });
@@ -965,7 +967,8 @@
               acts.append(x.can_rotate ? confirmBtn("Rotate", "rot:" + x.split_id, function () {
                 call("POST", "rotate", { split_id: x.split_id }).then(function (r) { showCodes(r); draw(); }).catch(function (e) { window.riffleToast(e.message); draw(); });
               }) : el("span", "cap", "plan it again to rotate"),
-                confirmBtn("Revoke all", "revs:" + x.split_id, function () { call("POST", "revoke", { split_id: x.split_id }).then(draw).catch(function (e) { window.riffleToast(e.message); draw(); }); }, true));
+                confirmBtn("Revoke all", "revs:" + x.split_id, function () { call("POST", "revoke", { split_id: x.split_id }).then(draw).catch(function (e) { window.riffleToast(e.message); draw(); }); }, true),
+                confirmBtn("Remove split", "rems:" + x.split_id, function () { call("POST", "revoke", { split_id: x.split_id, remove: true }).then(draw).catch(function (e) { window.riffleToast(e.message); draw(); }); }, true));
               td.append(acts);
             }
             return td;
@@ -1003,7 +1006,8 @@
           }
         }));
         $("#admins").replaceChildren(grid(["Admin", "Created"], d.admins.map(function (r) { return [r.name, (r.created || "").slice(0, 10)]; }), { emptyText: "No admins." }));
-        return d.pcs.some(function (p) { return p.state === "mining"; });
+        lastActive = d.pcs.some(function (p) { return p.state === "mining"; });
+        return lastActive;
       }).catch(function (e) { failure($("#pcs"), e); });
     }
     $("#rform").onsubmit = function (e) {

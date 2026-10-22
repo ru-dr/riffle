@@ -651,8 +651,12 @@ def make_handler(svc: Service):
                         p["code"] = join_code(url, p.pop("token"), sid, p["k"], p["n"], meta.get("version"), meta.get("flags", []))
                     return self._json({"split_id": sid, "pcs": out})
                 if path == "/v1/admin/revoke":
+                    removed = False
                     if body.get("split_id"):
-                        gone = tokens.revoke_split(svc.tokens_path, str(body["split_id"]))
+                        sid = str(body["split_id"])
+                        gone = tokens.revoke_split(svc.tokens_path, sid)
+                        if body.get("remove"):                                       # take the split off the page as well
+                            removed = tokens.remove_split(svc.tokens_path, sid)
                     else:
                         kind, name = str(body.get("kind") or "pcs"), str(body.get("name", ""))   # a bare name means a PC token
                         if kind == "admins":
@@ -661,9 +665,9 @@ def make_handler(svc: Service):
                             if (me and me[1] == name) or (name in admins and len(admins) <= 1):
                                 return self._json({"error": "an admin cannot revoke itself or the last admin; add another admin first"}, 409)
                         gone = [name] if tokens.revoke_kind(svc.tokens_path, kind, name) else []
-                    if gone:
+                    if gone or removed:
                         svc.tokens_changed()
-                    return self._json({"revoked": gone})
+                    return self._json({"revoked": gone, "removed": removed})
                 if path == "/v1/admin/readers":
                     name = str(body.get("name", ""))
                     token = tokens.issue(svc.tokens_path, "readers", name)
