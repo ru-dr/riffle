@@ -87,7 +87,7 @@ def write_env(path: str, values: dict[str, str]) -> None:
 SHAPING = ("repos_file", "only_domain", "max_prs", "min_age_days", "window_from", "window_to", "cap_on",
            "lead_in_days", "full_repo", "llm", "llm_scope", "close_reason_llm", "llm_model", "llm_sample_pct",
            "max_unmerged", "merge_outcome", "declared_labels", "szz", "ci_history", "snapshots",
-           "no_api_contract", "no_scanners", "no_review_history", "pr_discovery", "shard")
+           "no_api_contract", "no_scanners", "no_review_history", "pr_discovery", "split_by", "shard")
 
 
 # what a join code carries: the shaping settings plus where the file goes. Machine settings (workers, clone
@@ -218,12 +218,13 @@ def describe(doc: dict, base: str) -> dict:
             ("Window", f"{s['window_from']} to {s['window_to']}" if s["window_from"] else "none (newest PRs)"),
             ("Max PRs per repo", "all" if s["full_repo"] or s["max_prs"] is None else s["max_prs"]),
             ("Skip PRs merged in last", f"{s['min_age_days']} days"),
+            ("Split repos between PCs by", "PR count" if s.get("split_by") == "prs" else "commit count"),
             ("LLM flags", "on" if s["llm"] else "off"), ("SZZ label", "on" if s["szz"] else "off"),
             ("CI history", "on" if s["ci_history"] else "off"), ("Snapshots", "on" if s["snapshots"] else "off"),
             ("Scanners", "off" if s["no_scanners"] else "on"), ("Merge outcome", "on" if s["merge_outcome"] else "off")]
     repos, mine = [], []
     try:
-        shares = build_dataset.plan_shares(os.path.join(base, s["repos_file"]), s["only_domain"], doc["n"])
+        shares = build_dataset.plan_shares(os.path.join(base, s["repos_file"]), s["only_domain"], doc["n"], s.get("split_by") or "commits")
         for k, share in enumerate(shares, 1):
             for name, w in share:
                 repos.append((name, w, k))

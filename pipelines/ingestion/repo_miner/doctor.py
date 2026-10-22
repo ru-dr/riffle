@@ -36,6 +36,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -873,12 +874,71 @@ def _safe_checks(plat: Platform) -> list[Result]:
         return [Result("doctor", WARN, f"internal error, checks skipped: {type(e).__name__}: {e}")]
 
 
+_VERSION_RE = re.compile(r'__version__\s*=\s*"([^"]+)"')
+
+
+def auto_update(root: str | None = None, version_file: str | None = None, reexec: bool = True, say=print) -> str:
+    """Keep this checkout on the latest `main`, so every PC mines with the same miner version.
+
+    Runs once per launch (the TUI, `doctor.py` and `build_dataset.py` all call it; RIFFLE_UPDATE_CHECKED stops a child
+    process from checking again). It fetches origin/main and fast-forwards, and only when that is safe: on `main`, no
+    uncommitted changes to tracked files, and the checkout is simply behind. Anything else is reported, never forced, so
+    nobody's work is touched. After an update it restarts the program once (RIFFLE_NO_AUTO_UPDATE=1 turns all of this off).
+    Returns off, no-git, offline, current, updated or blocked."""
+    if os.environ.get("RIFFLE_NO_AUTO_UPDATE") or os.environ.get("RIFFLE_UPDATE_CHECKED"):
+        return "off"
+    os.environ["RIFFLE_UPDATE_CHECKED"] = "1"
+    git = shutil.which("git")
+    if not git:
+        return "no-git"
+
+    def g(*args: str, timeout: int = 20) -> subprocess.CompletedProcess:
+        return subprocess.run([git, "-C", root or HERE, *args], capture_output=True, text=True, timeout=timeout)
+    try:
+        top = g("rev-parse", "--show-toplevel")
+        if top.returncode != 0:
+            return "no-git"                                     # a zip download, not a checkout: nothing to update
+        top_dir = top.stdout.strip()
+        rel = os.path.relpath(version_file or os.path.join(HERE, "version.py"), top_dir).replace(os.sep, "/")
+        if g("fetch", "--quiet", "origin", "main", timeout=30).returncode != 0:
+            return "offline"
+        local, remote = g("rev-parse", "HEAD").stdout.strip(), g("rev-parse", "origin/main").stdout.strip()
+        if not local or not remote or local == remote:
+            return "current"
+        if g("merge-base", "--is-ancestor", local, remote).returncode != 0:
+            return "current"                                    # ahead of main or diverged: a developer's checkout, leave it
+
+        def version_at(ref: str) -> str:
+            m = _VERSION_RE.search(g("show", f"{ref}:{rel}").stdout)
+            return m.group(1) if m else "?"
+        old, new = version_at("HEAD"), version_at("origin/main")
+        branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        dirty = g("status", "--porcelain", "--untracked-files=no").stdout.strip()
+        if branch != "main" or dirty:
+            why = f"it is on branch {branch}, not main" if branch != "main" else "it has uncommitted changes"
+            say(f"[update] main has a newer miner ({new}, you have {old}) but this checkout was not updated: {why}. "
+                f"Run `git checkout main && git pull` yourself, or set RIFFLE_NO_AUTO_UPDATE=1 to stop this message.")
+            return "blocked"
+        if g("merge", "--ff-only", "origin/main", timeout=60).returncode != 0:
+            say(f"[update] main has a newer miner ({new}) but it could not be applied; run `git pull` yourself.")
+            return "blocked"
+        say(f"[update] miner {old} -> {new} (fast-forwarded main)" + ("; restarting" if reexec else ""))
+        if reexec:
+            sys.stdout.flush()
+            os.environ["RIFFLE_UPDATE_CHECKED"] = "1"           # the restarted process does not check again
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+        return "updated"
+    except (OSError, subprocess.SubprocessError):
+        return "offline"
+
+
 def run(interactive: bool | None = None) -> tuple[bool, list[Result]]:
     """Check, offer fixes, re-check. Returns (usable, final results); usable is
     False if a required check still fails (tui.py then exits instead of opening
     a broken UI)."""
     if interactive is None:
         interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    auto_update()                                              # first: everything below should check the newest miner
     plat = detect_platform()
     _header(plat)
     results = _safe_checks(plat)

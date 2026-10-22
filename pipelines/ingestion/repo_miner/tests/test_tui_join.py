@@ -315,3 +315,34 @@ def test_leave_shows_when_the_pc_holds_a_store_token_even_without_a_saved_join_c
         assert "RIFFLE_SYNC_URL=https://s.example" in env and os.environ.get("RIFFLE_SYNC_URL") == "https://s.example", \
             "Leave must keep the store address: the lead's tools need it (it wiped the lead's URL once)"
     _run(go)
+
+
+def test_split_by_travels_in_the_join_code_and_locks(store, tmp_path, monkeypatch):
+    """The lead's choice of what the split balances (commits or PRs) must reach every PC, or the PCs would disagree on
+    who mines what."""
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+    flags = LEAD + ["--split-by", "prs"]
+    code = join.encode(store, "rw_good", "abc12345", 2, 3, flags)
+
+    async def go(app, pilot):
+        await _join(app, pilot, code)
+        assert app.query_one("#split_by").value == "prs" and _locked(app, "split_by")
+        assert app._lead_differences() == []
+        app.query_one("#split_by").disabled = False
+        app.query_one("#split_by").value = "commits"                                  # a PC that disagrees is caught
+        assert any(name == "split_by" for name, _a, _b in app._lead_differences())
+    _run(go)
+
+
+def test_the_form_builds_split_by_into_the_command_only_when_it_is_not_the_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(tui, "HERE", str(tmp_path))
+
+    async def go(app, pilot):
+        app.query_one("#pcs").value = "2"
+        app.query_one("#pc_index").value = "1"
+        assert "--split-by" not in app._build_cmd()
+        app.query_one("#split_by").value = "prs"
+        cmd = app._build_cmd()
+        assert cmd[cmd.index("--split-by") + 1] == "prs" and "--shard" in cmd
+        assert "--split-by" in join.shared_argv(cmd[3:]), "the flag must reach the join code"
+    _run(go)

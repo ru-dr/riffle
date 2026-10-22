@@ -212,7 +212,11 @@ health flags. Scale the estimates for the full run from those.
   first, each to the lightest PC that still has room. With a fixed
   `--max-prs` the API/LLM cost per repo is equal, so commit count is what
   differs (clone, history walk, SZZ). The split is deterministic, so every
-  PC computes the same one. `--shard-plan N` prints it. In the TUI: set
+  PC computes the same one. `--split-by commits|prs` (default `commits`) chooses what it balances: the `[~N commits]`
+  tags, or the `[N PRs]` tags. Use `prs` for a `--full-repo` run, where the per-PR work (API calls, features, LLM)
+  dominates; on the 43 web-ts repos over 6 PCs it cuts the busiest-to-lightest PC from 2.2x to 1.04x. Every PC must use
+  the same value: it travels in the join code and is locked in the TUI ("Split repos between PCs by"), and it changes the
+  split ID. `--shard-plan N` prints it. In the TUI: set
   "Number of PCs" and "This PC #", and "Show split" (ctrl+g) lists them, with
   each repo's commits and PR count (from its `[N PRs]` tag) and a PR total per PC.
   GitHub rate limits are per account, so use a token from a different
@@ -318,7 +322,12 @@ With a join code, paste it into the **Join code** box and press Join (F2): the T
 python tui.py
 ```
 
-Every launch first runs the environment doctor (`doctor.py`). It detects the
+Every launch first runs the environment doctor (`doctor.py`). Before anything else it keeps the checkout on the latest
+`main`: it fetches `origin/main`, and when this checkout is on `main`, has no uncommitted changes to tracked files and is
+simply behind, it fast-forwards and restarts once (`[update] miner 6.11.5 -> 6.12.0`). Anything else (another branch, local
+edits, no network, not a git checkout) is only reported or skipped, never forced. A plain `python build_dataset.py` from a
+terminal checks the same way; a run started by the TUI, a run with no terminal (automation), `--test`, `--shard-plan` and
+`--audit` do not. `RIFFLE_NO_AUTO_UPDATE=1` turns it off. It detects the
 OS and distro (Ubuntu/Debian and derivatives, Fedora/RHEL, Arch, openSUSE,
 Alpine, macOS, Windows, WSL) and its package manager (`apt`, `dnf`, `pacman`,
 `zypper`, `apk`, `brew`, `winget`, `scoop`, `choco`). It then checks Python,

@@ -35,3 +35,41 @@ def test_plan_needs_no_llm_backend(tmp_path):
     p = subprocess.run([sys.executable, build_dataset.__file__, "--repos-file", str(repos),
                         "--shard-plan", "1"], capture_output=True, text=True, timeout=60, env=env)
     assert p.returncode == 0 and "a/one" in p.stdout
+
+
+def _repos(tmp_path):
+    f = tmp_path / "repos.txt"
+    # commits and PRs disagree: "big_commits" is heavy in commits, "big_prs" is heavy in PRs
+    f.write_text("".join(f"https://github.com/o/{n}  # [~{c:,} commits] [{p:,} PRs]\n" for n, c, p in (
+        ("big_commits", 9000, 100), ("big_prs", 1000, 9000), ("mid_a", 3000, 3000), ("mid_b", 3000, 3000),
+        ("small_a", 500, 400), ("small_b", 500, 400))))
+    return str(f)
+
+
+def test_the_split_can_balance_by_commits_or_by_prs(tmp_path):
+    repos = _repos(tmp_path)
+    by_c = build_dataset.plan_shares(repos, None, 2, "commits")
+    by_p = build_dataset.plan_shares(repos, None, 2, "prs")
+    pr = {"big_commits": 100, "big_prs": 9000, "mid_a": 3000, "mid_b": 3000, "small_a": 400, "small_b": 400}
+    spread = lambda shares: abs(sum(pr[n.split("/")[1]] for n, _w in shares[0]) - sum(pr[n.split("/")[1]] for n, _w in shares[1]))  # noqa: E731
+    assert spread(by_p) < spread(by_c), "balancing by PRs must even out the PRs"
+    for shares in (by_c, by_p):                                          # either way: disjoint and complete
+        names = [n for sh in shares for n, _w in sh]
+        assert sorted(names) == sorted(set(names)) and len(names) == 6
+
+
+def test_split_id_depends_on_what_the_split_balances_by(tmp_path):
+    entries = [("o", f"r{i}", "u") for i in range(4)]
+    w = [10, 20, 30, 40]
+    assert build_dataset.split_id(entries, w, 2) == build_dataset.split_id(entries, w, 2, "commits")      # old IDs are unchanged
+    assert build_dataset.split_id(entries, w, 2, "prs") != build_dataset.split_id(entries, w, 2, "commits")
+
+
+def test_the_plan_names_what_it_balanced_by(tmp_path):
+    repos = _repos(tmp_path)
+    run = lambda by: subprocess.run([sys.executable, build_dataset.__file__, "--repos-file", repos, "--shard-plan", "2", "--split-by", by],  # noqa: E731
+                                    capture_output=True, text=True, timeout=60).stdout
+    prs, commits = run("prs"), run("commits")
+    assert "balanced by prs" in prs and "balanced by commits" in commits
+    sid = lambda out: out.split("split ID ")[1].split(":")[0]                                           # noqa: E731
+    assert sid(prs) != sid(commits) and sid(prs) == sid(run("prs")), "deterministic, and different for the two ways"
