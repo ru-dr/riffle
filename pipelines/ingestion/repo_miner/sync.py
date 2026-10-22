@@ -153,10 +153,13 @@ def _put(url: str, token: str, key: str, body, size: int, sha256: str | None, ti
 
 def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
          logs: list[str] | None = None, state_path: str = STATE_FILE,
-         budget_s: float | None = None, repos: set[str] | None = None) -> dict:
+         budget_s: float | None = None, repos: set[str] | None = None,
+         max_bytes: int | None = None) -> dict:
     """Send what changed since the last sync under `prefix` (`<miner_version>/<split>`),
     then `run.json` (`status` plus host and time). Returns
-    {"sent", "skipped", "failed", "stopped"}; never raises."""
+    {"sent", "skipped", "failed", "stopped"}; never raises. `max_bytes` leaves out files bigger than
+    that (a heartbeat must not start an upload its time budget cannot finish: it would be cut off
+    and begin again from zero every time); they go at a repo's end and on Stop."""
     cfg = settings()
     result = {"sent": 0, "skipped": 0, "failed": [], "stopped": None}
     if not cfg:
@@ -188,6 +191,9 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
             continue
         sig = [st.st_size, st.st_mtime_ns]
         if state.get(key) == sig:
+            result["skipped"] += 1
+            continue
+        if max_bytes is not None and st.st_size > max_bytes:
             result["skipped"] += 1
             continue
         if st.st_size > MAX_FILE_BYTES:
@@ -295,40 +301,6 @@ def put_status(prefix: str, status: dict) -> bool:
         return True
     except (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException, ValueError):
         return False
-
-
-def put_logs(prefix: str, out: str | None = None, state_path: str = STATE_FILE) -> int:
-    """Send this run's log and trace, and the checkpoint of the repo in progress (`out` + .partial.jsonl),
-    only what changed, so the store has them while a PC mines and not only after a repo ends or on Stop.
-    Time-boxed; the checkpoint may end mid-line until the next send. Never raises."""
-    cfg = settings()
-    if not cfg:
-        return 0
-    url, token = cfg
-    sent = 0
-    deadline = time.monotonic() + 60.0
-    try:
-        all_state = _load_state(state_path)
-        state = all_state.setdefault(f"{url}#{hashlib.sha256(token.encode()).hexdigest()[:12]}", {})
-        files = [(p, "logs/") for p in this_run_logs()]
-        if out and os.path.isfile(out + ".partial.jsonl"):
-            files.append((out + ".partial.jsonl", "data/"))
-        for path, folder in files:
-            st = os.stat(path)
-            key = f"{prefix}/{folder}{os.path.basename(path)}"
-            sig = [st.st_size, st.st_mtime_ns]
-            left = deadline - time.monotonic()
-            if state.get(key) == sig or st.st_size > MAX_FILE_BYTES or left <= 0:
-                continue
-            with open(path, "rb") as fh:
-                _put(url, token, key, _Prefix(fh, st.st_size, deadline), st.st_size,
-                     _sha256(path, st.st_size), min(CONNECT_S + st.st_size / 2e6, left))
-            state[key] = sig
-            sent += 1
-        _save_state(state_path, all_state)
-    except Exception:                                       # noqa: BLE001  (a log upload must never hold a run up)
-        pass
-    return sent
 
 
 def report(r: dict, why: str) -> None:

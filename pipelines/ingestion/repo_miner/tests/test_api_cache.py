@@ -113,3 +113,52 @@ def test_a_full_page_of_checks_is_read_through_rest(tmp_path, monkeypatch):
     api.token = "t"
     assert api.check_conclusion("abc")["required"] == "success"
     assert any(p.endswith("/check-runs") for p in seen)
+
+
+def test_the_heartbeat_sends_everything_that_changed_every_15_minutes(tmp_path, monkeypatch):
+    import build_dataset
+    monkeypatch.chdir(tmp_path)
+
+    class A:
+        out = "d.parquet"
+        shard = "1/2"
+        split_id = "x"
+        health_dir = "health"
+    monkeypatch.setattr(build_dataset, "_SYNC", {"args": A(), "repos": {"a/b": {"state": "mining", "rows": 1}},
+                                                 "counts": {}, "beat": 0})
+    monkeypatch.setattr(build_dataset, "_run_settings", lambda a: {})
+    monkeypatch.setattr(build_dataset, "_selected_count", lambda r: 5)
+    calls = {"status": 0, "sync": 0}
+    monkeypatch.setattr(build_dataset.sync, "put_status", lambda p, s: calls.__setitem__("status", calls["status"] + 1))
+
+    def fake_sync(*a, **k):
+        calls["sync"] += 1
+        return {"sent": 0, "skipped": 3, "failed": [], "stopped": None}
+    monkeypatch.setattr(build_dataset.sync, "sync", fake_sync)
+    build_dataset._sync_beat(True)
+    assert calls == {"status": 1, "sync": 1}             # the first beat sends the lot
+    build_dataset._SYNC["beat"] = 0
+    build_dataset._sync_beat(True)
+    assert calls["sync"] == 1                            # a status beat inside 15 minutes sends status only
+    build_dataset._SYNC["log_beat"] -= build_dataset.LOG_BEAT_S
+    build_dataset._sync_beat(True)
+    assert calls == {"status": 3, "sync": 2}
+
+
+def test_a_heartbeat_sync_leaves_out_files_it_cannot_finish(tmp_path, monkeypatch):
+    import sync
+    monkeypatch.setenv("RIFFLE_SYNC_URL", "http://store.invalid")
+    monkeypatch.setenv("RIFFLE_SYNC_TOKEN", "rw_x")
+    monkeypatch.chdir(tmp_path)
+    out = str(tmp_path / "d.parquet")
+    (tmp_path / "d.parquet.partial.jsonl").write_bytes(b"x" * 5000)       # the big one
+    (tmp_path / "run.log").write_bytes(b"small")
+    sent = []
+    monkeypatch.setattr(sync, "_put", lambda url, tok, key, body, size, sha, timeout: sent.append(key))
+    res = sync.sync(out, "p", {}, logs=[str(tmp_path / "run.log")], state_path=str(tmp_path / "s.json"),
+                    max_bytes=1000)
+    assert any(k.endswith("logs/run.log") for k in sent)
+    assert not any("partial" in k for k in sent) and res["failed"] == []
+    sent.clear()
+    sync.sync(out, "p", {}, logs=[str(tmp_path / "run.log")], state_path=str(tmp_path / "s.json"))   # a repo's end: no cap
+    assert any("partial" in k for k in sent)

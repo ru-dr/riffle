@@ -432,7 +432,7 @@ def _stop_child(proc, signal) -> None:
     if proc.poll() is not None:
         return
     try:
-        proc.send_signal(signal.SIGINT if os.name != "nt" else signal.SIGTERM)
+        proc.send_signal(signal.SIGINT if os.name != "nt" else signal.CTRL_BREAK_EVENT)
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
         proc.kill()
@@ -446,7 +446,7 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
     Returns (exit code, skipped). The miner gets SIGINT first so it stops
     cleanly with its checkpoint, then is killed if it doesn't exit."""
     import signal
-    proc = subprocess.Popen(cmd)
+    proc = subprocess.Popen(cmd, **({"creationflags": 0x00000200} if os.name == "nt" else {}))   # Windows: its own group, so CTRL_BREAK reaches it alone
     while True:
         try:
             return proc.wait(timeout=1), False
@@ -473,7 +473,9 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
 # each repo's state for the store's progress page: pending, mining, done, failed
 # or skipped, with its finished rows and, once selected, how many PRs it has.
 _SYNC: dict | None = None
-LOG_BEAT_S = 900           # this run's log, trace and checkpoint go to the store this often while it mines
+LOG_BEAT_S = 900           # everything that changed (log, trace, checkpoint, finished tables, health) goes to the store this often
+BEAT_SYNC_BUDGET_S = 120   # ...and a heartbeat sync never holds the batch loop longer than this
+BEAT_MAX_FILE_BYTES = 48 * 1024 ** 2   # a bigger file is left for the repo's end or Stop (about 0.5 MB/s fits 120 s)
 HEARTBEAT_S = 180          # status-only update (progress, current repo) while a long repo mines
 
 
@@ -623,7 +625,13 @@ def _sync_beat(force: bool = False, why: str = "heartbeat") -> None:
         sync.put_status(_sync_prefix(status), status)
         if time.monotonic() - _SYNC.get("log_beat", -LOG_BEAT_S) >= LOG_BEAT_S:
             _SYNC["log_beat"] = time.monotonic()
-            sync.put_logs(_sync_prefix(status), _SYNC['args'].out)
+            args = _SYNC["args"]                            # the full sync: only what changed goes, so a failed send is retried
+            res = sync.sync(args.out, _sync_prefix(status), status,
+                            health_dir=getattr(args, "health_dir", "health"),
+                            repos=set(_SYNC.get("repos", {})), budget_s=BEAT_SYNC_BUDGET_S,
+                            max_bytes=BEAT_MAX_FILE_BYTES)
+            if res["sent"] or res["failed"]:
+                sync.report(res, "heartbeat")
     except Exception:                                       # noqa: BLE001
         pass
 
