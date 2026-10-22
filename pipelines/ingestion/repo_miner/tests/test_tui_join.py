@@ -311,5 +311,7 @@ def test_leave_shows_when_the_pc_holds_a_store_token_even_without_a_saved_join_c
         app.action_leave()
         assert not os.environ.get("RIFFLE_SYNC_TOKEN") and not app.query_one("#leave").display
         env = (tmp_path / ".env").read_text()
-        assert "RIFFLE_SYNC_TOKEN=\n" in env + "\n" and "rw_held" not in env and "GITHUB_TOKEN=keep" in env      # only the store's keys went
+        assert "RIFFLE_SYNC_TOKEN=\n" in env + "\n" and "rw_held" not in env and "GITHUB_TOKEN=keep" in env      # only the token went
+        assert "RIFFLE_SYNC_URL=https://s.example" in env and os.environ.get("RIFFLE_SYNC_URL") == "https://s.example", \
+            "Leave must keep the store address: the lead's tools need it (it wiped the lead's URL once)"
     _run(go)
