@@ -444,3 +444,15 @@ def subsystem_of(path: str) -> str:
     if len(parts) >= 2 and parts[0].lower() in _GENERIC_TOP:
         return f"{parts[0]}/{parts[1]}"
     return parts[0]
+
+
+def stop_on_break() -> None:
+    """Windows: the TUI's Stop is CTRL_BREAK, which kills a Python process outright
+    unless it is turned into the KeyboardInterrupt that SIGINT gives on POSIX."""
+    if os.name != "nt":
+        return
+    import signal
+
+    def _raise(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGBREAK, _raise)

@@ -192,6 +192,7 @@ def _make_base_resolver(repo: str, api, prs: list[dict], st: config.Settings):
           file=sys.stderr)
 
     count_cache: dict = {}
+    prefetched: list = []
 
     def resolver(pr: dict, head_sha: str):
         if not do_rebase:
@@ -199,6 +200,13 @@ def _make_base_resolver(repo: str, api, prs: list[dict], st: config.Settings):
         num = pr.get("number")
         if num is None:
             return None
+        if not prefetched:
+            prefetched.append(True)            # one GraphQL pass for the whole list, not a REST call per PR
+            nums = [p["number"] for p in prs if p.get("number") is not None]
+            try:
+                count_cache.update({k: v for k, v in api.commit_counts(nums).items() if v is not None})
+            except Exception:                  # noqa: BLE001  (the per-PR REST call below still works)
+                pass
         if num not in count_cache:
             count_cache[num] = api.pr_commit_count(num)
         n = count_cache[num]
@@ -1445,6 +1453,7 @@ def _infer_owner_name(repo: str):
 
 
 def main():
+    config.stop_on_break()
     ap = argparse.ArgumentParser(description="Extract Riffle v1 features from a clone.")
     ap.add_argument("--repo", default=None, help="path to local clone (required unless --llm-test)")
     ap.add_argument("--owner", default=None,

@@ -553,7 +553,9 @@ def _run_settings(args) -> dict:
 def _sync_status(why: str) -> dict:
     """The run.json body: counts per repo and totals. PRs of repos not yet
     started are unknown (their selection does not exist yet), so `prs_remaining`
-    covers the started repos only and `repos_pending` says how many are left."""
+    covers the started repos only and `repos_pending` says how many are left.
+    `prs_total` is the split plan's PR share for this PC (an estimate; never below the
+    PRs already counted), or None when there is no plan."""
     args = _SYNC["args"]
     repos = _SYNC.get("repos", {})
     out_partial = args.out + ".partial.jsonl"
@@ -574,7 +576,8 @@ def _sync_status(why: str) -> dict:
                 started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining else None,
                 repos_total=len(repos), repos_done=states.count("done"), repos_failed=states.count("failed"),
                 repos_skipped=states.count("skipped"), repos_pending=states.count("pending"),
-                prs_done=prs_done, prs_remaining=remaining)
+                prs_done=prs_done, prs_remaining=remaining,
+                prs_total=(max(getattr(args, "plan_prs", None) or 0, prs_done + remaining) or None))
 
 
 def _sync_prefix(status: dict) -> str:
@@ -797,6 +800,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main():
+    import config
+    config.stop_on_break()
     ap = build_parser()
     args = ap.parse_args()
     if sys.stdin.isatty() and not (args.test or args.shard_plan or args.audit):
@@ -882,6 +887,7 @@ def main():
             mine = balanced_shards(basis, n)[k - 1]
             total = sum(weights[i] or 0 for i in mine)
             prs_total = sum(pr_counts[i] or 0 for i in mine)
+            args.plan_prs = prs_total or None             # this PC's PR share, for the status's total
             entries = [entries[i] for i in mine]
             print(f"[shard] split ID {sid} · PC {k}/{n}: {len(entries)} repos, ~{total:,} "
                   f"commits" + (f", {prs_total:,} PRs" if prs_total else "") + f" (balanced by {args.split_by}). Every PC must show the same split ID "

@@ -209,7 +209,7 @@
     var silent = runs.filter(function (r, i) { return st[i] === "silent"; });
     var alert = failed ? [failed + " repo" + (failed === 1 ? "" : "s") + " failed", "bad"] : silent.length ? [silent.map(function (r) { return r.pc.replace(/-.*/, ""); }).join(", ") + " offline · last seen " + ago(silent[0].updated), ""] : ["", ""];
     return { word: word, cls: cls, alert: alert,
-      kpis: [{ l: "Progress", v: n ? (100 * frac).toFixed(frac < 0.1 ? 1 : 0) + "%" : "—", h: "of all repositories" }, { l: "PRs mined", v: sum("prs_done").toLocaleString(), h: rate == null ? "rows written" : rate.toFixed(rate < 10 ? 1 : 0) + " PRs per minute" },
+      kpis: [{ l: "Progress", v: n ? (100 * frac).toFixed(frac < 0.1 ? 1 : 0) + "%" : "—", h: "of all repositories" }, { l: "PRs mined", v: sum("prs_done").toLocaleString(), h: rate == null ? (sum("prs_total") ? "of about " + sum("prs_total").toLocaleString() : "rows written") : rate.toFixed(rate < 10 ? 1 : 0) + " PRs per minute" },
              { l: "Repositories", v: sum("repos_done") + " / " + total, h: failed ? failed + " failed" : "none failed" }, { l: "PCs mining", v: active + " / " + n, h: count("done") + " finished" },
              { l: "Time left", v: eta, h: elapsed ? "elapsed " + span(elapsed) : "" }],
       headers: ["PC", "State", "Progress", "PRs mined", "PRs/min", "Now mining", "Last 24 hours"],
@@ -320,8 +320,8 @@
         $("#kpis").replaceChildren(
           stat("PCs", runs.length, active + " mining now", active ? "good" : ""),
           stat("Repos done", sum("repos_done").toLocaleString(), "of " + sum("repos_total").toLocaleString() + " assigned"),
-          stat("PRs mined", sum("prs_done").toLocaleString(), "rows written so far"),
-          stat("PRs left", sum("prs_remaining").toLocaleString(), "in repos already started"),
+          stat("PRs mined", sum("prs_done").toLocaleString(), sum("prs_total") ? "of about " + sum("prs_total").toLocaleString() + " planned" : "rows written so far"),
+          stat("PRs left", sum("prs_total") ? Math.max(0, sum("prs_total") - sum("prs_done")).toLocaleString() : sum("prs_remaining").toLocaleString(), sum("prs_total") ? "about, from the split plan" : "in repos already started"),
           stat("Failed repos", sum("repos_failed").toLocaleString(), sum("repos_pending") + " not started", sum("repos_failed") ? "bad" : ""));
         BV.latest.runs = runs; bvFeed("overview");
         if (BV.on) api("activity", { days: 1 }).then(function (a) { BV.latest.act = a; bvFeed("overview"); });
@@ -369,8 +369,8 @@
       $("#r-sub").textContent = "Last sync " + ago(r.updated) + " (" + s.reason + ") from " + (s.host || "unknown host") + ".";
       $("#kpis").replaceChildren(
         stat("Repos", (s.repos_done || 0) + "/" + (s.repos_total || 0), (s.repos_pending || 0) + " waiting"),
-        stat("PRs mined", (s.prs_done || 0).toLocaleString(), "rows written"),
-        stat("PRs left", (s.prs_remaining || 0).toLocaleString(), s.current ? "in " + s.current : "no repo in progress"),
+        stat("PRs mined", (s.prs_done || 0).toLocaleString(), s.prs_total ? "of about " + s.prs_total.toLocaleString() + " planned" : "rows written"),
+        stat("PRs left", (s.prs_total ? Math.max(0, s.prs_total - (s.prs_done || 0)) : (s.prs_remaining || 0)).toLocaleString(), s.prs_total ? "about, from the split plan" : s.current ? "in " + s.current : "no repo in progress"),
         stat("Failed", String(s.repos_failed || 0), (s.repos_skipped || 0) + " skipped", s.repos_failed ? "bad" : ""),
         stat("Files", String(d.files.length), bytes(d.files.reduce(function (a, f) { return a + f.size; }, 0))));
       var repos = Object.keys(s.repos || {});

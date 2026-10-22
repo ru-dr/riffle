@@ -510,6 +510,28 @@ class GitHubAPI:
         c = data.get("commits")
         return int(c) if isinstance(c, int) else None
 
+    def commit_counts(self, numbers: list[int], batch: int = 50) -> dict[int, int | None]:
+        """{pr_number: commit count} from GraphQL, `batch` PRs per call (one point of the
+        GraphQL budget, which is separate from REST's), instead of one REST call per PR.
+        None for a PR that could not be read; callers fall back to `pr_commit_count`."""
+        out: dict[int, int | None] = {n: None for n in numbers}
+        if not self.token:
+            return out                                # GraphQL needs auth
+        for i in range(0, len(numbers), batch):
+            part = numbers[i:i + batch]
+            fields = " ".join(f"p{n}: pullRequest(number: {int(n)}) {{ commits {{ totalCount }} }}"
+                              for n in part)
+            q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
+                 f'name: {json.dumps(self.repo)}) {{ {fields} }} }}')
+            status, data, _ = self._get("/graphql", body={"query": q})
+            repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
+            for n in part:
+                node = (repo_data or {}).get(f"p{n}")
+                c = ((node or {}).get("commits") or {}).get("totalCount")
+                if isinstance(c, int):
+                    out[n] = c
+        return out
+
     def review_events(self, number: int, exclude_bots: bool = True) -> dict | None:
         """
         Review activity on a PR, as timestamped events so callers can apply a
