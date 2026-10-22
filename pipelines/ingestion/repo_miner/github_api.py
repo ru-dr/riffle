@@ -235,7 +235,7 @@ class GitHubAPI:
                     net_fails += 1
                     runlog.warn("api", "server error; backing off", path=path, code=e.code,
                                 retry=net_fails, wait_s=min(60, 2 ** net_fails))
-                    if net_fails > 8:
+                    if net_fails > (2 if path == "/graphql" else 8):
                         print(f"[api] {e.code} persisted after {net_fails} retries "
                               f"on {path}; treating as unobserved", file=sys.stderr)
                         return e.code, None, {}
@@ -251,7 +251,7 @@ class GitHubAPI:
                 net_fails += 1
                 runlog.warn("api", "network error; backing off", path=path, exc=type(e).__name__,
                             retry=net_fails, wait_s=min(60, 2 ** net_fails))
-                if net_fails > 8:
+                if net_fails > (2 if path == "/graphql" else 8):      # every GraphQL caller has a REST fallback: give up fast
                     print(f"[api] network error persisted after {net_fails} retries "
                           f"on {path} ({type(e).__name__}); treating as unobserved",
                           file=sys.stderr)
@@ -827,8 +827,12 @@ class GitHubAPI:
         with self._user_lock:
             if login in self._user_cache:
                 return self._user_cache[login]
-        status, data, _ = self._get(f"/users/{urllib.parse.quote(login)}")
-        created = data.get("created_at") if status == 200 and isinstance(data, dict) else None
+        created = self._disk.get(f"us:{login}") if self._disk else None       # an account's creation date never changes
+        if created is None:
+            status, data, _ = self._get(f"/users/{urllib.parse.quote(login)}")
+            created = data.get("created_at") if status == 200 and isinstance(data, dict) else None
+            if created and self._disk:
+                self._disk.put(f"us:{login}", created)
         with self._user_lock:
             self._user_cache[login] = created
         return created

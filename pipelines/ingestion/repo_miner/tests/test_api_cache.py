@@ -195,3 +195,31 @@ def test_a_bulk_review_read_stops_when_the_quota_runs_low(tmp_path, monkeypatch)
     api.token = "t"
     api.review_events_batch(list(range(1, 41)), reserve=2000)
     assert len(asked) == 1                                                  # 4 batches of 10 were wanted; it stopped after one
+
+
+def test_an_authors_account_age_is_read_once_across_restarts(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_get(self, path, params=None, body=None):
+        calls.append(path)
+        return 200, {"created_at": "2015-01-01T00:00:00Z"}, {}
+    monkeypatch.setattr(github_api.GitHubAPI, "_get", fake_get)
+    assert _api(tmp_path, monkeypatch).user_created_at("alice") == "2015-01-01T00:00:00Z"
+    assert _api(tmp_path, monkeypatch).user_created_at("alice") == "2015-01-01T00:00:00Z"   # a new process
+    assert calls == ["/users/alice"]
+
+
+def test_a_failing_graphql_call_gives_up_after_a_few_tries(monkeypatch):
+    import urllib.error
+    import urllib.request
+    api = github_api.GitHubAPI("o", "r", config.Settings())
+    api.token = "t"
+    tries = []
+
+    def boom(req, timeout=None):
+        tries.append(req.full_url)
+        raise urllib.error.URLError("timed out")
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(github_api.time, "sleep", lambda s: None)
+    status, data, _ = api._get("/graphql", body={"query": "{ x }"})
+    assert (status, data) == (0, None) and len(tries) == 3          # REST callers get 9 tries; GraphQL has a fallback
