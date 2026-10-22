@@ -846,7 +846,7 @@ def make_handler(svc: Service):
                 return self._send(200, body, "application/json",
                                   {"X-Data-Updated": str(int(t)), "X-Data-Next": str(int(nxt)), "Access-Control-Expose-Headers": "X-Data-Updated, X-Data-Next"})
             if route == "runs":
-                return self._json(svc.index.runs())
+                return self._json(svc.index.latest_runs())     # one per PC, whatever miner versions it ran
             if route == "activity":
                 return self._json(svc.activity(_int(q, "days", 7)))
             if route == "run":

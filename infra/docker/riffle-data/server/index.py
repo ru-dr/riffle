@@ -62,6 +62,19 @@ class Index:
         return [dict(pc=r["pc"], prefix=r["prefix"], updated=r["updated"], status=json.loads(r["status"]))
                 for r in rows]
 
+    def latest_runs(self) -> list[dict]:
+        """One run per PC: the one uploaded last. A PC that restarted on a newer miner version
+        has a run under each version's prefix, but it is still one PC; `versions` lists the
+        prefixes it has (newest first), so the older runs stay reachable."""
+        by_pc: dict[str, list[dict]] = {}
+        for r in self.runs():
+            by_pc.setdefault(r["pc"], []).append(r)
+        out = []
+        for pc in sorted(by_pc):
+            rs = sorted(by_pc[pc], key=lambda r: r["updated"], reverse=True)
+            out.append(dict(rs[0], versions=[r["prefix"] for r in rs]))
+        return out
+
     def run(self, pc: str, prefix: str) -> dict | None:
         with self.lock:
             r = self.db.execute("SELECT * FROM runs WHERE pc=? AND prefix=?", (pc, prefix)).fetchone()
