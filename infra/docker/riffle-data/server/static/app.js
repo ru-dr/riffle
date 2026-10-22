@@ -214,7 +214,7 @@
              { l: "Time left", v: eta, h: elapsed ? "elapsed " + span(elapsed) : "" }],
       headers: ["PC", "State", "Progress", "PRs mined", "PRs/min", "Now mining", "Last 24 hours"],
       rows: runs.map(function (r, i) {
-        var s = st[i], c = r.status, p = blocksOf[r.pc], cur = c.current && s === "mining" ? c.current + (((c.repos || {})[c.current] || {}).selected ? "  " + (c.repos[c.current].rows || 0) + "/" + c.repos[c.current].selected : "") : s === "done" ? "finished" : "last seen " + ago(r.updated);
+        var s = st[i], c = r.status, p = blocksOf[r.pc], wait = c.rate_wait_until && Date.parse(c.rate_wait_until) > Date.now() ? "  · waiting for GitHub until " + new Date(c.rate_wait_until).toTimeString().slice(0, 5) : "", cur = c.current && s === "mining" ? c.current + (((c.repos || {})[c.current] || {}).selected ? "  " + (c.repos[c.current].rows || 0) + "/" + c.repos[c.current].selected : "") + wait : s === "done" ? "finished" : "last seen " + ago(r.updated);
         return { cls: s === "silent" ? "bad" : s === "stopped" ? "warn" : s === "done" ? "done" : "run",
           vals: [r.pc.replace(/-.*/, ""), s === "silent" ? "offline" : s, { bar: c.repos_total ? share(r) / c.repos_total : 0, t: (c.repos_done || 0) + "/" + (c.repos_total || 0) + " repos" }, c.prs_done || 0,
                  p ? p.blocks.slice(-4).reduce(function (a, b) { return a + (b[1] || 0); }, 0) / 60 : null, cur, p ? { upt: p.blocks.map(function (b) { return b[0]; }) } : ""] };

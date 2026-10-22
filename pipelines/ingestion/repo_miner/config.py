@@ -447,12 +447,21 @@ def subsystem_of(path: str) -> str:
 
 
 def stop_on_break() -> None:
-    """Windows: the TUI's Stop is CTRL_BREAK, which kills a Python process outright
-    unless it is turned into the KeyboardInterrupt that SIGINT gives on POSIX."""
-    if os.name != "nt":
-        return
+    """A Stop is one interrupt, whatever sends it. The TUI signals the whole group and the batch
+    driver signals its child again, so the child gets two: the second must not land in the
+    middle of the first one's cleanup (a stray traceback at interpreter exit). Interrupts within
+    5 s of the first are ignored; a later one (a person pressing ctrl+c again) still goes through.
+    Windows: CTRL_BREAK, which kills a Python process outright, is turned into the same interrupt."""
     import signal
+    import time
+    state = {"at": None}
 
     def _raise(signum, frame):
+        now = time.monotonic()
+        if state["at"] is not None and now - state["at"] < 5.0:
+            return
+        state["at"] = now
         raise KeyboardInterrupt
-    signal.signal(signal.SIGBREAK, _raise)
+    signal.signal(signal.SIGINT, _raise)
+    if os.name == "nt":
+        signal.signal(signal.SIGBREAK, _raise)

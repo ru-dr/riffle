@@ -572,7 +572,15 @@ def _sync_status(why: str) -> dict:
     mining = next(((k, r) for k, r in repos.items() if r["state"] == "mining"), None)
     prs_done = sum(r.get("rows", 0) for r in repos.values())
     remaining = (max(0, (mining[1].get("selected") or 0) - mining[1].get("rows", 0)) if mining else 0)
-    return dict(_SYNC["counts"], reason=why, pc=args.shard, split_id=getattr(args, "split_id", None),
+    wait_until = None                                       # the child's GitHub quota wait, if it is in one
+    try:
+        with open(os.path.join("ci_cache", ".rate_wait"), encoding="utf-8") as fh:
+            until = int(fh.read().strip())
+        if until > time.time():
+            wait_until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until))
+    except (OSError, ValueError):
+        pass
+    return dict(_SYNC["counts"], reason=why, rate_wait_until=wait_until, pc=args.shard, split_id=getattr(args, "split_id", None),
                 miner_version=__version__, out=os.path.basename(args.out), argv=sys.argv[1:], settings=_run_settings(args),
                 started_at=_SYNC.get("started_at"), repos=repos, current=mining[0] if mining else None,
                 repos_total=len(repos), repos_done=states.count("done"), repos_failed=states.count("failed"),

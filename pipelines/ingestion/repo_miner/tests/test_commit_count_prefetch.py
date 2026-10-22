@@ -64,3 +64,40 @@ def test_review_batch_matches_review_events(monkeypatch):
     assert got[2] is None                       # does not fit one page: REST reads it
     api.prefetch_reviews([1, 2])
     assert api.review_events(1) == got[1]       # answered from the cache, no REST call
+
+
+def test_a_second_interrupt_right_after_the_first_is_ignored():
+    import signal
+    import time
+    old = signal.getsignal(signal.SIGINT)
+    try:
+        config.stop_on_break()
+        h = signal.getsignal(signal.SIGINT)
+        try:
+            h(signal.SIGINT, None)
+            raised = False
+        except KeyboardInterrupt:
+            raised = True
+        assert raised                          # the first one stops the run
+        h(signal.SIGINT, None)                 # the second, a moment later, does nothing
+        time.sleep(0)                          # (a person's later ctrl+c is a new interrupt after 5 s)
+    finally:
+        signal.signal(signal.SIGINT, old)
+
+
+def test_the_batch_status_carries_the_quota_wait(tmp_path, monkeypatch):
+    import time
+    import build_dataset
+    monkeypatch.chdir(tmp_path)
+    os.makedirs("ci_cache")
+    open("ci_cache/.rate_wait", "w").write(str(int(time.time()) + 600))
+
+    class A:
+        out = "d.parquet"
+        shard = "1/2"
+        split_id = "x"
+    monkeypatch.setattr(build_dataset, "_SYNC", {"args": A(), "repos": {}, "counts": {}})
+    monkeypatch.setattr(build_dataset, "_run_settings", lambda a: {})
+    assert build_dataset._sync_status("heartbeat")["rate_wait_until"]
+    open("ci_cache/.rate_wait", "w").write(str(int(time.time()) - 5))
+    assert build_dataset._sync_status("heartbeat")["rate_wait_until"] is None

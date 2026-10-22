@@ -81,6 +81,20 @@ def _reduce_conclusions(concls: list) -> str | None:
     return None
 
 
+RATE_WAIT_FILE = os.path.join("ci_cache", ".rate_wait")
+
+
+def _note_rate_wait(seconds: float) -> None:
+    """Leave the time the quota comes back for the batch driver, which reports it to the team
+    store ("waiting for GitHub until 14:05" rather than a PC that looks stuck). Never raises."""
+    try:
+        os.makedirs(os.path.dirname(RATE_WAIT_FILE), exist_ok=True)
+        with open(RATE_WAIT_FILE, "w", encoding="utf-8") as fh:
+            fh.write(str(int(time.time() + seconds)))
+    except OSError:
+        pass
+
+
 class GitHubAPI:
     def __init__(self, owner: str, repo: str, st: config.Settings):
         self.owner = owner
@@ -200,6 +214,7 @@ class GitHubAPI:
                                     code=e.code, wait_s=min(wait, 3600))
                         progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}",
                                       wait=min(wait, 3600))
+                        _note_rate_wait(min(wait, 3600))
                         time.sleep(min(wait, 3600))
                         continue
                     # a 403 without rate-limit signals is a genuine permission
@@ -789,6 +804,8 @@ class GitHubAPI:
                 errs = (data or {}).get("errors") or [] if status == 200 else []
                 if not any(e.get("type") == "RATE_LIMITED" for e in errs):
                     break
+                runlog.warn("api", "graphql rate limit; waiting", path="/graphql",
+                            retry=attempt + 1, wait_s=60 * (attempt + 1))
                 time.sleep(60 * (attempt + 1))    # GraphQL quota: wait, then retry
             repo_data = ((data or {}).get("data") or {}).get("repository") if status == 200 else None
             for n in part:
