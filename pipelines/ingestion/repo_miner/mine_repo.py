@@ -1174,11 +1174,6 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     base_resolver = _make_base_resolver(repo, api, prs, st)
     if unmerged:
         prs = prs + unmerged
-    if api is not None and st.enable_review_history:
-        runlog.stage("reviews prefetch")                    # GraphQL, 10 PRs a call; the rest go through REST
-        got = api.prefetch_reviews([p["number"] for p in prs if p.get("number") is not None],
-                                   st.scrutiny_exclude_bot_reviews)
-        print(f"[reviews] {got} of {len(prs)} PRs' review activity read through GraphQL", file=sys.stderr)
     # every PR's timeline, read once up front (mine_pr reuses pr["_events"]):
     # maintainers are confirmed from all of them, point-in-time (maintainers.py)
     runlog.stage("timelines")
@@ -1273,6 +1268,12 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                       file=sys.stderr)
         except (OSError, json.JSONDecodeError):
             pass
+
+    if api is not None and st.enable_review_history:
+        todo = [p["number"] for p in prs if p.get("number") is not None and p["number"] not in done]
+        runlog.stage("reviews prefetch")                    # GraphQL, 10 PRs a call, within what is left of its quota
+        got = api.prefetch_reviews(todo, st.scrutiny_exclude_bot_reviews)
+        print(f"[reviews] {got} of {len(todo)} unmined PRs' review activity read through GraphQL", file=sys.stderr)
 
     skipped: Counter = Counter()
     pr_secs_total = 0.0                       # worker time on mined PRs (capture share)

@@ -162,3 +162,64 @@ def test_a_heartbeat_sync_leaves_out_files_it_cannot_finish(tmp_path, monkeypatc
     sent.clear()
     sync.sync(out, "p", {}, logs=[str(tmp_path / "run.log")], state_path=str(tmp_path / "s.json"))   # a repo's end: no cap
     assert any("partial" in k for k in sent)
+
+
+def test_graphql_is_left_alone_once_its_quota_is_gone(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_get(self, path, params=None, body=None):
+        calls.append(path)
+        if path == "/graphql":
+            return 200, {"errors": [{"type": "RATE_LIMIT", "code": "graphql_rate_limit",
+                                     "message": "API rate limit already exceeded"}]}, {}
+        return 200, {"resources": {"graphql": {"reset": __import__("time").time() + 600}}}, {}
+    monkeypatch.setattr(github_api.GitHubAPI, "_get", fake_get)
+    api = _api(tmp_path, monkeypatch)
+    api.token = "t"
+    assert api.commit_counts([1, 2, 3]) == {1: None, 2: None, 3: None}      # REST will read them
+    n = len(calls)
+    assert api.review_events_batch([1, 2]) == {1: None, 2: None}
+    assert api.check_conclusion("abc") is not None
+    assert [c for c in calls[n:] if c == "/graphql"] == []                  # no more GraphQL until it resets
+    assert api._gql_blocked_until > __import__("time").time() + 500
+
+
+def test_a_bulk_review_read_stops_when_the_quota_runs_low(tmp_path, monkeypatch):
+    asked = []
+
+    def fake_get(self, path, params=None, body=None):
+        asked.append(body["query"])
+        return 200, {"data": {"rateLimit": {"remaining": 1500}, "repository": {}}}, {}
+    monkeypatch.setattr(github_api.GitHubAPI, "_get", fake_get)
+    api = _api(tmp_path, monkeypatch)
+    api.token = "t"
+    api.review_events_batch(list(range(1, 41)), reserve=2000)
+    assert len(asked) == 1                                                  # 4 batches of 10 were wanted; it stopped after one
+
+
+def test_an_authors_account_age_is_read_once_across_restarts(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_get(self, path, params=None, body=None):
+        calls.append(path)
+        return 200, {"created_at": "2015-01-01T00:00:00Z"}, {}
+    monkeypatch.setattr(github_api.GitHubAPI, "_get", fake_get)
+    assert _api(tmp_path, monkeypatch).user_created_at("alice") == "2015-01-01T00:00:00Z"
+    assert _api(tmp_path, monkeypatch).user_created_at("alice") == "2015-01-01T00:00:00Z"   # a new process
+    assert calls == ["/users/alice"]
+
+
+def test_a_failing_graphql_call_gives_up_after_a_few_tries(monkeypatch):
+    import urllib.error
+    import urllib.request
+    api = github_api.GitHubAPI("o", "r", config.Settings())
+    api.token = "t"
+    tries = []
+
+    def boom(req, timeout=None):
+        tries.append(req.full_url)
+        raise urllib.error.URLError("timed out")
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(github_api.time, "sleep", lambda s: None)
+    status, data, _ = api._get("/graphql", body={"query": "{ x }"})
+    assert (status, data) == (0, None) and len(tries) == 3          # REST callers get 9 tries; GraphQL has a fallback
