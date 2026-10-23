@@ -98,9 +98,14 @@ def _semgrep_scan(repo: str, sha: str, changed: list[str]) -> list[dict]:
             if content is None:
                 continue
             dest = os.path.join(work, path)
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(dest, "w", encoding="utf-8", errors="replace") as fh:
-                fh.write(content)
+            try:
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with open(dest, "w", encoding="utf-8", errors="replace") as fh:
+                    fh.write(content)
+            except OSError:
+                # a path that is a file here and a directory there (a symlink `icons` beside `icons/a.svg`)
+                # cannot be written to one tree: leave that file out rather than fail the whole PR
+                continue
             written += 1
         if not written:
             return []          # nothing at this sha (files deleted or added on the other side): nothing to scan
