@@ -256,6 +256,8 @@ class Service:
                 if r["prs_done"] is not None:
                     gain = max(0, r["prs_done"] - prev.get(r["prefix"], r["prs_done"]))
                     prev[r["prefix"]] = r["prs_done"]
+                    if r["reason"] == "repo started":      # a restart counts the checkpoint's rows in at once: not mined in this block
+                        gain = 0
                 i = int((r["ts"] - start) // step)
                 if not 0 <= i < n:
                     continue
@@ -846,7 +848,7 @@ def make_handler(svc: Service):
                 return self._send(200, body, "application/json",
                                   {"X-Data-Updated": str(int(t)), "X-Data-Next": str(int(nxt)), "Access-Control-Expose-Headers": "X-Data-Updated, X-Data-Next"})
             if route == "runs":
-                return self._json(svc.index.runs())
+                return self._json(svc.index.latest_runs())     # one per PC, whatever miner versions it ran
             if route == "activity":
                 return self._json(svc.activity(_int(q, "days", 7)))
             if route == "run":
