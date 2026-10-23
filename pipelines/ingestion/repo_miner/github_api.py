@@ -1096,6 +1096,49 @@ class GitHubAPI:
                     return 0, None
                 time.sleep(min(60, 2 ** net_fails))
 
+    CI_PAGE_CAP = 400           # GitHub lists at most 400 pages of 100 runs (40,000) per query; page 401 is an HTTP 422
+    CI_EMPTY_WEEKS = 26         # this many weeks in a row with no runs: there is nothing older
+    CI_FILTER_CAP = 1000        # a date-filtered list returns 1,000 runs at most, whatever its total_count says
+
+    def _ci_page(self, params: dict):
+        """One page of the repo's workflow runs; (0, None) when GitHub refuses it (a 4xx such as 422)."""
+        try:
+            return self._get_persistent(f"/repos/{self.owner}/{self.repo}/actions/runs", params)
+        except urllib.error.HTTPError:
+            return 0, None
+
+    def _ci_window(self, start: str, end: str, take, depth: int = 0) -> int | None:
+        """Feed every workflow run created in [start, end] to `take`; the number of runs, or None when a
+        page could not be read. A window with more runs than a filtered list can return (CI_FILTER_CAP)
+        is halved until it fits."""
+        status, data = self._ci_page({"per_page": 100, "page": 1, "created": f"{start}..{end}"})
+        if status != 200 or not isinstance(data, dict):
+            return None
+        total = int(data.get("total_count") or 0)
+        if total == 0:
+            return 0
+        if total > self.CI_FILTER_CAP and depth < 14:
+            from datetime import datetime, timedelta, timezone
+            fmt = "%Y-%m-%dT%H:%M:%SZ"
+            s0 = datetime.strptime(start, fmt).replace(tzinfo=timezone.utc)
+            e0 = datetime.strptime(end, fmt).replace(tzinfo=timezone.utc)
+            mid = (s0 + (e0 - s0) / 2).replace(microsecond=0)
+            a = self._ci_window(start, mid.strftime(fmt), take, depth + 1)
+            b = self._ci_window((mid + timedelta(seconds=1)).strftime(fmt), end, take, depth + 1)
+            return None if a is None or b is None else a + b
+        runs = data.get("workflow_runs", [])
+        take(runs)
+        page, seen = 2, len(runs)
+        while len(runs) == 100 and page * 100 <= self.CI_FILTER_CAP:
+            status, data = self._ci_page({"per_page": 100, "page": page, "created": f"{start}..{end}"})
+            if status != 200 or not isinstance(data, dict):
+                return None
+            runs = data.get("workflow_runs", [])
+            take(runs)
+            seen += len(runs)
+            page += 1
+        return seen
+
     def build_ci_conclusion_map(self, cache_path: str | None = None) -> dict:
         """
         {commit_sha: 'failure' | 'success'} for the repo's workflow runs, built
@@ -1119,28 +1162,31 @@ class GitHubAPI:
         pages_path = (cache_path + ".pages.json") if cache_path else None
         raw: dict[str, list] = {}
         page = 1
+        ck_oldest = ck_win_end = None
+        ck_empty = 0
         if pages_path and os.path.isfile(pages_path):
             try:
                 with open(pages_path, encoding="utf-8") as fh:
                     ck = json.load(fh)
                 raw, page = ck["raw"], int(ck["next_page"])
+                ck_oldest, ck_win_end, ck_empty = ck.get("oldest"), ck.get("win_end"), int(ck.get("empty") or 0)
                 print(f"[ci-history] resuming at page {page} ({len(raw)} commits checkpointed)",
                       file=__import__("sys").stderr, flush=True)
             except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
                 raw, page = {}, 1
         complete = False
-        while page <= 400:                          # safety cap: 40k runs
-            status, data = self._get_persistent(
-                f"/repos/{self.owner}/{self.repo}/actions/runs",
-                {"per_page": 100, "page": page},
-            )
-            if status != 200 or not data:
-                break
-            runs = data.get("workflow_runs", [])
-            if not runs:
-                complete = True
-                break
+        oldest = ck_oldest if page > 1 else None     # the oldest run's creation time seen so far
+        win_end = ck_win_end
+        empty_streak = ck_empty
+        if page > self.CI_PAGE_CAP and oldest is None and win_end is None:
+            page = self.CI_PAGE_CAP                  # an older checkpoint did not keep it: read the last page again (duplicates change nothing)
+
+        def take(runs: list) -> None:
+            nonlocal oldest
             for run in runs:
+                made = run.get("created_at")
+                if made and (oldest is None or made < oldest):
+                    oldest = made
                 sha = run.get("head_sha")
                 if not sha:
                     continue
@@ -1157,14 +1203,57 @@ class GitHubAPI:
                 if self._is_optional((run.get("name") or "").lower()):
                     continue
                 raw.setdefault(sha, []).append(run.get("conclusion"))
+
+        # 1) the newest runs, straight down the list. GitHub stops the list at CI_PAGE_CAP pages
+        # (40,000 runs; the next page is an HTTP 422), so on a big repo this reaches back only a few months.
+        capped = False
+        while win_end is None:
+            if page > self.CI_PAGE_CAP:
+                capped = True
+                break
+            status, data = self._get_persistent(
+                f"/repos/{self.owner}/{self.repo}/actions/runs",
+                {"per_page": 100, "page": page},
+            )
+            if status != 200 or not data:
+                break
+            runs = data.get("workflow_runs", [])
+            if not runs:
+                complete = True
+                break
+            take(runs)
             if len(runs) < 100:
                 complete = True
                 break
             page += 1
             if pages_path and page % 10 == 0:
-                self._save_ci_pages(pages_path, raw, page)
+                self._save_ci_pages(pages_path, raw, page, oldest=oldest)
             print(f"[ci-history] fetched {sum(len(v) for v in raw.values())} runs "
                   f"across {len(raw)} commits...", file=__import__("sys").stderr, flush=True)
+
+        # 2) older runs, by creation date: a date-filtered list has its own cap, so a week at a time
+        # reaches back as far as the repo has runs. Stops at the first long stretch with none, or at
+        # the year Actions began.
+        if capped or win_end is not None:
+            from datetime import datetime, timedelta, timezone
+            fmt = "%Y-%m-%dT%H:%M:%SZ"
+            end = datetime.strptime(win_end or oldest, fmt).replace(tzinfo=timezone.utc) if (win_end or oldest) else None
+            floor = datetime(2019, 10, 1, tzinfo=timezone.utc)      # GitHub Actions did not exist before this
+            ok = end is not None
+            while ok and end > floor and empty_streak < self.CI_EMPTY_WEEKS:
+                start = end - timedelta(days=7)
+                n = self._ci_window(start.strftime(fmt), end.strftime(fmt), take)
+                if n is None:
+                    ok = False                                       # a failed read: keep the checkpoint, the next run resumes
+                    break
+                empty_streak = empty_streak + 1 if n == 0 else 0
+                end = start
+                win_end = end.strftime(fmt)
+                if pages_path:
+                    self._save_ci_pages(pages_path, raw, page, oldest=oldest, win_end=win_end, empty=empty_streak)
+                print(f"[ci-history] back to {win_end[:10]}: {sum(len(v) for v in raw.values())} runs "
+                      f"across {len(raw)} commits...", file=__import__("sys").stderr, flush=True)
+            complete = ok
 
         ci: dict[str, str] = {}
         for sha, concls in raw.items():
@@ -1185,18 +1274,20 @@ class GitHubAPI:
                 except OSError:
                     pass
             else:
-                self._save_ci_pages(pages_path, raw, page)
-                print(f"[ci-history] stopped at page {page}; map not cached, "
-                      f"a rerun resumes from there", file=__import__("sys").stderr, flush=True)
+                self._save_ci_pages(pages_path, raw, page, oldest=oldest, win_end=win_end, empty=empty_streak)
+                print(f"[ci-history] stopped ({'at ' + win_end[:10] if win_end else 'at page ' + str(page)}); "
+                      f"map not cached, a rerun resumes from there", file=__import__("sys").stderr, flush=True)
         return ci
 
     @staticmethod
-    def _save_ci_pages(path: str, raw: dict, next_page: int) -> None:
+    def _save_ci_pages(path: str, raw: dict, next_page: int, oldest: str | None = None,
+                       win_end: str | None = None, empty: int = 0) -> None:
         tmp = path + ".tmp"
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"next_page": next_page, "raw": raw}, fh)
+                json.dump({"next_page": next_page, "raw": raw, "oldest": oldest,
+                           "win_end": win_end, "empty": empty}, fh)
             os.replace(tmp, path)
         except OSError:
             pass
