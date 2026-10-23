@@ -256,6 +256,8 @@ class Service:
                 if r["prs_done"] is not None:
                     gain = max(0, r["prs_done"] - prev.get(r["prefix"], r["prs_done"]))
                     prev[r["prefix"]] = r["prs_done"]
+                    if r["reason"] == "repo started":      # a restart counts the checkpoint's rows in at once: not mined in this block
+                        gain = 0
                 i = int((r["ts"] - start) // step)
                 if not 0 <= i < n:
                     continue
