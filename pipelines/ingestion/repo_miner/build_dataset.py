@@ -236,6 +236,77 @@ def plan_shares(repos_file: str, only_domain: str | None, n: int, by: str = "com
     return [[(f"{entries[i][0]}/{entries[i][1]}", weights[i]) for i in sh] for sh in balanced_shards(basis, n)]
 
 
+# the settings version this run mines under (the store's id for the lead's shared flags); None when not joined
+_SETTINGS: dict = {"version": None}
+
+
+def _settings_path(out: str) -> str:
+    return out + ".settings.json"
+
+
+def _load_settings_record(out: str) -> dict:
+    """{repo lower-cased: settings version it was mined under}. Missing or unreadable means no record."""
+    try:
+        with open(_settings_path(out), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        return {str(k): v for k, v in doc.items()} if isinstance(doc, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _record_settings(out: str, repo: str, version: str | None) -> None:
+    """Note the settings a finished repo was mined under. Written atomically; rows are never touched."""
+    if not version:
+        return
+    rec = _load_settings_record(out)
+    rec[repo.lower()] = version
+    tmp = _settings_path(out) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(rec, fh, indent=1, sort_keys=True)
+    os.replace(tmp, _settings_path(out))
+
+
+def _settings_report(out: str, version: str | None, done: dict) -> None:
+    """Say which finished repos were mined under other settings. Their rows are kept: re-mine a repo with
+    --remine-repo only when you want its rows to use the current settings."""
+    if not version or not done:
+        return
+    rec = _load_settings_record(out)
+    other = sorted(r for r in done if rec.get(r.lower()) not in (None, version))
+    if other:
+        print(f"[settings] mined under other settings, kept as they are: {', '.join(other)}. "
+              f"Re-mine one with --remine-repo owner/name to use the current settings.", flush=True)
+
+
+def _adopt_lead_settings(argv: list[str], args):
+    """A joined PC runs the lead's shared settings: the store's current flags for this split, read with the PC's
+    own token (no new code). Returns (args, the settings version). Off when not joined, for --test, or when the
+    store has no answer; then this PC's own flags stand."""
+    import join
+    url = (os.environ.get("RIFFLE_SYNC_URL") or "").strip().rstrip("/")
+    token = (os.environ.get("RIFFLE_SYNC_TOKEN") or "").strip()
+    if not url or not token or args.test:
+        return args, None
+    meta = sync.fetch_split(url, token)
+    if not meta or not isinstance(meta.get("flags"), list):
+        print("[settings] the store gave no settings for this split (or is unreachable); using this PC's own flags",
+              flush=True)
+        return args, None
+    lead = [str(f) for f in meta["flags"]]
+    changes = join.differences(lead, argv)
+    for k, theirs, mine in changes:
+        print(f"[settings] {k}: lead {theirs!r}, this PC {mine!r} -> using the lead's", flush=True)
+    if changes:
+        try:
+            args = build_parser().parse_args(join.adopted_argv(argv, lead))
+        except SystemExit:
+            sys.exit("[settings] the lead's settings could not be read; nothing was cloned or changed.")
+    version = meta.get("settings_version")
+    print(f"[settings] running the lead's settings (version {version})" if version else
+          "[settings] running this PC's own settings (the store gave no version)", flush=True)
+    return args, version
+
+
 def _mined_repos(out: str) -> dict[str, int]:
     """Lower-cased "owner/name" of every repo already in the dataset, so a
     rerun after a stop skips finished repos. A repo only lands in --out after
@@ -368,6 +439,38 @@ def _read_out(out: str):
     return None, None
 
 
+# the dataset format this miner writes: rows mined by an older miner (or with no version) are stale
+COMPAT_MINOR = (7, 0)
+
+
+def _major_minor(version) -> tuple | None:
+    try:
+        parts = str(version).split(".")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return None
+
+
+def _stale_by_version(out: str) -> dict[str, str]:
+    """{repo as stored: why} for every repo in --out whose rows were not mined by this format (a row with no
+    miner_version, or one older than COMPAT_MINOR). Empty when --out is missing or has no rows."""
+    path, df = _read_out(out)
+    if df is None or df.empty or "repo" not in df.columns:
+        return {}
+    stale: dict[str, str] = {}
+    for repo, g in df.groupby("repo"):
+        if "miner_version" not in g.columns:
+            stale[repo] = "no miner version on its rows (mined before 7.0.0)"
+            continue
+        seen = {str(v) for v in g["miner_version"].dropna()}
+        old = sorted(v for v in seen if (_major_minor(v) or (0, 0)) < COMPAT_MINOR)
+        if not seen:
+            stale[repo] = "no miner version on its rows (mined before 7.0.0)"
+        elif old or g["miner_version"].isna().any():
+            stale[repo] = "mined by " + ", ".join(old or ["an unknown version"]) + f" (this miner writes {__version__})"
+    return stale
+
+
 def _audit(out: str) -> list[str]:
     """Blame coverage per repo, measured only on PRs that touch files that
     already existed (AGE is set): a PR that only adds new files has no history
@@ -396,6 +499,14 @@ def _audit(out: str) -> list[str]:
         print(f"  {repo:40s} {len(g):5d}  {n_new:8d}  {cov_s}  {szz:4d}{note}")
     print("  (blame = share of PRs touching existing files that got blame data; "
           "new-only = PRs that only add files, which have no history to blame)")
+    stale = _stale_by_version(out)
+    if stale:
+        print("[audit] version: these repos were mined by an older miner than 7.0.0, so they are stale:")
+        for repo in sorted(stale):
+            print(f"  {repo}: {stale[repo]}")
+        bad += [r for r in stale if r not in bad]
+    else:
+        print("[audit] version: every row was mined by 7.0.0 or later")
     if bad:
         print("[audit] re-mine: blame was failing for these. Fix with:\n  python build_dataset.py "
               + " ".join(f"--remine-repo {r}" for r in bad) + " <your usual flags>")
@@ -1146,6 +1257,7 @@ def main():
     config.stop_on_break()
     ap = build_parser()
     args = ap.parse_args()
+    args, _SETTINGS["version"] = _adopt_lead_settings(sys.argv[1:], args)
     problems = validate_options(args)
     if problems:
         sys.exit("[options] " + "\n[options] ".join(problems) + "\nNothing was cloned or changed.")
@@ -1256,6 +1368,12 @@ def main():
     # drop their old rows only then; dropping a repo another PC mines would
     # lose its rows here without replacing them.
     mine_here = {f"{o}/{n}".lower() for o, n, _ in entries}
+    if not args.test and args.out:
+        stale_here = {r: why for r, why in _stale_by_version(args.out).items() if r.lower() in mine_here}
+        if stale_here:
+            print(f"[version] {len(stale_here)} repo(s) in this PC's share were mined by an older miner than 7.0.0 "
+                  f"and are stale: {', '.join(sorted(stale_here))}. Re-mine them with --auto-remine (or "
+                  f"--remine-repo owner/name); until then their rows are kept as they are.", flush=True)
     if args.auto_remine and not args.test:
         import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
@@ -1283,6 +1401,7 @@ def main():
     if done_repos:
         print(f"[resume] {len(done_repos)} repos already in {args.out}; skipping them "
               f"(--remine to redo)", flush=True)
+    _settings_report(args.out, _SETTINGS["version"], done_repos)
     here = os.path.dirname(os.path.abspath(__file__))
     miner = os.path.join(here, "mine_repo.py")
 
@@ -1469,6 +1588,8 @@ def main():
             print(f"[clone] keeping {target} so a rerun resumes without re-cloning",
                   flush=True)
         print(flush=True)
+        if mined:
+            _record_settings(args.out, f"{owner}/{name}", _SETTINGS["version"])
         _sync_mark(f"{owner}/{name}", "done" if mined else "failed", args)
         _sync_now("repo done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
 
