@@ -686,6 +686,14 @@ def make_handler(svc: Service):
                                              (self._admin_who() or ("", ""))[1])
                     svc.tokens_changed()
                     return self._json({"split_id": body["split_id"], "pcs": out})
+                if path == "/v1/admin/split-settings":
+                    # the lead changes a split's shared flags without re-issuing its tokens or join codes
+                    try:
+                        version = tokens.set_split_settings(svc.tokens_path, str(body.get("split_id", "")), body.get("flags"))
+                    except LookupError as e:
+                        return self._json({"error": str(e)}, 404)
+                    svc.tokens_changed()
+                    return self._json({"split_id": body["split_id"], "settings_version": version})
                 if path == "/v1/admin/rotate":
                     sid = str(body.get("split_id", ""))
                     meta = tokens.load(svc.tokens_path)["splits"].get(sid)
@@ -746,6 +754,7 @@ def make_handler(svc: Service):
                 return self._json({"error": "this token is not for a split the store knows"}, 404)
             n_repos = sum(1 for ln in (meta.get("repos_text") or "").splitlines() if ln.strip() and not ln.strip().startswith("#"))
             return self._json({"split_id": info["split"], "pc": info["name"], "n": meta["n"], "flags": meta.get("flags", []),
+                               "settings_version": tokens.settings_version(meta.get("flags", [])),
                                "version": meta.get("version"), "created": meta.get("created"), "days": meta.get("days"),
                                "expires": info.get("expires"), "issued_by": meta.get("issued_by"),
                                "repos_name": meta.get("repos_name"), "repos_text": meta.get("repos_text"), "n_repos": n_repos})

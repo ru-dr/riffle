@@ -177,6 +177,29 @@ def _issue_split_locked(path, split, n, days, flags, version, repos_name, repos_
     return out
 
 
+def settings_version(flags: list[str] | None) -> str:
+    """A short id of a split's shared settings. It changes when the lead changes the flags and
+    never when tokens are re-issued, so a PC can tell whether its finished repos used the current settings."""
+    return hashlib.sha256(json.dumps([str(f) for f in (flags or [])]).encode()).hexdigest()[:12]
+
+
+def set_split_settings(path: str, split: str, flags: list[str]) -> str:
+    """Replace a split's shared flags in place. The PC tokens and join codes are left alone, so nothing has to be
+    handed out again. Returns the new settings version. LookupError when the split is unknown."""
+    if not SPLIT.match(split or ""):
+        raise ValueError("a split ID")
+    if not isinstance(flags, list) or len(flags) > 200 or not all(isinstance(f, str) and len(f) <= 500 for f in flags):
+        raise ValueError("flags must be a list of at most 200 short strings")
+    with locked(path):
+        data = load(path, strict=True)
+        rec = data["splits"].get(split)
+        if rec is None:
+            raise LookupError(f"no split {split}")
+        rec["flags"] = list(flags)
+        save(path, data)
+    return settings_version(flags)
+
+
 def revoke_kind(path: str, kind: str, name: str) -> bool:
     """Revoke one name of one kind (revoke() removes the name from every kind)."""
     with locked(path):

@@ -362,7 +362,7 @@ def test_activity_shows_when_each_pc_mined_and_what_it_is_doing_now(store):
     for ago_s, prs in ((30 * h, 0), (29.9 * h, 10), (29.8 * h, 25)):               # mined 30 hours ago, then went quiet
         beat("pc1", ago_s, "repo done", prs, "o/a")
     beat("pc1", 5 * h, "repo done", 40, "o/a")                                       # and came back
-    beat("pc1", 60, "repo done", 55, "o/b")                                          # mining right now
+    beat("pc1", now - int(now) // 3600 * 3600 - 1, "repo done", 55, "o/b")   # just after the current hour starts                                          # mining right now
     beat("pc2", 2 * h, "repo done", 5)
     beat("pc2", 1 * h, "batch done", 9)                                              # finished
     svc.index.db.commit()

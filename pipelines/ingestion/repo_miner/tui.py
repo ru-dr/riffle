@@ -122,7 +122,8 @@ def form_values(argv: list[str]) -> dict:
             "full_repo": bool(ns.full_repo), "only_domain": ns.only_domain or "", "llm": bool(ns.llm),
             "snapshots": bool(ns.snapshots), "szz": bool(ns.szz), "ci_history": bool(ns.ci_history),
             "merge_outcome": bool(ns.merge_outcome), "scanners": not ns.no_scanners,
-            "api_contract": not ns.no_api_contract, "git_discovery": ns.pr_discovery == "git", "split_by": ns.split_by}
+            "api_contract": not ns.no_api_contract, "git_discovery": ns.pr_discovery == "git", "split_by": ns.split_by,
+            "auto_remine": bool(ns.auto_remine)}
     if ns.lead_in_days is not None:
         vals["lead_in"] = str(ns.lead_in_days)
     if ns.llm_scope:
@@ -929,7 +930,7 @@ class RiffleTUI(App):
                     yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
                     yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
                     yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
-                    yield Checkbox("Auto re-mine broken repos", False, id="auto_remine", compact=True)
+                    yield Checkbox("Auto re-mine stale repos", True, id="auto_remine", compact=True)
                     yield Checkbox("Skip big repos (quick test run)", False, id="skip_big", compact=True)
                     yield Label("Big = more than N commits")
                     yield Input("100000", id="big_n", type="integer", compact=True)
@@ -1317,6 +1318,18 @@ class RiffleTUI(App):
         doc = join.load_state(os.path.join(HERE, join.STATE_FILE))
         if not doc or not (r.get("ok") or r.get("unreachable")) or (r.get("split") and r["split"] != doc.get("s")):
             return
+        import sync
+        meta = sync.fetch_split(doc["u"], doc["t"]) if r.get("ok") else None      # the lead's current settings, if the store has them
+        if meta and isinstance(meta.get("flags"), list):
+            current = [str(f) for f in meta["flags"]]
+            try:
+                fresh = join.apply_split(dict(doc, a=current), meta, HERE)     # same rebuild as a join: the repo list copy stays wired
+            except (OSError, ValueError):
+                fresh = doc
+            if fresh.get("a") != doc.get("a"):
+                doc = fresh
+                join.save_state(os.path.join(HERE, join.STATE_FILE), doc)
+                self._log("[tui] the lead changed the settings; the form now has the new ones", style="bold yellow")
         self.joined = doc
         self.lead_argv = list(doc.get("a", [])) + ["--shard", f"{doc['k']}/{doc['n']}"]
         try:
@@ -1455,10 +1468,10 @@ class RiffleTUI(App):
         cmd += ["--llm-model", self._model()]
         for wid, flag in [("llm", "llm"), ("szz", "szz"), ("ci_history", "ci-history")]:
             cmd.append(f"--{flag}" if self._on(wid) else f"--no-{flag}")
-        for wid, flag in [("skip_existing", "--skip-existing"), ("keep_clones", "--keep-clones"),
-                          ("auto_remine", "--auto-remine")]:
+        for wid, flag in [("skip_existing", "--skip-existing"), ("keep_clones", "--keep-clones")]:
             if self._on(wid):
                 cmd.append(flag)
+        cmd.append("--auto-remine" if self._on("auto_remine") else "--no-auto-remine")
         if not self._on("merge_outcome"):
             cmd.append("--no-merge-outcome")
         if not self._on("scanners"):
