@@ -426,8 +426,10 @@ adds files has no history to blame): 95-100% is healthy, `<- check` (50-95%)
 means look for `[blame] warning` in `logs/run-*.log`, `<- re-mine` (under
 50%) means blame was failing. A re-mine only runs for repos in this PC's share
 (`--shard`); naming another PC's repo stops with nothing changed.
-`--auto-remine` (TUI: "Auto re-mine broken repos") runs the audit at Start and
-re-mines the flagged repos in this PC's share automatically.
+`--auto-remine` is on by default (TUI: "Auto re-mine stale repos"; `--no-auto-remine` turns it off). At Start it audits
+the output and re-mines the stale repos in this PC's share: blame failing, or mined by a miner older than 7.0.0. A repo
+mined by a newer miner is never re-mined here, and a repo already re-mined automatically under this version is not
+re-mined again. A test run never re-mines.
 
 Quick runs: `--skip-big N` (TUI: "Skip big repos", "Big = more than N
 commits", default 100000) skips repos whose `[~N commits]` tag in repos.txt is

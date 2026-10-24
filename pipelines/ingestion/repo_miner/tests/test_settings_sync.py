@@ -107,6 +107,6 @@ def test_auto_remine_is_a_lead_setting_that_reaches_pcs():
     lead = LEAD + ["--auto-remine"]
     assert "--auto-remine" in join.shared_argv(lead)
     assert "--auto-remine" not in join.machine_argv(lead)
-    assert ("auto_remine", True, False) in join.differences(lead, LEAD)
+    assert ("auto_remine", True, False) in join.differences(lead, LEAD + ["--no-auto-remine"])
     args = bd.build_parser().parse_args(join.adopted_argv(MINE, lead))
     assert args.auto_remine is True

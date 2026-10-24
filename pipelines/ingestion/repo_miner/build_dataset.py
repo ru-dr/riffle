@@ -244,6 +244,31 @@ def _settings_path(out: str) -> str:
     return out + ".settings.json"
 
 
+def _auto_remined_path(out: str) -> str:
+    return out + ".auto_remined.json"
+
+
+def _load_auto_remined(out: str) -> dict:
+    """{repo lower-cased: miner version it was automatically re-mined under}."""
+    try:
+        with open(_auto_remined_path(out), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        return {str(k): str(v) for k, v in doc.items()} if isinstance(doc, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _mark_auto_remined(out: str, repos: list[str]) -> None:
+    """Note the repos an automatic re-mine is about to replace, under this miner version (atomic write)."""
+    rec = _load_auto_remined(out)
+    for r in repos:
+        rec[r.lower()] = __version__
+    tmp = _auto_remined_path(out) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(rec, fh, indent=1, sort_keys=True)
+    os.replace(tmp, _auto_remined_path(out))
+
+
 def _load_settings_record(out: str) -> dict:
     """{repo lower-cased: settings version it was mined under}. Missing or unreadable means no record."""
     try:
@@ -449,6 +474,30 @@ def _major_minor(version) -> tuple | None:
         return int(parts[0]), int(parts[1])
     except (ValueError, IndexError):
         return None
+
+
+def _version_key(version) -> tuple | None:
+    """A full version as a tuple of ints (7.0.1 -> (7, 0, 1)); None when it is not a version."""
+    try:
+        return tuple(int(p) for p in str(version).split("."))
+    except ValueError:
+        return None
+
+
+def _mined_by_newer(out: str) -> dict[str, str]:
+    """{repo lower-cased: the newer miner version its rows were written by}, for repos whose rows come from a
+    miner newer than this one. Automatic re-mining never replaces those: another PC already mined them."""
+    path, df = _read_out(out)
+    if df is None or df.empty or "repo" not in df.columns or "miner_version" not in df.columns:
+        return {}
+    mine = _version_key(__version__)
+    newer: dict[str, str] = {}
+    for repo, g in df.groupby("repo"):
+        for v in g["miner_version"].dropna().astype(str).unique():
+            key = _version_key(v)
+            if key is not None and mine is not None and key > mine:
+                newer[str(repo).lower()] = v
+    return newer
 
 
 def _stale_by_version(out: str) -> dict[str, str]:
@@ -1236,9 +1285,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip repos with more than N commits (by their repos.txt "
                          "[~N commits] tag) for a quick run; 0 = off. Skipped repos aren't "
                          "written, so a later run without it mines them")
-    ap.add_argument("--auto-remine", action="store_true",
-                    help="before mining, audit --out and re-mine every repo in this run's "
-                         "share whose blame data shows it was mined while blame was failing")
+    ap.add_argument("--auto-remine", action=argparse.BooleanOptionalAction, default=True,
+                    help="before mining, audit --out and re-mine every stale repo in this run's share: blame "
+                         "failing, or mined by a miner older than 7.0.0. On by default; --no-auto-remine turns it "
+                         "off. A repo re-mined this way is not re-mined again by this miner version, so a repo "
+                         "that is still flagged after its re-mine does not loop")
     ap.add_argument("--audit", action="store_true",
                     help="report each repo's share of rows with blame data and flag repos "
                          "mined while blame was failing, then exit")
@@ -1378,13 +1429,26 @@ def main():
         import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
             flagged = _audit(args.out)
-        auto = [r for r in flagged if r.lower() in mine_here
-                and r.lower() not in {x.lower() for x in args.remine_repo}]
+        explicit = {x.lower() for x in args.remine_repo}
+        already = _load_auto_remined(args.out)
+        candidates = [r for r in flagged if r.lower() in mine_here and r.lower() not in explicit]
+        newer = _mined_by_newer(args.out)
+        ahead = [r for r in candidates if r.lower() in newer]
+        candidates = [r for r in candidates if r.lower() not in newer]
+        auto = [r for r in candidates if already.get(r.lower()) != __version__]
+        looping = [r for r in candidates if already.get(r.lower()) == __version__]
+        if ahead:
+            print(f"[auto-remine] flagged, but already mined by a newer miner ({', '.join(sorted({newer[r.lower()] for r in ahead}))}), "
+                  f"so not re-mined here: {', '.join(ahead)}", flush=True)
         others = [r for r in flagged if r.lower() not in mine_here]
         if auto:
-            print(f"[auto-remine] blame was failing for {', '.join(auto)}; re-mining them", flush=True)
+            print(f"[auto-remine] stale repos in this PC's share, re-mining them: {', '.join(auto)}", flush=True)
+            _mark_auto_remined(args.out, auto)
         else:
             print("[auto-remine] audit found nothing to re-mine in this run's repos", flush=True)
+        if looping:
+            print(f"[auto-remine] still flagged after an automatic re-mine with this miner, not re-mining again: "
+                  f"{', '.join(looping)}. Check the blame warnings in logs/, or re-mine with --remine-repo.", flush=True)
         if others:
             print(f"[auto-remine] also flagged, but mined by another PC: {', '.join(others)}", flush=True)
         args.remine_repo = list(args.remine_repo) + auto
