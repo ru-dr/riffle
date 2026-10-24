@@ -256,9 +256,7 @@ class Settings:
     llm_base_url: str = field(
         default_factory=lambda: os.getenv("LLM_BASE_URL", "https://api.anthropic.com/v1/"))
     llm_timeout: float = field(default_factory=lambda: float(os.getenv("LLM_TIMEOUT", "180")))
-    # circuit breaker: abort the run after this many consecutive LLM failures
-    llm_breaker_threshold: int = field(
-        default_factory=lambda: int(os.getenv("LLM_BREAKER_THRESHOLD", "5")))
+    # set by the miner when an LLM failure stops the repo (exit code 3, the batch aborts)
     llm_breaker_tripped: bool = False      # set by the miner when the breaker trips
     llm_concurrency: int = field(default_factory=lambda: int(os.getenv("LLM_CONCURRENCY", "4")))
     # Which rows get LLM calls. "training": outside-contributor PRs (not bots)
@@ -271,7 +269,7 @@ class Settings:
     llm_skip_trivial: bool = True
     # diff sent to the LLM: context lines, and a size cap after lockfiles and
     # generated/minified/vendored/snapshot files are cut out
-    llm_diff_context: int = 1
+    llm_diff_context: int = field(default_factory=lambda: int(os.getenv("LLM_DIFF_CONTEXT", "1")))
     llm_max_diff_chars: int = 25000
     # close-reason classifier: "other_only" asks the LLM only when the rules
     # find no reason (duplicate/unwanted/ci_technical/abandoned); "always"
@@ -305,6 +303,9 @@ class Settings:
     # (default_workers); RIFFLE_WORKERS or --workers overrides it.
     workers: int = field(default_factory=lambda: int(
         os.getenv("RIFFLE_WORKERS") or default_workers()))
+    # a PR touching more files than this skips the per-file deep features (blame, line history, scanners)
+    # and records that it did; 0 = never skip. RIFFLE_MAX_FILES_DEEP, --max-files-deep.
+    max_files_per_pr_deep: int = field(default_factory=lambda: int(os.getenv("RIFFLE_MAX_FILES_DEEP") or 300))
     request_timeout: float = 20.0
     max_prs: int | None = None             # cap PRs per repo (None = all)
     # date-window selection (proposal 1.2): every closed PR created in

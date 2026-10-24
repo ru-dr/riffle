@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from collections import defaultdict, deque, Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -58,6 +59,50 @@ from github_api import GitHubAPI
 
 def _parse_ts(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+# ---- stop (the TUI's Stop / skip, ctrl+c) ------------------------------------
+# A stop is one KeyboardInterrupt in the main thread. The worker threads keep
+# going until their PR is done unless they are told: STOP is checked between a
+# PR's steps (_step), so a stopped run ends within one step, not one PR, and
+# interpreter exit (which joins the pool) is not left waiting on a long PR until
+# the TUI's SIGKILL. Git and LLM children run in their own sessions so a
+# group-wide signal misses them: _kill_children ends them too.
+# gitio shares the same event, so a git call that starts after a stop raises
+# Stopped too (the stop reaches a worker at its next git call, not only _step).
+STOP = gitio.STOP
+
+# Raised inside a worker when STOP is set; the PR is not mined and not written.
+Stopped = gitio.GitStopped
+
+
+def _step(name: str | None = None) -> None:
+    if STOP.is_set():
+        raise Stopped()
+    runlog.step(name)
+
+
+def _kill_children() -> None:
+    """SIGKILL every direct child of this process (and its process group when it
+    leads one of its own), found through /proc. A no-op where /proc is missing."""
+    me, mine = os.getpid(), os.getpgrp()
+    try:
+        pids = [int(e) for e in os.listdir("/proc") if e.isdigit()]
+    except OSError:
+        return
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as fh:
+                ppid = int(fh.read().rsplit(b")", 1)[1].split()[1])
+            if ppid != me:
+                continue
+            pg = os.getpgid(pid)
+            if pg != mine:
+                os.killpg(pg, 9)
+            else:
+                os.kill(pid, 9)
+        except (OSError, ValueError, IndexError):
+            continue
 
 
 def _pr_author_identity(repo: str, sha: str) -> tuple[str, str]:
@@ -99,8 +144,31 @@ def _feat_head(repo: str, pr: dict) -> str | None:
     head = pr.get("merge_commit_sha") or (pr.get("head") or {}).get("sha")
     if not head:
         return None
+    ff = _ff_merge_head(repo, pr)
+    if ff:
+        # the PR branch's own history: its newest non-merge commit is the PR author's,
+        # where the tip (a merge of main into the branch) may be anyone's
+        stop = (pr.get("base") or {}).get("sha")
+        for sha, _ct in gitio.first_parent_chain(repo, ff, stop if stop and
+                                                 gitio.rev_parse_safe(repo, f"{stop}^{{commit}}") else None):
+            if len(gitio.commit_parents(repo, sha)) < 2:
+                return sha
+        return ff
     parents = gitio.commit_parents(repo, head)
     return parents[1] if len(parents) >= 2 else head
+
+
+def _ff_merge_head(repo: str, pr: dict) -> str | None:
+    """The PR's head when it landed by fast-forward AND that head is itself a
+    merge commit (the branch had main merged into it): merge_commit_sha equals
+    head.sha, and its two parents are the branch and main, so reading it as a
+    2-parent merge commit would diff main's side, not the PR."""
+    if pr.get("_unmerged"):
+        return None
+    head = (pr.get("head") or {}).get("sha")
+    if not head or pr.get("merge_commit_sha") != head:
+        return None
+    return head if len(gitio.commit_parents(repo, head)) >= 2 else None
 
 
 def _pr_diff_range(repo: str, pr: dict,
@@ -122,6 +190,13 @@ def _pr_diff_range(repo: str, pr: dict,
     head = pr.get("merge_commit_sha") or (pr.get("head") or {}).get("sha")
     if not head:
         return None, None
+    ff = _ff_merge_head(repo, pr)
+    api_base = (pr.get("base") or {}).get("sha")
+    if ff and api_base and gitio.rev_parse_safe(repo, f"{api_base}^{{commit}}"):
+        try:
+            return gitio.merge_base(repo, api_base, ff), ff   # the PR's side, not main's
+        except gitio.GitError:
+            pass
     parents = gitio.commit_parents(repo, head)
     if len(parents) >= 2:
         fork = gitio.merge_base(repo, parents[0], parents[1])
@@ -291,6 +366,11 @@ def _discover_prs_git(repo: str, owner: str, name: str, api,
                 if full.get("merged_at"):
                     pr["merged_at"] = full["merged_at"]
                     pr["merge_via"] = "github"
+                    # GitHub's own record of the landed commit beats the newest commit that
+                    # mentions #N, which can be a later revert or follow-up of the PR
+                    api_sha = full.get("merge_commit_sha")
+                    if api_sha and gitio.rev_parse_safe(repo, f"{api_sha}^{{commit}}"):
+                        pr["merge_commit_sha"] = api_sha
                 if (full.get("base") or {}).get("sha"):
                     pr["base"] = full["base"]
                 if full.get("head"):
@@ -483,8 +563,8 @@ def _miner_commit() -> str:
 
 def _provenance(st: config.Settings) -> dict:
     return {"miner_version": __version__, "miner_commit": _miner_commit(),
-            "llm_model": st.llm_model if st.enable_llm else None,
-            "llm_prompt_version": llm_flags.prompt_version() if st.enable_llm else None,
+            "llm_model": llm_flags.resolved_model(st) if st.enable_llm else None,
+            "llm_prompt_version": llm_flags.prompt_version(st) if st.enable_llm else None,
             "domain": st.domain}
 
 
@@ -550,7 +630,8 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
             ci_map: dict | None = None,
             szz_shas: dict | None = None,
             obs_cutoff: datetime | None = None,
-            base_resolver=None) -> dict | None:
+            base_resolver=None,
+            repo_name: str | None = None) -> dict | None:
     # Two ranges (ADR 0010). The final range (see _pr_diff_range: what landed,
     # immune to a stale API base.sha) keys the post-merge labels. Features use
     # the PR as it stood when it opened (pr["_open"], set by
@@ -571,7 +652,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     else:
         base_sha, head_sha, snapshot_kind = final_base, final_head, "final"
 
-    runlog.step("diff")
+    _step("diff")
     numstat = gitio.diff_numstat(repo, base_sha, head_sha)
     changed = [p for _, _, p in numstat]
     if not changed and snapshot_kind != "final":
@@ -585,6 +666,9 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     else:
         final_numstat = gitio.diff_numstat(repo, final_base, final_head)
     final_changed = [p for _, _, p in final_numstat] or changed
+    # {new path: name at base} for the files this PR renames: everything read from the
+    # base side (history, blame, size, complexity, hotspot rank) uses the old name
+    old = gitio.rename_map(repo, base_sha, head_sha)
 
     # PR-author identity (mailmap-canonical) from the commit whose author is the
     # PR author — NOT the merge commit, whose author is the maintainer who merged
@@ -601,7 +685,9 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     meta_open = (at_open(pr, events, _parse_ts(opened) + timedelta(seconds=st.rework_grace_s))
                  if events is not None and opened else None)
     row: dict = {
-        "repo": f"{api.owner}/{api.repo}" if api else os.path.basename(repo),
+        # owner/name whatever the mode: the checkpoint, the LLM sample and the joins key on it
+        # (a clone's directory name is not it, and --no-network has no api to ask)
+        "repo": repo_name or (f"{api.owner}/{api.repo}" if api else os.path.basename(repo)),
         "pr_number": pr.get("number"),
         "base_sha": base_sha, "head_sha": head_sha,
         "merged_at": pr.get("merged_at"),
@@ -619,39 +705,61 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     row["closed_at"] = pr.get("closed_at") if st.enable_merge_outcome else None
 
     # --- Source 4a/4b: diff stats + high-risk paths
-    runlog.step("diff_stats")
+    _step("diff_stats")
     row.update(diff_stats.compute(repo, base_sha, head_sha, st))
 
     # --- Source 2: repo history (build index once, per-file, author, coupling)
-    runlog.step("history_index")
+    _step("history_index")
     idx = history.build_repo_index(repo, base_sha, st, ci_map, paths=changed)
-    runlog.step("per_file")
+    _step("per_file")
     per_file: dict[str, dict] = {}
+    # a PR touching thousands of files (a vendor drop, a mass rename) would spend hours on
+    # per-file blame and complexity: past the cap only the largest files by churn get them
+    cap = getattr(st, "max_files_per_pr_deep", 300)
+    deep = changed
+    if cap and len(changed) > cap:
+        deep = [p for _a, _d, p in sorted(numstat, key=lambda e: (-(e[0] + e[1]), e[2]))[:cap]]
+    deep_set = set(deep)
     for path in changed:
-        pf = history.per_file_features(repo, base_sha, path, idx, st)
+        if path not in deep_set:
+            continue
+        pf = history.per_file_features(repo, base_sha, path, idx, st, old_path=old.get(path))
         lf = line_history.per_file_line_features(
-            repo, base_sha, head_sha, path, row["author_email"], idx, st)
+            repo, base_sha, head_sha, path, row["author_email"], idx, st,
+            old_path=old.get(path))
         pf.update(lf)
         per_file[path] = pf
+    n_capped = len(changed) - len(deep_set)
+    if n_capped and per_file:
+        # the files left out are unmeasured, never "zero": every feature null for them,
+        # and the sums over files (which a partial set would understate) null below
+        blank = {k: None for k in next(iter(per_file.values()))}
+        per_file = {p: per_file.get(p) or dict(blank) for p in changed}
 
-    # LT + la_norm/ld_norm from base sizes
-    lt = sum(f.get("_loc", 0) for f in per_file.values())
-    row["LT"] = lt
-    row["la_norm"] = round(row["LA"] / lt, 4) if lt else 0.0
-    row["ld_norm"] = round(row["LD"] / lt, 4) if lt else 0.0
+    # LT + la_norm/ld_norm from base sizes (null when files were left out: a partial sum)
+    lt = sum((f.get("_loc") or 0) for f in per_file.values())
+    row["LT"] = None if n_capped else lt
+    row["la_norm"] = None if n_capped else (round(row["LA"] / lt, 4) if lt else 0.0)
+    row["ld_norm"] = None if n_capped else (round(row["LD"] / lt, 4) if lt else 0.0)
     # AGE = mean days since last change across changed files
     ages = [f["_last_change_days"] for f in per_file.values()
             if f.get("_last_change_days") is not None]
     row["AGE"] = round(sum(ages) / len(ages), 2) if ages else None
 
-    runlog.step("aggregate")
-    row.update(aggregate.aggregate_per_file(per_file))
-    row.update(history.cochange_features(changed, idx))
+    _step("aggregate")
+    agg = aggregate.aggregate_per_file(per_file)
+    if n_capped:
+        agg = {k: (None if k.startswith("sum_") else v) for k, v in agg.items()}
+    row.update(agg)
+    row.update(history.cochange_features(changed, idx, old_paths=old))
     row.update(history.test_expectation_features(changed, per_file, st))
-    row.update(history.author_features(row["author_email"], changed, idx, st))
+    row.update(history.author_features(row["author_email"], changed, idx, st, old_paths=old))
     row["repo_revert_base_rate"] = round(idx["repo_revert_base_rate"], 4)
     # FIX (2a): is this PR itself a bug fix (by title / head-commit keyword)
-    head_subject = gitio._run(repo, "show", "-s", "--format=%s", feat_head,
+    # the subject of the head the PR had at open when known: the landed commit's subject (a
+    # squash's) is the title as it ended, which the scorer did not see
+    head_subject = gitio._run(repo, "show", "-s", "--format=%s",
+                              head_sha if snapshot_kind != "final" else feat_head,
                               check=False).strip()
     row["FIX"] = history.is_fix_pr(meta_open["title"] if meta_open else pr.get("title", ""),
                                    head_subject, st)
@@ -688,36 +796,37 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     row["concurrent_open_prs_same_hunks"] = conc["concurrent_open_prs_same_hunks"] if conc else None
 
     # hotspots touched
-    row.update(_hotspot_touch(per_file, idx, st))
+    row.update(_hotspot_touch(per_file, idx, st, old))
 
     # --- Source 5: deterministic checks
-    runlog.step("deterministic")
+    _step("deterministic")
     row.update(deterministic.compute(repo, base_sha, head_sha, st))
 
     # --- Source 4d: scanners (optional)
-    runlog.step("scanners")
-    row.update(scanners.compute(repo, base_sha, head_sha, changed, st))
+    _step("scanners")
+    row.update(scanners.compute(repo, base_sha, head_sha, changed, st, renames=old))
 
     # --- Source 4e: deps/CVE (optional/network)
-    runlog.step("deps_cve")
-    row.update(deps_cve.compute(repo, base_sha, head_sha, changed, st))
+    _step("deps_cve")
+    row.update(deps_cve.compute(repo, base_sha, head_sha, changed, st,
+                                as_of=pr.get("created_at"), renames=old))
 
     # --- Source 5: API contract diff (oasdiff/buf/graphql-inspector, optional)
-    runlog.step("api_contract")
-    row.update(api_contract.compute(repo, base_sha, head_sha, changed, st))
+    _step("api_contract")
+    row.update(api_contract.compute(repo, base_sha, head_sha, changed, st, renames=old))
 
     # --- Source 6: LLM flags (optional)
     # --- repo-local mined features (contracts/mined_features.schema.json):
     # path size here; the PR-history columns are filled per repo afterwards
     row["path_size_pctile"] = repo_local.path_size_pctile(repo, base_sha, numstat, st)
-    runlog.step("reviews")
+    _step("reviews")
     reviews = None
     if api is not None and st.enable_review_history and pr.get("number") is not None:
         reviews = api.review_events(pr["number"], st.scrutiny_exclude_bot_reviews)
     row[repo_local.SIDECAR] = repo_local.sidecar(pr, numstat, reviews, final_numstat)
 
     # fetched here (worker thread); resolved in PR order by mine_repo()
-    runlog.step("llm")
+    _step("llm")
     llm_skip = _llm_skip_reason(pr, row, changed, st)
     row["__llm__"] = llm_flags.fetch(repo, base_sha, head_sha, st, skip=llm_skip)
 
@@ -730,7 +839,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
     # --- merge-model signals from the AIDev catalog (features/merge_signals.py)
     login = (pr.get("user") or {}).get("login")
     head_ref = (pr.get("head") or {}).get("ref")
-    runlog.step("merge_signals")
+    _step("merge_signals")
     md.update(merge_signals.body_features(pr.get("body")))
     md["agent_name"] = merge_signals.agent_name(login, head_ref, head_email, pr.get("body"))
     md["head_branch_agent_prefix"] = (None if head_ref is None else
@@ -765,7 +874,7 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         row["mined_at"] = snapshot.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         row["observed_through"] = None
     else:
-        runlog.step("labels")
+        _step("labels")
         row.update(build_labels(repo, pr, final_changed, api, snapshot, st, szz_shas,
                                 obs_cutoff=obs_cutoff, pr_base=final_base, pr_head=final_head))
 
@@ -782,27 +891,28 @@ def mine_pr(repo: str, pr: dict, api, default_branch: str,
         row.update({c: None for c in MERGE_LABEL_COLUMNS})
 
     # --- provenance (proposal 1.7, 1.8) and domain (ADR 0011), on every row
-    runlog.step("labels_done")
+    _step("labels_done")
     row.update(_provenance(st))
 
     # --- snapshot capture (snapshot_capture.py): raw timeline and the heads the
     # PR had while open, for the rows the model trains on
     if st.enable_snapshots and _llm_in_scope(pr, row, st):
-        runlog.step("capture")
+        _step("capture")
         t_cap = time.monotonic()
         row[CAPTURE] = snapshot_capture.capture_pr(repo, pr, row, events, st)
         snapshot_capture.note(row[CAPTURE], time.monotonic() - t_cap)
     return row
 
 
-def _hotspot_touch(per_file, idx, st) -> dict:
+def _hotspot_touch(per_file, idx, st, old: dict | None = None) -> dict:
     # real repo-relative membership: is a changed file among the repo's top-k
     # hotspots (ranked across ALL files at base), not just "has any churn".
     topk = idx.get("hotspot_topk", set())
     rank_map = idx.get("hotspot_rank", {})
     changed = list(per_file.keys())
-    touched = [p for p in changed if p in topk]
-    ranks = [rank_map.get(p) for p in changed if rank_map.get(p) is not None]
+    old = old or {}                    # hotspots are ranked by the names they had at base
+    touched = [p for p in changed if old.get(p, p) in topk]
+    ranks = [rank_map.get(old.get(p, p)) for p in changed if rank_map.get(old.get(p, p)) is not None]
     return {
         "n_topk_hotspots_touched": len(touched),
         "touches_topk_hotspot": len(touched) > 0,
@@ -894,10 +1004,22 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
     have = gitio.existing_commits(repo, [(p.get("head") or {}).get("sha") for p in prs])
     missing = [p["number"] for p in prs if p.get("number") is not None
                and (p.get("head") or {}).get("sha") and p["head"]["sha"] not in have]
+    unobserved: set = set()           # fetch failed (not "the ref is gone"): head unknown
     if missing:
-        gitio.fetch_pr_heads(repo, missing)
+        unobserved.update(gitio.fetch_pr_heads(repo, missing) or [])
     pushes = api.force_pushes(nums) if api is not None else {}
-    gitio.fetch_shas(repo, [b for evs in pushes.values() if evs for _t, b in evs if b])
+    failed_shas = set(gitio.fetch_shas(repo, [b for evs in pushes.values() if evs
+                                              for _t, b in evs if b]) or [])
+    for pr in prs:
+        if pr.get("number") in unobserved:
+            pr["_head_unobserved"] = True
+        if failed_shas and any(b in failed_shas for _t, b in (pushes.get(pr.get("number")) or []) if b):
+            pr["_head_unobserved"] = True
+    if unobserved or failed_shas:
+        print(f"[open-snapshot] WARNING: {len(unobserved)} PR heads and {len(failed_shas)} replaced "
+              f"heads could not be fetched (a fetch error, not a deleted ref). Those PRs' at-open "
+              f"diff is unobserved and falls back to the final diff; rerun to retry them.",
+              file=sys.stderr)
     kinds: Counter = Counter()
     # each snapshot is a handful of git subprocesses: run them in parallel
     with ThreadPoolExecutor(max_workers=max(1, st.workers)) as pool:
@@ -1052,12 +1174,17 @@ def _prepare_unmerged(repo: str, prs: list[dict], default_branch: str) -> list[d
     gitio.fetch_pr_heads) and set each one's diff base to where its branch
     forked from the base commit GitHub recorded (or the default branch when
     that commit is gone). PRs whose head can't be fetched are dropped."""
-    gitio.fetch_pr_heads(repo, [p["number"] for p in prs if p.get("number") is not None])
+    failed = set(gitio.fetch_pr_heads(
+        repo, [p["number"] for p in prs if p.get("number") is not None]) or [])
     have = gitio.existing_commits(repo, [(p.get("head") or {}).get("sha") for p in prs])
     out = []
+    n_unobserved = 0
     for pr in prs:
         head = (pr.get("head") or {}).get("sha")
         if not head or head not in have:
+            if pr.get("number") in failed:
+                pr["_head_unobserved"] = True
+                n_unobserved += 1
             continue
         base = (pr.get("base") or {}).get("sha")
         if not base or not gitio.rev_parse_safe(repo, f"{base}^{{commit}}"):
@@ -1068,11 +1195,115 @@ def _prepare_unmerged(repo: str, prs: list[dict], default_branch: str) -> list[d
             continue
         pr["merge_commit_sha"] = None          # GitHub's test merge, not in the clone
         out.append(pr)
+    if n_unobserved:
+        print(f"[warn] {n_unobserved} unmerged PR heads could not be fetched (a fetch error, not "
+              f"a deleted ref): those PRs are left out of this run, not counted as gone; rerun to "
+              f"retry them", file=sys.stderr)
     return out
+
+
+# ---- the checkpoint (<out>.partial.jsonl) ---------------------------------------
+# One jsonl file shared by every repo mined into the same --out. Each line is a
+# finished row plus a stamp (CKPT_STAMP) of the settings that made it. Reading
+# skips lines that do not parse (a run killed mid-write leaves a torn one),
+# keeps the last row per PR, and drops rows made under other settings; writing
+# a repo's final dataset removes only that repo's lines.
+
+CKPT_STAMP = "_ckpt"
+# output-affecting settings besides the ones named in _ckpt_stamp
+_STAMP_FLAGS = ("enable_scanners", "enable_api_contract", "enable_review_history",
+                "enable_merge_outcome", "enable_declared_labels", "enable_deps_cve",
+                "enable_github_api", "pr_discovery", "llm_scope", "llm_sample_pct",
+                "close_reason_llm", "llm_max_diff_chars", "domain", "max_files_per_pr_deep")
+
+
+def _ckpt_stamp(st: config.Settings, obs_cutoff: datetime) -> dict:
+    """What a row's values depend on besides the PR: the miner's major.minor (a patch
+    release is output-identical), the LLM, the CI-history and SZZ switches, the day
+    outcomes were observed through, and the flags in _STAMP_FLAGS."""
+    stamp = {"miner": ".".join(__version__.split(".")[:2]),
+             "llm": bool(st.enable_llm),
+             "llm_model": st.llm_model if st.enable_llm else None,
+             "ci_history": bool(st.enable_ci_history), "szz": bool(st.enable_szz),
+             "obs_cutoff": obs_cutoff.astimezone(timezone.utc).strftime("%Y-%m-%d")}
+    for k in _STAMP_FLAGS:
+        stamp[k] = getattr(st, k, None)
+    return stamp
+
+
+def _same_repo(row_repo, repo_key: str) -> bool:
+    return str(row_repo or "").lower() == repo_key.lower()
+
+
+def read_checkpoint(path: str) -> list[dict]:
+    """Every row of the checkpoint, in file order. A line that does not parse, or
+    is not an object, is skipped."""
+    out: list[dict] = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(r, dict):
+                    out.append(r)
+    except OSError:
+        pass
+    return out
+
+
+def load_checkpoint(path: str, repo_key: str, stamp: dict) -> tuple[list[dict], int, list[str]]:
+    """(rows, n_stale, differing settings) of this repo's checkpointed rows: one per
+    PR (the last wins), the stamp removed. A row stamped with other settings is not
+    returned (it is mined again); a row with no stamp, from an older miner, is kept."""
+    by_pr: dict = {}
+    for r in read_checkpoint(path):
+        if _same_repo(r.get("repo"), repo_key) and r.get("pr_number") is not None:
+            by_pr[r["pr_number"]] = r
+    rows, stale, diff = [], 0, set()
+    for r in by_pr.values():
+        got = r.pop(CKPT_STAMP, None)
+        if isinstance(got, dict) and got != stamp:
+            stale += 1
+            diff.update(k for k in set(got) | set(stamp) if got.get(k) != stamp.get(k))
+            continue
+        rows.append(r)
+    return rows, stale, sorted(diff)
+
+
+def drop_repo_from_checkpoint(path: str, repo_key: str) -> None:
+    """Remove this repo's lines from the shared checkpoint (after its dataset was
+    written), keeping every other repo's rows; delete the file when nothing is left.
+    Atomic: the file is rewritten beside itself and renamed over it."""
+    if not os.path.isfile(path):
+        return
+    kept = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue                  # a torn line belongs to no repo
+            if isinstance(r, dict) and not _same_repo(r.get("repo"), repo_key):
+                kept.append(line if line.endswith("\n") else line + "\n")
+    if not kept:
+        os.remove(path)
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.writelines(kept)
+    os.replace(tmp, path)
 
 
 def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
               out_path: str | None = None) -> list[dict]:
+    STOP.clear()
+    LAST_LLM_STATUS.clear()
     default_branch = gitio.default_branch(repo)
     snapshot = datetime.now(timezone.utc)
     # how far forward outcomes can actually be observed in THIS clone: the newest
@@ -1188,10 +1419,14 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         if sel_path:
             update_selection(sel_path, {"evidence": {k: v.strftime("%Y-%m-%dT%H:%M:%SZ")
                                                      for k, v in evidence.first.items()}})
+    # confirmed only where timelines were actually read: with none, "not a maintainer" would
+    # be a guess, so the column is null
+    timelines_read = (saved is not None or bool(evidence.first)
+                      or any(p.get("_events") is not None for p in prs))
     for pr in prs:
         pr["_author_maintainer"] = (evidence.confirmed((pr.get("user") or {}).get("login"),
                                                        _parse_ts(pr["created_at"]) if pr.get("created_at") else None)
-                                    if evidence.first or api is not None else None)
+                                    if timelines_read else None)
     for pr, sc in zip(getattr(api, "lead_in", None) or [], lead_in):
         if evidence.confirmed((pr.get("user") or {}).get("login"),
                               _parse_ts(pr["created_at"]) if pr.get("created_at") else None):
@@ -1212,7 +1447,9 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         runlog.stage("ci history")
         progress.emit("stage", repo=f"{owner}/{name}", stage="ci history")
         try:
-            ci_map = api.build_ci_conclusion_map(cache_path)
+            merged_iso = [p["merged_at"] for p in prs if p.get("merged_at")]
+            ci_map = api.build_ci_conclusion_map(
+                cache_path, covers_until=max(merged_iso) if merged_iso else None)
         except Exception as e:      # an auxiliary feature: never fail the repo over it
             runlog.warn("ci-history", "pre-pass failed; CI-history features stay null",
                         exc=type(e).__name__, err=str(e)[:200])
@@ -1220,7 +1457,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         print(f"[ci-history] {len(ci_map)} commits with a CI verdict", file=sys.stderr)
     reuse_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.llm_reuse.json")
     if st.enable_llm and os.path.isfile(reuse_path):
-        n_reuse = llm_flags.load_reuse(reuse_path)
+        n_reuse = llm_flags.load_reuse(reuse_path, st)
         print(f"[llm] re-mine: reusing {n_reuse} earlier LLM answers for unchanged PRs "
               f"(no new calls for those)", file=sys.stderr, flush=True)
     # Load the repo-wide commit history now, under a visible stage, instead of
@@ -1258,21 +1495,19 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     if out_path and os.path.dirname(out_path):
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
     done: set = set()
+    stamp = _ckpt_stamp(st, obs_cutoff)
     if ckpt and os.path.isfile(ckpt):
-        try:
-            with open(ckpt, encoding="utf-8") as fh:
-                for line in fh:
-                    if not line.strip():
-                        continue
-                    r = json.loads(line)
-                    if r.get("repo") == repo_key and r.get("pr_number") is not None:
-                        done.add(r["pr_number"])
-                        rows.append(r)
-            if done:
-                print(f"[resume] {len(done)} PRs already checkpointed; skipping them",
-                      file=sys.stderr)
-        except (OSError, json.JSONDecodeError):
-            pass
+        snapshot_capture.heal_tail(ckpt)                   # a torn last line must not swallow the next row
+        ck_rows, n_stale, diff = load_checkpoint(ckpt, repo_key, stamp)
+        rows.extend(ck_rows)
+        done.update(r["pr_number"] for r in ck_rows)
+        if n_stale:
+            print(f"[resume] {n_stale} checkpointed PRs were mined with other settings "
+                  f"({', '.join(diff)}); they are mined again so the dataset holds one kind of row",
+                  file=sys.stderr)
+        if done:
+            print(f"[resume] {len(done)} PRs already checkpointed; skipping them",
+                  file=sys.stderr)
 
     if api is not None and st.enable_review_history:
         todo = [p["number"] for p in prs if p.get("number") is not None and p["number"] not in done]
@@ -1283,12 +1518,37 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     skipped: Counter = Counter()
     pr_secs_total = 0.0                       # worker time on mined PRs (capture share)
     ckpt_fh = open(ckpt, "a", encoding="utf-8") if ckpt else None
-    capture = (snapshot_capture.Writer(st.snapshot_dir or os.path.join("snapshots_raw", f"{owner}_{name}"),
-                                       resume=bool(done))
-               if st.enable_snapshots else None)
-    if capture and not done:
+    capture = None
+    if st.enable_snapshots:
+        lead_nums = {sc.get("number") for sc in lead_in}
+        capture = snapshot_capture.Writer(
+            st.snapshot_dir or os.path.join("snapshots_raw", f"{owner}_{name}"),
+            resume=bool(done), keep=(done | lead_nums) if done else None)
+        if done:
+            # the files were trimmed to the checkpoint's PRs (a capture whose row never
+            # reached it is written again when the PR is re-mined). A PR the checkpoint holds
+            # but the index lacks was mined without --snapshots: its index line is rebuilt from
+            # the sidecar kept in its row, and a PR in scope is mined again for its capture
+            by_num = {r["pr_number"]: r for r in rows}
+            pr_by_num = {p.get("number"): p for p in prs}
+            redo = set()
+            for n in sorted(done):
+                if n in capture.have_index:
+                    continue
+                r = by_num.get(n)
+                pr_ = pr_by_num.get(n)
+                if r is not None and pr_ is not None and _llm_in_scope(pr_, r, st):
+                    redo.add(n)
+                elif r is not None and r.get(merge_signals.SIDECAR):
+                    capture.write(None, r[merge_signals.SIDECAR])
+            if redo:
+                print(f"[resume] {len(redo)} checkpointed PRs have no snapshot capture (the run "
+                      f"that mined them had --no-snapshots); they are mined again for it",
+                      file=sys.stderr)
+                done -= redo
+                rows[:] = [r for r in rows if r["pr_number"] not in redo]
         for sc in lead_in:                    # assembly recomputes history from these too
-            capture.write(None, sc)
+            capture.write(None, sc)           # (already there on resume: not written twice)
 
     def _work(pr: dict):
         t0, w0 = time.monotonic(), llm_flags.quota_wait_s()
@@ -1301,8 +1561,15 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
             try:
                 r = mine_pr(repo, pr, api, default_branch, snapshot, st,
                             author_pr_times, concurrency, ci_map, szz_shas,
-                            obs_cutoff=obs_cutoff, base_resolver=base_resolver)
+                            obs_cutoff=obs_cutoff, base_resolver=base_resolver,
+                            repo_name=repo_key)
+                if STOP.is_set():
+                    # a feature may have tolerated the refused git call and
+                    # degraded: that row is incomplete, so it is not written
+                    raise Stopped()
                 return ("ok", r, None, *took())
+            except Stopped:
+                return ("stop", None, None, *took())
             except gitio.GitError as e:
                 runlog.set_status("git-error")
                 return ("git", None, e, *took())
@@ -1318,7 +1585,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                 capture.write(cap, pr_row.get(merge_signals.SIDECAR))
             rows.append(pr_row)
             if ckpt_fh:
-                ckpt_fh.write(json.dumps(pr_row, default=str) + "\n")
+                ckpt_fh.write(json.dumps({**pr_row, CKPT_STAMP: stamp}, default=str) + "\n")
                 ckpt_fh.flush()
 
     # PRs are mined in parallel worker threads (mostly git subprocess time) but
@@ -1341,6 +1608,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                 return
             inflight.append((nxt[0], nxt[1], pool.submit(_work, nxt[1])))
 
+    completed = False
     try:
         _fill()
         while inflight:
@@ -1348,6 +1616,8 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
             kind, r, err, secs, waited = fut.result()
             _fill()
             num = pr.get("number")
+            if kind == "stop":
+                break
             print(f"[pr {i}/{len(prs)}] #{num} ({secs:.1f}s"
                   f"{f', +{waited:.0f}s quota wait' if waited >= 1 else ''})",
                   file=sys.stderr, flush=True)
@@ -1390,14 +1660,24 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
                 st.llm_breaker_tripped = True
                 break
             r.update(llm_flags.resolve(fetched, st))
+            if fetched.get("model"):
+                r["llm_model"] = fetched["model"]       # the model that answered this row
+            LAST_LLM_STATUS[num] = fetched.get("status")
             pr_secs_total += secs or 0.0
             progress.emit("pr", repo=repo_key, i=i, num=num, secs=secs, status="ok",
                           llm="reused" if fetched.get("reused") else fetched.get("status"),
                           llm_secs=fetched.get("secs"),
                           llm_usage=llm_flags.usage_snapshot() if st.enable_llm else None)
             _commit([r])
+        else:
+            completed = True
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
+        if not completed:
+            # a stop, an LLM stop or a crash: tell the workers still mining to end at their next
+            # step and end their git and LLM children, so exit does not wait on them
+            STOP.set()
+            _kill_children()
         if ckpt_fh:
             ckpt_fh.close()
         if capture:
@@ -1425,6 +1705,7 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         merge_signals.compute_repo(rows, st, with_unmerged=st.enable_merge_outcome,
                                    lead_in=lead_in)
     for r in rows:
+        r.pop(CKPT_STAMP, None)
         r.pop(repo_local.SIDECAR, None)
         r.pop(merge_signals.SIDECAR, None)
         r.pop(CI_SIDECAR, None)
@@ -1447,6 +1728,9 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
 
 # why PRs of the last mined repo produced no row (reason -> count); the health check reads it
 LAST_SKIPS: dict = {}
+# the LLM status of each PR mined this run (pr_number -> "ok" | "skipped" | "empty" | "off"),
+# for the health check's in-scope count; PRs resumed from the checkpoint are absent
+LAST_LLM_STATUS: dict = {}
 
 
 def _infer_owner_name(repo: str):
@@ -1659,10 +1943,26 @@ def main():
         sys.exit(3)
     total, ok = _write(rows, out, append=args.append)
     # per-repo health check (proposal Part 3): summary + flags, saved as JSON
-    in_scope = (lambda r: st.enable_llm and _llm_skip_reason(
-        {"author_association": r.get("author_association"), "number": r.get("pr_number"), "user": {}},
-        r, [], st) is None)
-    health.report(rows, f"{owner}/{name}", args.health_dir, in_llm_scope=in_scope, skipped=dict(LAST_SKIPS))
+    def in_scope(r: dict) -> bool:
+        """Should this row have LLM columns? A PR mined this run says so itself: any status
+        but "off" is in scope. A row resumed from the checkpoint is judged by the scope rule
+        on its own columns."""
+        if not st.enable_llm:
+            return False
+        status = LAST_LLM_STATUS.get(r.get("pr_number"))
+        if status is not None:
+            return status != "off"
+        return _llm_skip_reason(
+            {"author_association": r.get("author_association"), "number": r.get("pr_number"),
+             "user": {"type": "Bot"} if r.get("author_is_bot") else {}},
+            r, [], st) is None
+
+    def nothing_to_judge(r: dict) -> bool:
+        """In scope but no call to make: the diff left nothing to judge ("empty") or the
+        trivial-diff rule skipped it. Their null LLM columns are not "missing"."""
+        return LAST_LLM_STATUS.get(r.get("pr_number")) in ("empty", "skipped")
+    health.report(rows, f"{owner}/{name}", args.health_dir, in_llm_scope=in_scope, skipped=dict(LAST_SKIPS),
+                  llm_nothing_to_judge=nothing_to_judge)
     reuse_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.llm_reuse.json")
     if ok and os.path.isfile(reuse_path):
         os.remove(reuse_path)                       # one-shot: the re-mine is done
@@ -1674,12 +1974,18 @@ def main():
     # remove the per-repo checkpoint and pinned selection only after a clean,
     # complete write
     if ok and out:
-        for f in (out + ".partial.jsonl", selection_path(st, owner, name)):
-            try:
-                if os.path.isfile(f):
-                    os.remove(f)
-            except OSError:
-                pass
+        # only this repo's lines leave the checkpoint: it is shared by every repo mined into
+        # the same --out, and the others may be unfinished
+        try:
+            drop_repo_from_checkpoint(out + ".partial.jsonl", f"{owner}/{name}")
+        except OSError:
+            pass
+        sel = selection_path(st, owner, name)
+        try:
+            if os.path.isfile(sel):
+                os.remove(sel)
+        except OSError:
+            pass
     if args.append:
         print(f"[done] +{len(rows)} rows this run, {total} total -> {out}")
     else:
@@ -1697,8 +2003,7 @@ def _merge_with_existing(rows: list[dict], out: str) -> list[dict]:
     error (locked/corrupt file) can never clobber the whole accumulated dataset.
     """
     if out.endswith(".jsonl"):
-        with open(out, encoding="utf-8") as fh:
-            existing = [json.loads(line) for line in fh if line.strip()]
+        existing = _read_jsonl_rows(out)
     else:
         import pandas as pd
         df = pd.read_csv(out) if out.endswith(".csv") else pd.read_parquet(out)
@@ -1711,11 +2016,71 @@ def _merge_with_existing(rows: list[dict], out: str) -> list[dict]:
     return list(merged.values())
 
 
+def _read_jsonl_rows(path: str) -> list[dict]:
+    """The rows of a jsonl dataset. A line that does not parse (a torn write from an
+    older miner) is skipped with a warning, not fatal."""
+    rows, bad = [], 0
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                bad += 1
+                continue
+            if isinstance(r, dict):
+                rows.append(r)
+    if bad:
+        print(f"[warn] {path}: skipped {bad} unreadable line(s)", file=sys.stderr)
+    return rows
+
+
+def _count_rows(path: str) -> int:
+    """Rows in an existing dataset file; 0 when it cannot be read (the caller then
+    leaves the file alone either way)."""
+    try:
+        if path.endswith(".jsonl"):
+            return len(_read_jsonl_rows(path))
+        if path.endswith(".csv"):
+            import csv
+            with open(path, newline="", encoding="utf-8") as fh:
+                return max(0, sum(1 for _ in csv.reader(fh)) - 1)
+        import pyarrow.parquet as pq
+        return pq.ParquetFile(path).metadata.num_rows
+    except Exception:                                            # noqa: BLE001
+        return 0
+
+
+def _atomic(out: str, write) -> None:
+    """write(tmp_path), then rename over `out`: a crash or a failed write leaves the
+    old file whole, never a truncated dataset."""
+    tmp = f"{out}.tmp-{os.getpid()}"
+    try:
+        write(tmp)
+        os.replace(tmp, out)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _write_jsonl(rows: list[dict], out: str) -> None:
+    def _w(tmp):
+        with open(tmp, "w", encoding="utf-8") as fh:
+            for r in rows:
+                fh.write(json.dumps(r, default=str) + "\n")
+    _atomic(out, _w)
+
+
 def _write(rows: list[dict], out: str, append: bool = False) -> tuple[int, bool]:
     """Write rows to `out`. With append=True, merge into any existing file first
     (dedup by repo+pr_number). Returns (total_rows_written, ok). On an append
     read failure, writes a recovery sidecar and leaves `out` UNCHANGED (ok=False)
-    rather than overwriting the accumulated dataset."""
+    rather than overwriting the accumulated dataset. Every write goes to a temporary
+    file renamed over `out`, so a failure never leaves a half-written dataset."""
     if out.endswith(".parquet"):
         try:
             import pandas  # noqa: F401
@@ -1726,7 +2091,10 @@ def _write(rows: list[dict], out: str, append: bool = False) -> tuple[int, bool]
             out = out.rsplit(".", 1)[0] + ".jsonl"
             print(f"[warn] pandas/pyarrow not installed; writing {out} instead "
                   f"(pip install pandas pyarrow for parquet)", file=sys.stderr)
-    if append and os.path.isfile(out) and rows:
+    if append and not rows:
+        # nothing to add: the accumulated dataset stays exactly as it is
+        return (_count_rows(out) if os.path.isfile(out) else 0), True
+    if append and os.path.isfile(out):
         try:
             rows = _merge_with_existing(rows, out)
         except Exception as e:                                   # noqa: BLE001
@@ -1741,22 +2109,31 @@ def _write(rows: list[dict], out: str, append: bool = False) -> tuple[int, bool]
             return 0, False
 
     if out.endswith(".jsonl"):
-        with open(out, "w", encoding="utf-8") as fh:
-            for r in rows:
-                fh.write(json.dumps(r, default=str) + "\n")
+        _write_jsonl(rows, out)
         return len(rows), True
     if out.endswith(".csv"):
-        _write_csv(rows, out)
+        _atomic(out, lambda tmp: _write_csv(rows, tmp))
         return len(rows), True
     try:
         import pandas as pd
-        pd.DataFrame(rows).to_parquet(out, index=False)
-    except Exception:
+        _atomic(out, lambda tmp: pd.DataFrame(rows).to_parquet(tmp, index=False))
+    except Exception as e:                                       # noqa: BLE001
         alt = out.rsplit(".", 1)[0] + ".jsonl"
-        with open(alt, "w", encoding="utf-8") as fh:
-            for r in rows:
-                fh.write(json.dumps(r, default=str) + "\n")
-        print(f"[warn] parquet unavailable; wrote {alt}", file=sys.stderr)
+        if append and os.path.isfile(alt):
+            # an earlier fallback already put rows there: keep them (the new rows win)
+            try:
+                rows = _merge_with_existing(rows, alt)
+            except Exception as e2:                              # noqa: BLE001
+                ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+                recover = f"{out}.recover-{ts}.jsonl"
+                _write_jsonl(rows, recover)
+                print(f"[error] parquet write failed ({e}) and the earlier {alt} cannot be read "
+                      f"({e2}); wrote THIS run's merged rows to {recover} and left both files "
+                      f"as they were. The checkpoint is kept.", file=sys.stderr)
+                return 0, False
+        _write_jsonl(rows, alt)
+        print(f"[warn] parquet write failed ({e}); wrote {len(rows)} rows to {alt} instead "
+              f"(rows already in {out} were merged in)", file=sys.stderr)
         return len(rows), True
     return len(rows), True
 

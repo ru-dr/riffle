@@ -31,6 +31,28 @@ def test_agent_name():
     assert ms.agent_name("devin", "feature/x", "devin@example.com", "") is None
 
 
+def test_agent_names_need_the_whole_login_and_a_slash_branch_prefix():
+    # people whose names start like an agent's are not agents
+    assert ms.agent_name("julesb", "fix-typo", None, "") is None
+    assert ms.agent_name("jules-verne", "main", None, "") is None
+    assert ms.agent_name("claude-docs", "claude-docs", None, "") is None
+    assert ms.agent_name("cursor-fix", "cursor-fix", None, "") is None
+    assert ms.agent_name("alice", "jules-fix", None, "") is None
+    assert not ms._BRANCH_PREFIX_RE.match("claude-docs") and not ms._BRANCH_PREFIX_RE.match("cursor-fix")
+    # the real agents
+    assert ms.agent_name("jules[bot]", "main", None, "") == "jules"
+    assert ms.agent_name("google-labs-jules[bot]", "main", None, "") == "jules"
+    assert ms.agent_name("alice", "jules/fix", None, "") == "jules"
+    assert ms.agent_name("claude[bot]", "main", None, "") == "claude_code"
+    assert ms.agent_name("alice", "claude/fix", None, "") == "claude_code"
+    assert ms.agent_name("cursor[bot]", "main", None, "") == "cursor"
+    assert ms.agent_name("devin-ai-integration[bot]", "main", None, "") == "devin"
+    assert ms.agent_name("alice", "main", "1+devin-ai-integration[bot]@users.noreply.github.com", "") == "devin"
+    assert ms.agent_name("Copilot", "main", None, "") == "copilot"
+    assert ms.agent_name("copilot-swe-agent[bot]", "main", None, "") == "copilot"
+    assert ms.agent_name("copilotfan", "main", None, "") is None
+
+
 def _row(n, opened, closed, merged, outsider=True, agent=None, first=None, toks=()):
     return {"pr_number": n, ms.SIDECAR: {"opened": opened, "closed": closed, "merged": merged,
                                         "outsider": outsider, "agent": agent,

@@ -86,7 +86,8 @@ def write_env(path: str, values: dict[str, str]) -> None:
 # output name, resume switches, sync) are about this machine and may differ.
 SHAPING = ("repos_file", "only_domain", "max_prs", "min_age_days", "window_from", "window_to", "cap_on",
            "lead_in_days", "full_repo", "llm", "llm_scope", "close_reason_llm", "llm_model", "llm_sample_pct",
-           "max_unmerged", "merge_outcome", "declared_labels", "szz", "ci_history", "snapshots",
+           "max_unmerged", "merge_outcome", "llm_max_diff_chars", "llm_diff_context", "llm_backend", "max_files_deep",
+           "declared_labels", "szz", "ci_history", "snapshots",
            "no_api_contract", "no_scanners", "no_review_history", "pr_discovery", "split_by", "shard")
 
 
@@ -164,6 +165,22 @@ REPOS_DIR = "joined_repos"
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 
+def clean_repos_text(text: str) -> tuple[str, list[str]]:
+    """The lead's repo list, line by line: blank and comment lines and valid repo lines stay as they are; a line
+    that is neither (not a GitHub repo URL with a legal owner and name, or carrying a control character) is
+    dropped. Returns (the cleaned text, the rejected lines). The store's copy is untrusted: its owner/name
+    become paths and clone URLs on this PC."""
+    import build_dataset
+    keep, rejected = [], []
+    for line in text.splitlines():
+        body = line.split("#", 1)[0].strip()
+        if CONTROL.search(line.replace("\t", " ")) or (body and not build_dataset._parse_url(line)):
+            rejected.append(line[:120])
+            continue
+        keep.append(line)
+    return "\n".join(keep) + "\n", rejected
+
+
 def apply_split(doc: dict, meta: dict | None, base: str) -> dict:
     """Use the lead's repo list: write it under <base>/joined_repos/<split>/<name> and point --repos-file at that copy, so
     this PC mines exactly the lead's list whatever is (or is not) in its own checkout. `meta` is what the store
@@ -176,6 +193,12 @@ def apply_split(doc: dict, meta: dict | None, base: str) -> dict:
                     repos_name=meta.get("repos_name"), n_repos=meta.get("n_repos"), expires=meta.get("expires"))
         name, text, split = meta.get("repos_name"), meta.get("repos_text"), str(doc.get("s", ""))
         if isinstance(text, str) and text.strip() and isinstance(name, str) and _SAFE.match(name) and _SAFE.match(split):
+            text, rejected = clean_repos_text(text)
+            if rejected:
+                print(f"WARNING: {len(rejected)} line(s) of the lead's repo list are not valid GitHub repos and were left "
+                      f"out: {rejected[:5]!r}" + (" ..." if len(rejected) > 5 else ""), file=sys.stderr)
+            if not any(l.split("#", 1)[0].strip() for l in text.splitlines()):
+                raise ValueError("the lead's repo list has no valid repo in it")
             folder = os.path.join(base, REPOS_DIR, split)
             os.makedirs(folder, exist_ok=True)
             path = os.path.join(folder, name)

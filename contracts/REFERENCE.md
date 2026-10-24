@@ -707,7 +707,7 @@ Body of POST /v1/outcomes. Lets an org report outcomes Riffle cannot see (intern
 
 ## Riffle head commit features (`mined_commit_features.schema.json`)
 
-**Version:** 1.0
+**Version:** 1.1
 
 Code features of each head commit a PR had while open, captured during mining (snapshot_capture.py) for the PRs snapshots are built for: up to snapshot_max_heads per PR. Feature columns are null on the at-open head, whose features are in the mined row, and on a head that failed (error).
 
@@ -769,7 +769,7 @@ Code features of each head commit a PR had while open, captured during mining (s
 
 ## Riffle repo miner training row (`mined_dataset.schema.json`)
 
-**Version:** 1.2
+**Version:** 1.3
 
 One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null. Since 1.1 rows also carry provenance (miner_version, miner_commit, llm_model, llm_prompt_version) and domain; these are optional in the schema so rows mined before miner 4.0.0 still validate, and the miner writes them on every row. Since 1.2: outcome_3class, nowhere_reason, ci_fail_flaky_only and author_confirmed_maintainer, optional in the schema for older rows; the miner writes them on every row.
 
@@ -983,6 +983,8 @@ One row of the training dataset written by the repo miner (pipelines/ingestion/r
 | `nowhere_reason` | `abandoned`, `duplicate`, `unwanted`, `ci_technical`, `unknown`, `None` |  |  | For goes_nowhere rows: abandoned, duplicate, unwanted, ci_technical, or unknown (read, but no rule or classifier found a reason); null on merged rows and when the timeline was unreadable. An outcome, never a model input. Computed in `pipelines/ingestion/repo_miner/merge_labels.py`. |
 | `ci_fail_flaky_only` | boolean or null |  |  | True when the merge commit's required CI failure came only from checks flaky at merge time (3+ rerun-passes in the prior 90 days, rules.mining.flaky_detection); label_ci_fail is then False. Null when CI wasn't observed and on unmerged rows. An outcome detail, never a model input. Computed in `pipelines/ingestion/repo_miner/flaky.py`. |
 | `author_confirmed_maintainer` | boolean or null |  |  | The PR author had merged or closed someone else's PR before this one opened, from the repo's timelines (proposal 2.2). author_association shows today's status and hides private org members, so this is what decides outside contributors. Null when no timelines were read. Computed in `pipelines/ingestion/repo_miner/maintainers.py`. |
+| `llm_diff_truncated` | boolean or null |  |  | True when the LLM diff size cap dropped or cut code the model would have read; false when the whole diff was shown; null when no LLM call was made (off, skipped, empty or a reused answer). Metadata about the call, never a model input. Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `szz_window_closed` | boolean or null |  |  | True when the SZZ observation window for the PR has closed: `szz_maturity_days` (default 90) had passed between the PR's merge and the observation cutoff (`observed_through`), so a `label_szz_bug` of false is mature. False while the window is still open: a fix that would later be traced to this PR may not exist yet. Null when the SZZ label was not computed (SZZ off, an unmerged PR) or `szz_maturity_days` is 0 (no cap, so no window). Never a model input. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
 
 ## Riffle mined history manifest (`mined_history.schema.json`)
 
@@ -1085,7 +1087,7 @@ Manifest written by the Go history miner (services/miner) for one repository and
 
 ## Riffle PR snapshot row (`mined_snapshot.schema.json`)
 
-**Version:** 1.3
+**Version:** 1.4
 
 One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots.py), labelled with how the PR finally ended. Every column of mined_dataset.schema.json, with three groups taken as of snapshot_at instead of the PR's open: the code features of the head commit then (diff sizes, path flags, deterministic, scanner, dependency and API-contract columns), the merge signals (repo_outside_merge_rate and the rest), and the snapshot state columns. Git-history, blame, LLM and PR-metadata columns stay as at open. Labels are outcomes and never model inputs; so is near_decided. Bots count for nothing in the state. Since 1.2: outcome_3class, nowhere_reason, ci_fail_flaky_only and author_confirmed_maintainer, optional in the schema for older rows; the miner writes them on every row. Since 1.3: snapshot_weight and moment_bucket (optional in the schema; snapshots.py writes them).
 
@@ -1304,8 +1306,8 @@ One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots
 | `maintainer_replied` | boolean |  |  | Snapshot state. A maintainer has commented or reviewed |
 | `first_maintainer_reply_h` | number or null |  |  | Snapshot state. Hours from start to the first maintainer reply; null if none yet |
 | `review_rounds` | integer 0– |  |  | Snapshot state. Reviews by humans other than the author |
-| `changes_requested_count` | integer 0– |  |  | Snapshot state. Changes-requested reviews so far |
-| `approvals_count` | integer 0– |  |  | Snapshot state. Approving reviews so far |
+| `changes_requested_count` | integer or null 0– |  |  | Snapshot state. Changes-requested reviews so far; null when unknowable (a dismissed review in an old capture that does not say what it was before) |
+| `approvals_count` | integer or null 0– |  |  | Snapshot state. Approving reviews so far; null when unknowable (a dismissed review in an old capture that does not say what it was before) |
 | `commits_since_start` | integer 0– |  |  | Snapshot state. Commits pushed after the start (merges from the base not counted) |
 | `force_pushes_since_start` | integer 0– |  |  | Snapshot state. Force-pushes after the start |
 | `author_pushed_after_last_review` | boolean |  |  | Snapshot state. The author pushed after the latest review |
@@ -1316,9 +1318,9 @@ One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots
 | `marked_duplicate_so_far` | boolean |  |  | Snapshot state. Someone marked the PR as a duplicate |
 | `is_draft_now` | boolean |  |  | Snapshot state. The PR is back in draft |
 | `reopen_count` | integer 0– |  |  | Snapshot state. Times the PR was reopened so far |
-| `new_commits_since_prev` | integer or null |  |  | Snapshot state. Commits since the previous kept snapshot; null on the first |
-| `new_comments_since_prev` | integer or null |  |  | Snapshot state. Human comments since the previous kept snapshot; null on the first |
-| `diff_size_change_since_prev` | number or null |  |  | Snapshot state. Change in LA + LD since the previous kept snapshot; null on the first |
+| `new_commits_since_prev` | integer or null |  |  | Snapshot state. Commits since the previous candidate moment (kept or capped out); null on the first |
+| `new_comments_since_prev` | integer or null |  |  | Snapshot state. Human comments since the previous candidate moment (kept or capped out); null on the first |
+| `diff_size_change_since_prev` | number or null |  |  | Snapshot state. Change in LA + LD since the previous candidate moment (kept or capped out); null on the first |
 | `miner_version` | string |  |  | Repo miner version that wrote the row (version.py). Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
 | `miner_commit` | string |  |  | The miner's git commit (12 characters), with -dirty when its files had uncommitted changes, or unknown. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
 | `llm_model` | string or null |  |  | LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`. |
@@ -1330,3 +1332,5 @@ One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots
 | `author_confirmed_maintainer` | boolean or null |  |  | The PR author had merged or closed someone else's PR before this one opened, from the repo's timelines (proposal 2.2). author_association shows today's status and hides private org members, so this is what decides outside contributors. Null when no timelines were read. Computed in `pipelines/ingestion/repo_miner/maintainers.py`. |
 | `snapshot_weight` | number –1 |  |  | 1 / the number of kept snapshots of this PR, so each PR adds up to 1 in training and slow PRs with many snapshots don't dominate. Depends on the PR's whole history, so it is a training weight and never a model input. |
 | `moment_bucket` | `open`, `<1d`, `1-3d`, `3-7d`, `7-30d`, `>30d` |  |  | Time band of the snapshot: open (the open trigger) or time since start, for reporting metrics per moment. |
+| `llm_diff_truncated` | boolean or null |  |  | True when the LLM diff size cap dropped or cut code the model would have read; false when the whole diff was shown; null when no LLM call was made (off, skipped, empty or a reused answer). Metadata about the call, never a model input. Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
+| `szz_window_closed` | boolean or null |  |  | True when the SZZ observation window for the PR has closed: `szz_maturity_days` (default 90) had passed between the PR's merge and the observation cutoff (`observed_through`), so a `label_szz_bug` of false is mature. False while the window is still open: a fix that would later be traced to this PR may not exist yet. Null when the SZZ label was not computed (SZZ off, an unmerged PR) or `szz_maturity_days` is 0 (no cap, so no window). Never a model input. Computed in `pipelines/ingestion/repo_miner/labels.py`. |

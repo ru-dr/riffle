@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -182,6 +183,8 @@ def revoke_kind(path: str, kind: str, name: str) -> bool:
         if kind not in KINDS:
             return False
         data = load(path, strict=True)
+        if kind == "admins" and name in data["admins"] and len(data["admins"]) <= 1:
+            raise ValueError("this is the last admin; add another admin first")     # checked under the lock: two revokes cannot both pass
         hit = data[kind].pop(name, None) is not None
         if hit:
             save(path, data)
@@ -242,3 +245,33 @@ def who(path: str, token: str | None) -> tuple[str, str] | None:
     """('pcs' | 'readers' | 'admins', name) for a valid token, else None."""
     r = lookup(path, token)
     return (r["kind"], r["name"]) if r else None
+
+
+SESSION_TTL_S = 8 * 3600
+
+
+def _session_sig(rec: dict, name: str, exp: int) -> str:
+    # keyed with the stored hash of the admin's token: revoking or re-issuing that token ends every session made from it
+    return hmac.new(rec["sha256"].encode(), f"{name}|{exp}".encode(), hashlib.sha256).hexdigest()
+
+
+def session_make(path: str, name: str, ttl: int = SESSION_TTL_S) -> str | None:
+    """A signed, expiring value for the admin page's cookie (never the token itself), or None if `name` is no admin."""
+    rec = load(path)["admins"].get(name)
+    if not rec:
+        return None
+    exp = int(time.time()) + ttl
+    return f"{name}.{exp}.{_session_sig(rec, name, exp)}"
+
+
+def session_who(path: str, value: str | None) -> tuple[str, str] | None:
+    """('admins', name) for a valid, unexpired session value made by session_make, else None."""
+    try:
+        name, exp_s, sig = (value or "").split(".")
+        exp = int(exp_s)
+    except ValueError:
+        return None
+    rec = load(path)["admins"].get(name)
+    if not rec or exp < time.time() or (rec.get("expires") and rec["expires"] < time.time()):
+        return None
+    return ("admins", name) if secrets.compare_digest(sig, _session_sig(rec, name, exp)) else None

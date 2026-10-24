@@ -2,7 +2,7 @@
 
 Complete description of `pipelines/ingestion/repo_miner/`: what it is, why it is built the way it is, how a run works step by step, every module, every output column, every file it writes, every flag and every tunable.
 
-- Written against **miner version 6.4.0** (`version.py`). Contract versions: `mined_dataset` 1.2, `mined_snapshot` 1.3, `mined_commit_features` 1.0, `mined_features` 1.0.
+- Written against **miner version 7.0.0** (`version.py`). Contract versions: `mined_dataset` 1.3, `mined_snapshot` 1.4, `mined_commit_features` 1.1, `mined_features` 1.0.
 - Where this document and the code disagree, **the code is right**. The short operator guide is `README.md` in this directory; this file is the long form, and does not replace it.
 - Column lists were checked against `contracts/mined_dataset.schema.json`, `mined_snapshot.schema.json` and `mined_commit_features.schema.json` (section 14). The contracts, not this file, are the source of truth for names and types.
 - British spelling, as in the ADRs.
@@ -89,11 +89,11 @@ Further derived targets sit on every row (`outcome_3class`, `nowhere_reason`) so
 | **Point-in-time, no leakage** | Diff features come from the PR as it stood at `created_at + 300 s` (ADR 0010). History/blame walk only commits before the base commit. Repo-wide aggregates (merge rates, similar PRs, scrutiny) count a past PR only if it **closed before this PR opened**, and an outcome only if it **happened** before then. | The scorer sees only the past. A feature that peeks (final size after rework, today's PR title, labels added after a failure) makes offline scores overstate production. |
 | **Features at open, labels from what landed** | `mine_pr` uses two ranges: the *at-open* range for features and the *final* range (what actually merged) for post-merge labels. | Rework after open is part of what the targets measure, so it must not leak into the inputs; revert/hotfix/CI/SZZ are about what landed. |
 | **Deterministic first** | Regex, parsers and linters are used wherever an exact answer exists (secrets, off-by-one-ish edits, migrations, manifests). The LLM only answers semantic questions. | Cheap, reproducible, auditable; the LLM is never the verdict and is never on the scoring path. |
-| **Missing is `null`, never `0`** | A tool that is absent, a network call that failed, too little history: the column is `null` (XGBoost/LightGBM treat it as missing). `0` means "measured, found none". | A silent `0` is a lie the model will learn. Matches the contract rule `null` = not declared/not enough history. |
+| **Missing is `null`, never `0`** | A tool that is absent or failed, a git call that timed out, a network call that failed or was cut short, too little history: the column is `null` (XGBoost/LightGBM treat it as missing). `0` means "measured, found none". | A silent `0` is a lie the model will learn. Matches the contract rule `null` = not declared/not enough history. |
 | **Never write a row without its LLM answer** | A failed LLM call is retried per PR (3×, waits 60/120/180 s). If it still fails the repo stops (exit code 3) and `--out` is not written. Rows out of LLM *scope* keep null LLM columns on purpose. | Half-populated LLM columns would be a hidden bias (failure correlates with diff content). |
 | **Every row has every column** | `mined_dataset.schema.json` lists the columns; a stage that is off writes `null`, not "missing". | One schema for every run mode. `tests/test_dataset_contract.py` enforces it both ways. |
 | **Resumable, crash-safe** | Rows stream to `<out>.partial.jsonl`; PR selection is pinned; SZZ blames are stored per (fix commit, file); LLM answers are reused on re-mine. | A big repo takes hours; stops (ctrl+c, quota, crash, reboot) must lose nothing. |
-| **Output identical regardless of parallelism** | PRs mine in worker threads but are **consumed in PR order**; the LLM circuit breaker counts consecutive PRs, not whichever worker finished first. | Reproducible datasets and a meaningful "consecutive failures" rule. |
+| **Output identical regardless of parallelism** | PRs mine in worker threads but are **consumed in PR order**; a failed LLM answer is retried in PR order, so which PR stops a repo never depends on which worker finished first. | Reproducible datasets and a stop rule that does not depend on timing. |
 | **Graceful degradation** | lizard/semgrep/oasdiff/buf/graphql-inspector/network each degrade to `null`. A repo with no token still mines (with fewer columns). | Different machines have different toolchains; a missing tool must not abort an overnight run. |
 | **Observable** | Run log, structured trace, progress events, health check, TUI, web view. | A run takes hours or days; a stall must be explainable without guessing. |
 | **Contract-bound** | Adding a column means adding it to the contract in the same PR. Version bumps: MAJOR = output columns/meaning change (retrain-level), MINOR = new features/flags with unchanged existing output, PATCH = fixes that leave output identical. | Training, serving and the feature store must agree on what a field means. |
@@ -148,13 +148,13 @@ flowchart TD
 | `features/deps_cve.py` | Source 4e: dependency changes, OSV vulnerabilities, GHSA cross-check. |
 | `features/deterministic.py` | Source 5: regex/parser checks on added lines. |
 | `features/api_contract.py` | Source 5: oasdiff / buf / graphql-inspector verdict on spec files. |
-| `features/llm_flags.py` | Source 6: 23 LLM flags, backends, diff slimming, quota gate, circuit breaker, usage counters, reuse store. |
+| `features/llm_flags.py` | Source 6: 23 LLM flags, backends, diff slimming, secret redaction, quota gate, usage counters, reuse store. There is no circuit breaker in the module: the per-PR retry in `mine_repo` is what stops a run. |
 | `features/merge_signals.py` | AIDev-catalog merge-model signals: body structure, agent detection, repo-level prior-only rates, text similarity. |
 | `features/repo_local.py` | The nine repo-local columns of `mined_features.schema.json`. |
 | `snapshot_capture.py` | Capture step of PR snapshots (runs during mining). |
 | `snapshots.py` | Assembly step of PR snapshots (offline, from captures). |
 | `consistency.py` | Does the snapshot table still match its dataset? |
-| `merge_shards.py` | Joins the tables of several PCs, refusing mismatched pieces. |
+| `merge_shards.py` | Joins the tables of several PCs, refusing mismatched pieces (including a manifest that lists failed repos, unless `--allow-incomplete`). |
 | `naming.py` | Output/log naming for sharded runs, shard manifest path, snapshot table names. |
 | `health.py` | Per-repo health summary and flags. |
 | `sync.py` | Sends a PC's logs, health, datasets and shard manifest to the team store (ADR 0015); incremental, bounded, never fatal. |
@@ -203,19 +203,21 @@ flowchart LR
 
 1. **Output naming.** With `--shard K/N` the output is tagged (`dataset.parquet` → `dataset_pc1of3.parquet`, run log `run-<time>-pc1of3.log`). `--out-prefix` / `--out-postfix` add text (placeholders `{pc} {n} {host} {date}`; a postfix replaces the automatic tag); `--no-auto-name` turns the tag off. A name that already carries its tag is left alone, so a rerun resumes the same file. If an untagged file exists but is not used, the run says so, because resume only looks at the tagged file. *Why:* several PCs writing the same `dataset.parquet` get mixed up when copied together.
 2. **Trace.** `runlog.configure` points `RIFFLE_TRACE` at `logs/<run-stem>.trace.jsonl` (inherited by every child miner).
-3. **Audit-only and shard-plan-only modes** print and exit (see 12).
-4. **Read the repos file.** Each line is a GitHub URL; text after `#` is a comment but carries two tags: `[~N commits]` (approximate commit count, used as the repo's weight) and `[domain: NAME]` (ADR 0011). `--only-domain NAME` keeps matching repos only. A GitHub URL is parsed with `github.com[:/]owner/name(.git)`.
+3. **Audit-only and shard-plan-only modes** print and exit (see 12). Before anything is cloned, `validate_options(args)` runs once in `main` and refuses a bad combination: `--full-repo` with a window, cap or lead-in, `--window-from` without `--window-to` or a bad date, a negative or out-of-range number, a malformed `--shard` (`--shard-plan` below 1 exits too), a bad `--remine-repo` name. `--max-prs 0` means no cap, on both sides of the pipe.
+4. **Read the repos file.** Each line is a GitHub URL; text after `#` is a comment but carries two tags: `[~N commits]` (approximate commit count, used as the repo's weight) and `[domain: NAME]` (ADR 0011). `--only-domain NAME` keeps matching repos only. A GitHub URL is parsed with `github.com[:/]owner/name(.git)`, taking the first two path segments only. A repo name must match `^[A-Za-z0-9._-]+$` (no `.` or `..`, no leading `-`), so a line cannot point the clone outside `--clone-dir`; a repo listed twice (case-insensitive) is mined once, with a warning. A `[domain: X]` tag is case-insensitive and lowercased, and a malformed tag warns. `--only-domain` with no match says `0 repos tagged X`.
 5. **Shard.** `balanced_shards` gives each PC an equal number of repos (±1) with balanced total weight: heaviest repo first, each to the lightest PC that still has room; unknown weights count as the median; deterministic, so every PC computes the same split. `split_id` is the first 8 hex of a SHA-256 over the ordered repo list, weights and PC count; PCs that print the same split ID have disjoint shares of the same list.
 6. **Test mode** (`--test`): first repo only (default `pallets/flask`), `--test-prs` PRs (10), fresh output `test_output/test_dataset.jsonl` (also saved as parquet to check that path), clone kept. It always mines the fixed window `config.TEST_WINDOW_FROM..TEST_WINDOW_TO` (2020-01-01 to 2025-06-30) with `--min-age-days 0` and no `--cap-on` or `--max-unmerged`, whatever the form or flags say, so every PC and every run picks the same PRs whatever day it runs. `--test-prs` then caps merged and unmerged PRs together (the newest contiguous block, mode A), so the output holds about that many rows. Remaining sources of drift: a PR created in the window that was still open on the first run and closes later, and a stale reused clone (merge-landing detection reads it).
-7. **Re-mine.** `--auto-remine` audits the output and adds flagged repos in this PC's share; each `--remine-repo` must be in this PC's share (else the run stops with nothing changed). `_drop_repo` keeps the repo's earlier LLM answers (`ci_cache/<owner>_<name>.llm_reuse.json`, keyed by base and head SHA), rewrites the dataset atomically without the repo, removes its SZZ cache, partial files, blame store and pinned selection, and removes its checkpoint lines.
+7. **Re-mine.** `--auto-remine` audits the output and adds flagged repos in this PC's share; each `--remine-repo` must be in this PC's share (else the run stops with nothing changed). `_drop_repo` keeps the repo's earlier LLM answers (`ci_cache/<owner>_<name>.llm_reuse.json`, keyed by base and head SHA), rewrites the dataset atomically without the repo, removes its SZZ cache, partial files, blame store and pinned selection, and removes its checkpoint lines. A clean repo write likewise removes only that repo's lines (case-insensitive, atomic) from the shared `out.partial.jsonl`, deleting the file only when it is empty.
 8. **Skip finished repos** (rows already in `--out`; `--remine` disables). A repo only lands in `--out` after a clean complete mine, so presence means done.
 9. **For each repo:**
    - `--skip-big N` skips repos whose `[~N commits]` tag is larger; the TUI can also request a skip through the file named in `RIFFLE_CONTROL`. A skip never writes rows, so a later run mines the repo.
-   - **Clone** (full history, never `--depth`) into `<clone-dir>/<owner>_<name>`, retried (`--repo-retries`, default 2 extra) with waits of `min(120, 15 × attempt)` s. An existing clone is removed unless `--skip-existing`.
-   - **Mine** by running `mine_repo.py` as a subprocess with `--append` and the pass-through flags. A retry resumes from the checkpoint. **Exit code 3** (LLM could not answer) aborts the whole batch without retry. A Stop or skip sends SIGINT first so the miner keeps its checkpoint, then kills after 30 s.
+   - **Clone** (full history, never `--depth`) into `<clone-dir>/<owner>_<name>` with `git clone --progress -- https://github.com/{owner}/{name} <target>`, retried (`--repo-retries`, default 2 extra) with waits of `min(120, 15 × attempt)` s. The target's real path must stay inside `--clone-dir`, else the repo is refused and reported as `(unsafe path)`. A clone that prints nothing for `--clone-stall-s` (default 600, `RIFFLE_CLONE_STALL_S`, 0 = never) is killed and retried. An existing clone is removed unless `--skip-existing`.
+   - **Mine** by running `mine_repo.py` as a subprocess with `--append` and the pass-through flags. A retry resumes from the checkpoint. **Exit code 3** (LLM could not answer) aborts the whole batch without retry. The miner runs in its own session (`start_new_session=True`), and a Stop or skip signals the whole process group: SIGINT first so the miner keeps its checkpoint, then SIGKILL after 30 s, and `KeyboardInterrupt` is re-raised (a Stop during a skip stops the batch). Workers end at their next step, and a Stop also reaches git: `gitio.STOP` is checked before every git subprocess starts and raises `GitStopped` (not a `GitError`, so code that tolerates git failures cannot swallow it), and a row from a PR whose git calls were refused during a Stop is not written. Their children are killed with their process groups. If the batch process itself is SIGKILLed, the miner is not signalled automatically.
    - After a **successful** mine the clone is deleted (one clone on disk at a time) unless `--keep-clones`. A failed or stopped repo keeps its clone so a rerun resumes without re-cloning. `ci_cache/`, checkpoints and `snapshots_raw/` are kept.
 10. **Batch end:** save test parquet (test mode); **assemble snapshots** (section 11; failure never fails the batch); write the **shard manifest** (`<out>.shard.json`) for sharded runs; emit `batch_done`; print skips and failures.
 11. **Stop** (ctrl+c): one `[stop]` line, child miner stopped with its checkpoint kept, exit 130.
+
+The lead's pasted repo list is filtered line by line (`join.clean_repos_text`); `apply_split` raises if no line is valid.
 
 ### 4.2 One repo: `mine_repo.py`, stage by stage
 
@@ -231,8 +233,8 @@ The run log gets `[stage] X done in 2m57s` for each stage and the trace gets sta
 | 5 | `author index` | `author_email → sorted times of that author's merged PRs`, from one local `git show` per PR. | Point-in-time `author_prs_merged_repo`. | none |
 | 6 | `open snapshots` | Fetch heads missing from the clone (`refs/pull/N/head`), ask GraphQL for force-pushes (25 PRs per call), fetch replaced heads by SHA, resolve `pr["_open"]` (4.5). | ADR 0010: features from the PR as it opened. | 1 GraphQL call per 25 PRs |
 | 7 | `concurrency` | For each PR count other PRs open at its opening that touch the same files / same base-side lines. | Integration-risk features; point-in-time by construction. | none (git diffs in parallel) |
-| 8 | `ci history` | Build `{commit: failure|success}` from the Actions workflow-runs list (100 runs/call, cached to `ci_cache/<owner>_<name>.json`). | Historical CI-fail-rate features (file/author). Far cheaper than one check-runs call per commit. | ≤ 400 calls once, then cached |
-| 9 | `loading history` | Parse the whole repo's `git log --all --numstat -M` once (streamed) into an in-memory cache. | Every history feature, SZZ and `path_size_pctile` reuse it; otherwise ~1.5 minutes would be silently spent inside the first PR on a Kubernetes-sized repo. | none |
+| 8 | `ci history` | Build `{commit: failure|success}` from the Actions workflow-runs list (100 runs/call, cached to `ci_cache/<owner>_<name>.json`; the cache is versioned, expires after 7 days and is rebuilt when it was built before the newest PR, see 8.2). | Historical CI-fail-rate features (file/author). Far cheaper than one check-runs call per commit. | ≤ 400 calls once, then cached |
+| 9 | `loading history` | Parse the whole repo's `git log --all --numstat -M -z` once (streamed) into an in-memory cache, and build the per-repo history index once, answered by bisect. | Every history feature, SZZ and `path_size_pctile` reuse it; otherwise ~1.5 minutes would be silently spent inside the first PR on a Kubernetes-sized repo. | none |
 | 10 | `szz` | Build or reuse the SZZ index (section 10). | `label_szz_bug`, `days_to_szz_fix`. | none |
 | 11 | `mining PRs` | Mine PRs in worker threads, consume in order, resolve LLM answers, write checkpoint and capture records. | The main work. | per PR, see 4.6 |
 | 12 | `repo-wide labels` | `flaky.apply`, `repo_local.compute_repo`, `merge_signals.compute_repo` (4.7). | These need every PR's outcome. | none |
@@ -260,7 +262,7 @@ There are four selection modes (plus `--full-repo`, below). Drafts are always le
 
 **D. Git-primary discovery** (`--pr-discovery git`). Enumerate merged PRs from the default branch's commit messages (same link patterns); the API only *enriches* each PR (`fetch_pr`: created_at, base ref, head, labels, association, draft, milestone, authoritative merged_at). No closed-PR pagination; works offline for discovery. PRs without a recognisable reference are missed; no unmerged rows. Used by the offline contract test.
 
-**Unmerged rows.** The unmerged PRs' commits are fetched from `refs/pull/N/head` **without creating local refs**, so `git log --all` scans (history cache, revert/hotfix search) never see unmerged work as history or as revert candidates. The diff base is the merge-base of the base commit GitHub recorded (or the default branch when it is gone) and the head. PRs whose head cannot be fetched are dropped.
+**Unmerged rows.** The unmerged PRs' commits are fetched from `refs/pull/N/head` **without creating local refs**, so `git log --all` scans (history cache, revert/hotfix search) never see unmerged work as history or as revert candidates. The diff base is the merge-base of the base commit GitHub recorded (or the default branch when it is gone) and the head. PRs whose head cannot be fetched are dropped with a warning, not counted as gone (a row with null features for such a PR was considered and left for later, see 20). A `git fetch` that fails for any reason other than "ref missing" is retried and then raises `FetchError`, so a failed head is unobserved, not gone.
 
 **Stale-open rows.** PRs still open after `abandon_days` (60) with no human non-author comment or review are rows too: unmerged, abandoned, `closed_at` null, `close_reason = abandoned`, `close_reason_source = rules`. Open PRs that did get a response have no outcome yet and are left out. Only open PRs created in the mined block's creation window are considered; not in landed-commit mode.
 
@@ -281,7 +283,10 @@ There are two ranges per PR (ADR 0010).
 | 1-parent **rebase** merge | `head~N` (N = PR commit count) | merge commit |
 | landed-commit (git base known) | parent of the oldest linked commit | newest linked commit |
 | root commit (no parents) | API `base.sha` | merge |
+| fast-forwarded PR whose head is itself a merge commit | merge-base(base, head) | head |
 | closed-unmerged | merge-base(base, head) | PR head |
+
+For a fast-forwarded PR whose head is a merge commit, the author is taken from the first-parent chain, not from the merge itself. A commit's landing is found from `landed_commit_index` and the first hit that is a merge or carries `(#N)` wins; reverts are skipped, and the API's `merge_commit_sha` is preferred when there is one.
 
 **Merge style detection** (`_make_base_resolver`, once per repo): one call to repo settings for allowed merge methods plus a local parent-count sniff over up to 50 PRs. If at least half are 2-parent merges the repo is merge-dominant. Per-PR commit-count calls are paid **only** when the repo is plausibly rebase-style (not merge-dominant, rebase allowed, API on). In repos allowing both squash and rebase, a cheap local author-overlap check (`_looks_rebased`: a majority of `head~1..head~(n-1)` share the PR author) confirms each multi-commit PR. Squash and merge-commit repos cost nothing extra. The printed `[merge-style]` line states the verdict.
 
@@ -302,7 +307,7 @@ There are two ranges per PR (ADR 0010).
 Run inside a worker thread; every step is timed (`runlog.step`). Returns `None` (a "no-rows" skip) when there is no diff, a missing commit or a shallow clone.
 
 1. **Ranges.** Final range, then at-open range (`pr["_open"]`) else final with `open_snapshot = final`. If the at-open diff is empty, fall back to final.
-2. **Identity.** `author_email` is the **mailmap-canonical** git author (`%aE`) of the commit that is the PR's own head (`_feat_head`: p2 of a 2-parent merge, the merge commit for a squash, the PR head for unmerged), *not* the maintainer who merged. This makes EXP, REXP and every author feature about one person.
+2. **Identity.** `author_email` is the **mailmap-canonical** git author (`%aE`) of the commit that is the PR's own head (`_feat_head`: p2 of a 2-parent merge, the merge commit for a squash, the PR head for unmerged), *not* the maintainer who merged. This makes EXP, REXP and every author feature about one person. Merge commits (more than one parent) never count as anyone's work: they are left out of the author totals, EXP, REXP, SEXP, `author_last`, `n_commits_total`, `repo_revert_base_rate` and the percentile populations. Their CI verdict still goes to the merger and to the files of the first-parent diff.
 3. **Timeline** (`pr["_events"]`, or fetched if missing). Used for merge labels and to rebuild the title, milestone and labels **as at open + grace** (`merge_labels.at_open`). *Why:* maintainers retitle rejected PRs ("AI spam") and milestone accepted ones; in one pilot repo 210 of 312 titles had changed.
 4. **`diff_stats`** (Source 4a/4b) → size, spread, path flags.
 5. **History index** at the base commit (`history.build_repo_index`, restricted to the changed paths), then per file `per_file_features` + `line_history.per_file_line_features`.
@@ -318,18 +323,20 @@ Run inside a worker thread; every step is timed (`runlog.step`). Returns `None` 
 
 Private keys carried on the row until written: `__llm__` (the fetch result), `__capture__`, `_repo_local`, `__merge_signals__`, `__ci__`. They are popped before the dataset is written (the checkpoint keeps the sidecars so a resumed run can still do the repo-wide pass).
 
+**Big PRs.** A PR touching more than `--max-files-deep` files (default 300, `RIFFLE_MAX_FILES_DEEP`, 0 = off) gets per-file features for the N files with the largest churn only; the rest are `null`, and so are `LT`, `la_norm`, `ld_norm` and every `sum_*` aggregate on that PR (`max_`, `min_` and `mean_` cover the measured files). The cap is part of the checkpoint stamp (4.8).
+
 **Failure handling per PR:** a `GitError` is a `git-error` skip; any other exception is an `exc:<Type>` skip with a warning; `LLMUnavailable` stops the repo. Skips are counted and printed (`[skips] N/M PRs produced no row`).
 
 ### 4.6 The ordered consumer: parallel yet reproducible
 
 - `--workers N` (default `min(6, CPUs)` lowered to fit free RAM: `(free RAM − 1.5 GB) // 0.8 GB`; `RIFFLE_WORKERS` overrides; the miner says when it lowered it). One October 2026 run peaked at 5.5 GB with 6 workers on a large repo.
 - A window of `max(2 × workers, 2 × llm_concurrency)` futures is kept in flight; results are consumed **in PR order**.
-- For each result the consumer (main thread): prints `[pr i/N] #num (Xs)`, handles skips, pops `__llm__`, **retries a failed LLM answer in place** (`_retry_llm`; later PRs queue behind it so the miner pauses), resolves the flags (`llm_flags.resolve` drives the consecutive-failure breaker), then commits: capture record and index entry written, row appended, checkpoint line written and flushed.
+- For each result the consumer (main thread): prints `[pr i/N] #num (Xs)`, handles skips, pops `__llm__`, **retries a failed LLM answer in place** (`_retry_llm`; later PRs queue behind it so the miner pauses), resolves the flags, then commits: capture record and index entry written, row appended, checkpoint line written and flushed.
 - Interrupts: ctrl+c shuts the pool down without waiting; finished PRs are in the checkpoint; SZZ blame workers ignore SIGINT so there are no per-worker tracebacks.
 
 ### 4.7 The repo-wide pass
 
-Needs every PR's outcome, so it runs once all rows exist (and is skipped if the LLM breaker tripped):
+Needs every PR's outcome, so it runs once all rows exist (and is skipped if the LLM stopped the repo):
 
 1. **`flaky.apply`** corrects `label_ci_fail`, `ci_fail_flaky_only` and `label_bad` (6.4).
 2. **`repo_local.compute_repo`** fills the PR-history columns (`similar_pr_*`, `path_failure_mode_*`, `path_detection_lag_days`, `revealed_path_scrutiny`, `release_cycle_position`).
@@ -341,6 +348,10 @@ Needs every PR's outcome, so it runs once all rows exist (and is skipped if the 
 - `--out` may be `.parquet` (default; falls back to `.jsonl` with a warning when pandas/pyarrow are missing, *before* the append merge so every repo appends to the same file), `.jsonl` or `.csv`.
 - `--append` merges into an existing file and de-duplicates by `(repo, pr_number)` keeping the **newest** extraction. If the existing file cannot be read, the run writes `<out>.recover-<time>.jsonl` and **leaves `--out` unchanged** (never clobbers the accumulated dataset).
 - Row order: merged PRs newest-merged first, then unmerged PRs.
+- **Writes are atomic.** The final dataset is written to a temporary file and moved with `os.replace`. A `_write` in append mode with no rows leaves the dataset untouched. If the parquet write fails, the fallback merges the existing parquet and the existing `.jsonl` alternative, or writes a recover file and keeps the checkpoint.
+- **The checkpoint** (`<out>.partial.jsonl`) is read tolerantly: torn, blank or non-object lines are skipped, the tail is healed before appending, and rows are de-duplicated by `pr_number`, the last winning. The batch's per-repo row count (`_checkpointed`, used by the store status) reads only each line's leading `repo` field, caches by file size and mtime plus a head and tail fingerprint, and parses only appended lines; a rewrite is detected by the fingerprint and re-read in full (a rewrite that changes only the middle of the file while size and mtime stay the same is not detected).
+- **Checkpoint stamp.** Each line carries `_ckpt`: the miner's major.minor, whether the LLM was on and its model, CI history, SZZ, the observation cutoff day, and the flags that shape the data (`scanners`, `api_contract`, `review_history`, `merge_outcome`, `declared_labels`, `deps_cve`, `github_api`, `pr_discovery`, `llm_scope`, `llm_sample_pct`, `close_reason_llm`, `llm_max_diff_chars`, `domain`, `max_files_per_pr_deep`). On resume, a row whose stamp differs from the current run's is mined again, and the log names the keys that differ. Rows with no stamp (written by older versions) are accepted. `_ckpt` is stripped from the output. Rows written with `--no-network` carry `repo = owner/name`.
+- `snapshots_raw/<repo>/capture.jsonl` and `pr_index.jsonl` are trimmed atomically on resume and are idempotent per PR; a resume with `--snapshots` after a `--no-snapshots` run re-mines the in-scope PRs missing from the index.
 
 ### 4.9 After mining
 
@@ -348,9 +359,9 @@ Needs every PR's outcome, so it runs once all rows exist (and is skipped if the 
 - **Shard manifest** (`dataset_pc1of3.shard.json`): split ID, PC, N, miner version, host, finish time, repos, mined-OK count, failures, file names.
 - **Admin** (`admin.py`, ADR 0015): the lead's `list`, `revoke NAME`, `revoke-split ID` and `whoami` over the store's `/v1/admin/*` endpoints, with `RIFFLE_ADMIN_TOKEN` from `.env`.
 - **Joining a split** (`join.py`, ADR 0015): `--shard-plan N --issue-tokens` asks the store (admin token) for one write token per PC, bound to the plan's split ID and optionally expiring (`--token-days`), and prints a join code per PC (`riffle1.` plus base64 JSON: store URL, token, split, PC K of N, miner version, and the plan's flags without the plan-only ones). `join.py CODE` calls the store's `/v1/whoami`, writes `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` to `.env` and prints `build_dataset.py <flags> --shard K/N`. At the start of a run `_sync_begin` re-checks the token and turns sync off, with the reason, when it is rejected or its split is not the split these flags compute. `doctor.py` has a Team store line.
-- **Central sync** (`sync.py`, ADR 0015), when `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` are set: after each repo, on a Stop and at batch end, `build_dataset.py` PUTs the run log and trace, `health/*.json`, the dataset, its snapshot and commit-feature tables, the `.partial.jsonl` checkpoint and the shard manifest under `<miner_version>/<split_id>/`, then a `run.json` with the counts and reason. `run.json` carries each repo's state (pending, mining, done, failed, skipped), its rows (a done repo's from the dataset, an unfinished one's from its own lines in the shared checkpoint, which also holds the rows a failed or stopped repo keeps for the rerun) and, once selected, its PR count, so the store can show done and remaining per PC; remaining covers started repos only, since an unstarted repo has no selection yet. While a repo mines, a status-only `run.json` goes out at once when the run starts and when each repo starts, and then every 3 minutes while a repo mines, so the store shows a PC within seconds of Start and its progress within a few minutes. Unchanged files (size and mtime in `.sync_state.json`) are skipped, each PUT carries a SHA-256, and a failure or an unreachable store is a warning that ends that sync, never the run. `ci_cache/`, `snapshots_raw/` and clones stay local. `--no-sync` turns it off.
+- **Central sync** (`sync.py`, ADR 0015), when `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` are set: after each repo, on a Stop and at batch end, `build_dataset.py` PUTs the run log and trace, `health/*.json`, the dataset, its snapshot and commit-feature tables, the `.partial.jsonl` checkpoint and the shard manifest under `<miner_version>/<split_id>/`, then a `run.json` with the counts and reason. The final `batch done` is sent only when every file was sent or skipped; otherwise the reason is `batch incomplete`, with `files_failed` and a new `files_deferred` list, and the store rewrites such a run to `batch incomplete` (a run only counts as finished when its status says so). `run.json` carries each repo's state (pending, mining, done, failed, skipped), its rows (a done repo's from the dataset, an unfinished one's from its own lines in the shared checkpoint, which also holds the rows a failed or stopped repo keeps for the rerun) and, once selected, its PR count, so the store can show done and remaining per PC; remaining covers started repos only, since an unstarted repo has no selection yet. While a repo mines, a status-only `run.json` goes out at once when the run starts and when each repo starts, and then every 3 minutes while a repo mines, so the store shows a PC within seconds of Start and its progress within a few minutes. Unchanged files (size and mtime in `.sync_state.json`) are skipped, each PUT carries a SHA-256, and a failure or an unreachable store is a warning that ends that sync, never the run. `RIFFLE_SYNC_URL` must be `https` (plain `http` only for `localhost`, `127.0.0.1` and `::1`), and a cross-origin redirect is refused so the `Authorization` header never follows it. `.sync_state.json` is locked (a `.sync_state.json.lock` file is created next to it), merges only the keys that changed, and skips a second file with the same base name with a warning; health JSON is written atomically. A wiped store is not detected (it needs a listing API on the store; deferred). `ci_cache/`, `snapshots_raw/` and clones stay local. `--no-sync` turns it off.
 - **`merge_shards.py`** joins PCs (section 12).
-- **Training** reads the three tables with `pipelines/training/frames.py`: joins at load time, splits by PR or repo from a stable hash, nulls diff features on `open_snapshot == final`, drops `near_decided` snapshots, rescales snapshot weights per PR to 1, never offers outcome/id/metadata columns as inputs, and refuses snapshots that no longer match their dataset.
+- **Training** reads the three tables with `pipelines/training/frames.py`: joins at load time (it raises if commit rows reference PRs missing from the dataset, and handles empty tables), splits by PR or repo from a stable hash (the repo name lower-cased; connected components grouped by repo and PR and by a shared `head_sha` or `snapshot_head_sha` across the three tables, so no commit straddles train and test), masks the complete list of 125 diff-derived columns on `open_snapshot == final` (read from `x-riffle-diff-derived` in the schema plus an explicit list: `la_norm`, `LT`, `AGE`, size percentiles, hotspot, blame and history columns, the diff-only LLM flags), drops `near_decided` snapshots, rescales snapshot weights per PR to 1, never offers outcome/id/metadata columns as inputs (`x-riffle-non-input`, ids, snapshot bookkeeping, `merge_via`, `open_snapshot` and the five provenance columns), and refuses snapshots that no longer match their dataset.
 
 ---
 
@@ -360,11 +371,11 @@ All "per file" values are for the PR's changed files. The base commit is the at-
 
 ### 5.1 Source 4a/4b: diff size, spread and paths (`features/diff_stats.py`)
 
-Computed from `git diff --numstat -M base...head`.
+Computed from `git diff --numstat -M -z base...head` (and `--name-status -z`, with `-c core.quotePath=false` on every git call, so a path with non-ASCII, quoted or backslash characters is read as it is and still gets its lines of code, blame and SZZ). The patch is read by a hunk-count parser, so a content line that starts `--` or `++` is kept. One numstat, name-status and patch is taken per `(base, head)`.
 
 - Generated/vendored files are removed from the risk counts but their share is kept (`frac_generated_lines`).
 - **`LA` / `LD`**: lines added / deleted in non-generated files. **`NF`**: non-generated files. **`ND`**: distinct directories. **`NS`**: distinct subsystems (`config.subsystem_of`: the top directory, or the first **two** components when the top is a generic container such as `src`, `lib`, `pkg`, `packages`, `apps`, `internal`, `cmd`, `crates`, ... so NS and SEXP do not collapse to 1). These are the Kamei (JIT defect prediction) size/diffusion metrics.
-- **`Entropy`**: normalised change entropy over per-file (added + deleted) lines, `-Σ p·log2 p / log2(files)`, 0 for a single file.
+- **`Entropy`**: normalised change entropy over per-file (added + deleted) lines, `-Σ p·log2 p / log2(files)`, 0 for a single file. Only files with changed lines count (a pure rename or a mode change does not).
 - **`frac_test_lines`**, **`lang_mix`** (distinct recognised languages), **`n_files_added/removed/renamed`** (`git diff --name-status -M`), **`patch_missing_files`** (files git printed `-\t-` for: binary or too large; `0\t0` rows such as pure renames are not counted).
 - **Path flags** (`touches_*`) are `any()` over non-generated changed files using `config.PATH_RULES` (migrations, lockfiles, dependency manifests, CI config, infra, auth-like paths with token boundaries so `author` doesn't match, CODEOWNERS/riffle.yml). **`test_only` / `docs_only`**: all changed files are tests / docs.
 
@@ -372,7 +383,7 @@ Computed from `git diff --numstat -M base...head`.
 
 ### 5.2 Source 2: repository history at the base (`features/history.py`)
 
-`build_repo_index` makes **one pass over all commits before the base** (from the cached `git log --all --numstat -M`), keeping per-file aggregates only for the PR's changed paths (a vendor bump touching 5k files would otherwise create 25M co-change pairs) but computing repo-wide author aggregates and the repo-wide hotspot ranking.
+The index is built **once per repo** and answered by bisect for each PR, so a PR no longer re-walks history (values are unchanged except for the last digit of a float in the decay and REXP sums, whose order of summation changed). `build_repo_index` makes **one pass over all commits before the base** (from the cached `git log --all --numstat -M`), keeping per-file aggregates only for the PR's changed paths (a vendor bump touching 5k files would otherwise create 25M co-change pairs) but computing repo-wide author aggregates and the repo-wide hotspot ranking.
 
 Per-file (collapsed by `aggregate.py`, see the table in 5.2.1):
 
@@ -381,9 +392,10 @@ Per-file (collapsed by `aggregate.py`, see the table in 5.2.1):
 - `hotfix_count_365d`: hotfix-worded commits touching the file in the last year.
 - `test_cochange_ratio`: share of the file's prior commits where a test file changed too (for non-test files).
 - `file_post_merge_ci_fail_rate`: share of the file's commits with a CI verdict whose CI failed (from the CI history map; `null` when no verdicts).
-- `file_age_days`: days since the file's first commit before base. `NUC` = number of prior commits touching it; `NDEV` = distinct prior authors.
+- `file_age_days`: days since the file's first commit before base. `NUC` = number of prior commits touching it; `NDEV` = distinct prior human authors (bots are not counted).
+- **Renames.** Base-side lookups use the file's **old** path, and a file's history is followed across renames, so a renamed file keeps its churn, fixes and owners.
 - `file_complexity_ccn`: **max** function cyclomatic complexity of the file at base (lizard; `0.0` for a file with no functions; `null` for an unsupported language or lizard missing).
-- **Ownership by lines** (not commits): the file is blamed at base and each surviving line's author counted. `file_top_author_share` (largest author's share), `file_minor_contributor_count` (authors owning under 5% of lines), `abandoned_lines_share` (share of lines whose author has been inactive more than 180 days as of base). Blame is cached and shared with Source 3.
+- **Ownership by lines** (not commits): the file is blamed at base and each surviving line's author counted. `file_top_author_share` (largest author's share), `file_minor_contributor_count` (authors owning under 5% of lines), `abandoned_lines_share` (share of lines whose author has been inactive more than 180 days as of base). Blame is cached and shared with Source 3. Bot commits do not own lines; line ages are clamped to 0.
 - **Hotspot** = `churn_365d × max CCN`, ranked across **every** file in the repo at base with recent churn and a lizard-supported language (not just the changed ones), so "touches a top-20 hotspot" is a real repo-relative signal. `file_hotspot_score`, `file_hotspot_rank` (1 = hottest; `null` if unranked), `touches_topk_hotspot`, `n_topk_hotspots_touched`, `min_hotspot_rank_touched`. Only files with recent churn can score, which keeps this cheap on large repos. Complexity is cached per blob and per content hash.
 - `_loc` (file lines at base) feeds `LT`; `_last_change_days` feeds `AGE`. Both are internal and not emitted per file.
 
@@ -392,10 +404,10 @@ PR-level:
 - **`LT`** = total lines of the changed files at base; **`la_norm` / `ld_norm`** = `LA/LT`, `LD/LT` (0.0 when `LT` is 0). **`AGE`** = mean days since last change across changed files that have history (`null` when none).
 - **`cochange_degree`** = max over changed files of the number of "strong partners" (files that changed together in at least 3 prior commits); **`cochange_partners_missing`** = max over changed files of strong partners **not** in this PR ("you usually change X with Y").
 - **`expected_test_cochange_missing`**: the PR changes a source file whose `test_cochange_ratio ≥ 0.5` but contains no test file.
-- **Author behaviour** (author keyed by canonical email): `author_revert_rate` is smoothed toward the repo base rate, `(reverts + α·base_rate)/(total + α)` with α = 5 (empirical Bayes), where reverts are the author's commits that are reverts; `author_file_familiarity` = share of touched paths the author touched before; `author_days_since_last_change`; `author_post_merge_ci_fail_rate` (same smoothing, `null` with no CI history for the author); `repo_revert_base_rate` = reverts / all commits before base.
+- **Author behaviour** (author keyed by canonical email): `author_revert_rate` is smoothed toward the repo base rate, `(reverts + α·base_rate)/(total + α)` with α = 5 (empirical Bayes), where reverts are the author's commits that are reverts; `author_file_familiarity` = share of touched paths the author touched before; `author_days_since_last_change`; `author_post_merge_ci_fail_rate` (same smoothing, `null` with no CI history for the author); `repo_revert_base_rate` = reverts / all commits before base (merge commits excluded).
 - **Kamei experience:** `EXP` = author's prior commits; `REXP` = recency-weighted, `Σ 1/(age_years + 1)`; `SEXP` = author's prior commits in the touched subsystems.
-- **Repo-relative percentiles:** `pr_size_pctile_repo`, `nf_pctile_repo`, `entropy_pctile_repo` = fraction of prior non-empty commits strictly smaller. The population is per *commit* (a point-in-time proxy for PR size).
-- **`FIX`**: the PR title **at open** plus its head commit subject name a bug/fix as a whole word.
+- **Repo-relative percentiles:** `pr_size_pctile_repo`, `nf_pctile_repo`, `entropy_pctile_repo` = fraction of prior non-empty commits strictly smaller. The population is per *commit* (a point-in-time proxy for PR size), skips merge commits and generated files.
+- **`FIX`**: the PR title **at open** plus the head commit's subject **as at open** name a bug/fix as a whole word.
 - **`author_prs_merged_repo`**: how many PRs the same git author had merged **before this PR opened** (`bisect` over the author's sorted merged times). `null` without a PR list; `0` for an author with none.
 - **`concurrent_open_prs_same_files` / `_same_hunks`**: other PRs that opened at or before this one and were still open at this one's opening, touching a common file / overlapping base-side lines (`git diff -U0`). Computed over the fetched PR set, so a small `--max-prs` undercounts. Unmerged PRs count (closer to what was actually open); stale-open PRs count as open "forever".
 
@@ -436,24 +448,29 @@ For each changed file, the lines the PR **deletes or modifies** (base-side line 
 - `mod_lines_distinct_authors`: how many people wrote them. `mod_lines_self_authored_share`: share written by the PR author.
 - `mod_lines_prior_fix_share`: share whose last-touching commit's subject is a fix.
 - `hunk_fix_proximity`: recency-decayed (half-life 90 days) count of base lines owned by fix commits that lie within ±5 lines (`hunk_proximity_k`) of any modified line: "you are editing next to old bug fixes".
-- Files with no modified lines or no blame (a PR that only adds files) get `null` ages, `0` counts/shares.
+- Files with no modified lines or no blame (a PR that only adds files) get `null` ages, `0` counts/shares. A blame that failed or timed out is `null`, not `0`. A renamed file is blamed at the base under its old path.
 
 These are the only history features anchored to specific lines. They are novel as model inputs: validate with an ablation before claiming lift.
 
 ### 5.4 Source 4d: scanners (`features/scanners.py`)
 
-- **lizard** (`ccn_delta`, `max_ccn_changed_func`, `n_funcs_modified`): every changed file in a supported language is analysed at base and head; functions are matched by `long_name`; a function whose CCN changed (a new function compares against 0) counts as modified; `ccn_delta` is the sum of differences, `max_ccn_changed_func` the largest head CCN among them. Removed functions are not counted. `null` when scanners are off or lizard is missing.
-- **semgrep** (`semgrep_findings_new`, `semgrep_high_conf_security_new`, `semgrep_cwe_top25_new`): the changed files are exported at head and base to temp dirs and scanned with `--config auto`. A finding is **new** if its `(check_id, path relative to the exported tree, first 80 chars of the matched lines)` is not in the base scan. The base scan is skipped when head has no findings (80% of PRs in the vite pilot; halves semgrep starts). "High-confidence security" = metadata `category: security` and `confidence: HIGH`. The Top-25 flag is true if any new finding's CWE is in a fixed Top-25 set. A semgrep start costs about 4 s, the PR's biggest cost; batching several PRs per process was tried and measured no faster. `null` when disabled; `[]` (zero findings) if semgrep is not installed.
+- **lizard** (`ccn_delta`, `max_ccn_changed_func`, `n_funcs_modified`): every changed file in a supported language is analysed at base and head; functions are matched by `long_name`; a function whose CCN changed (a new function compares against 0) counts as modified; `ccn_delta` is the sum of differences, `max_ccn_changed_func` the largest head CCN among them. **Deleted functions count** in `ccn_delta` and `n_funcs_modified`. A renamed file is read at the old path for its base content. `null` when scanners are off, lizard is missing, or lizard hit a parse error (all three CCN columns are then null).
+- **semgrep** (`semgrep_findings_new`, `semgrep_high_conf_security_new`, `semgrep_cwe_top25_new`): the changed files are exported at head and base to temp dirs and scanned. A finding is **new** when the multiset of `(rule, path relative to the exported tree, normalised matched code)` at head has more of it than the base scan; no line number is part of the key, so moving code is not a new finding. The base scan is skipped when head has no findings (80% of PRs in the vite pilot; halves semgrep starts). "High-confidence security" = metadata `category: security` and `confidence: HIGH`. The Top-25 flag is true if any new finding's CWE is in a fixed Top-25 set. A semgrep start costs about 4 s, the PR's biggest cost; batching several PRs per process was tried and measured no faster.
+  - **A scan that did not run is `null`, never zero.** A missing tool, a return code other than 0 or 1, bad JSON or a timeout makes all three semgrep columns `null` (before 7.0.0 a missing tool gave `0`, and a failed base scan counted every head finding as new).
+  - **Rules and egress.** `RIFFLE_SEMGREP_RULES` (a file or a directory) pins local rules; without it the scan uses `--config auto`, which **fetches the rules from semgrep.dev**, so that request leaves the machine. `--metrics=off --disable-version-check` is always passed. `RIFFLE_SEMGREP_PARALLEL` (default 2) limits concurrent semgrep processes, each with `--jobs 1`.
+  - **Export safety.** `.semgrepignore`, `.gitignore` and `.ignore` are never exported, and every exported path is checked with a real-path containment test.
 
 ### 5.5 Source 4e: dependencies and CVEs (`features/deps_cve.py`)
 
 Only when a manifest or lockfile changes.
 
-- Ecosystem is inferred from the filename (npm, PyPI, Go, crates.io, RubyGems, Maven, Packagist, NuGet by extension, Pub, Hex). Both versions are parsed best-effort per ecosystem (`pom.xml` resolves `${property}` versions; inherited or unresolved versions are skipped), and each dependency is classified **added / removed / upgraded / downgraded** by semver comparison.
-- `n_deps_added`, `n_deps_upgraded`, `n_deps_downgraded`, `n_major_bumps` (upgrades whose major changed) need no network and are always computed.
-- With the network: OSV.dev is queried for every before/after `(ecosystem, name, version)`. `osv_vulns_introduced` = IDs present at head and not at base; `osv_vulns_fixed` the reverse. `vuln_has_fix_available` = any introduced record lists a fixed version. `ghsa_max_severity_introduced` (LOW/MODERATE/HIGH/CRITICAL, from GHSA-sourced OSV records, or a CVSS score fallback) and `ghsa_malware_dep` (a `MAL-` ID or alias, or `type: malware`) come from the introduced records.
-- `osv_ghsa_disagreement`: for versions newly present at head, does GHSA's GraphQL verdict (vulnerable range match) differ from OSV's? `null` with no token or no usable GHSA answer.
-- **Unobserved is not clean:** if any OSV query fails after retries (429/5xx back-off up to 4 attempts, `Retry-After` honoured), **all CVE fields stay `null`** rather than presenting an undercount as a reassuring number. The counts stay set.
+- Ecosystem is inferred from the filename (npm, PyPI, Go, crates.io, RubyGems, Maven, Packagist, NuGet by extension, Pub, Hex). Both versions are parsed best-effort per ecosystem (`pom.xml` resolves `${property}` versions), and each dependency is classified **added / removed / upgraded / downgraded** by semver comparison. Parsers cover manifests and lockfiles: `package-lock.json` (v1, v2 and v3), `yarn.lock`, `poetry.lock`, `Pipfile.lock`, `composer.lock`, plus the manifest formats above. Counts are kept **per `(ecosystem, directory)`**, and a lockfile overrides the manifest's range. PyPI names are PEP 503-normalised and extras are read; `go.sum` and `/go.mod` suffixes are stripped.
+- **Concrete versions only.** A range, `workspace:` or a git URL is `unresolved`: it cannot be looked up, so the CVE columns are `null`.
+- `n_deps_added`, `n_deps_upgraded`, `n_deps_downgraded`, `n_major_bumps` (upgrades whose major changed) need no network. They are `null` when any touched manifest is unparsed or unreadable (pnpm lockfiles, `pyproject.toml`, Gradle, a git read that failed), instead of counting only the files that were understood.
+- **Point-in-time CVEs.** `deps_cve.compute` takes `as_of`: the PR's open time (for a snapshot, the time the head was first seen). OSV and GHSA records **published after `as_of`, or withdrawn**, are dropped, so a vulnerability disclosed after the PR opened cannot appear. An undatable record, or an `as_of` that cannot be read, makes **all CVE columns `null`**.
+- With the network: OSV.dev is queried for every before/after `(ecosystem, name, version)`. `osv_vulns_introduced` = IDs present at head and not at base; `osv_vulns_fixed` the reverse. `vuln_has_fix_available` is `False` when no introduced record lists a fix and `null` when any does: OSV does not date the release of a fix, so "a fix exists" cannot be shown as of `as_of`. `ghsa_max_severity_introduced` (LOW/MODERATE/HIGH/CRITICAL, from GHSA-sourced OSV records, or a CVSS score fallback) and `ghsa_malware_dep` (a `MAL-` ID or alias, or `type: malware`) come from the introduced records.
+- `osv_ghsa_disagreement`: for versions newly present at head, does GHSA's GraphQL verdict (vulnerable range match) differ from OSV's? `null` with no token, and `null` when GHSA gave an error reply, a `hasNextPage`, a version range that could not be parsed, or more than 100 vulnerabilities.
+- **Unobserved is not clean:** if any OSV query fails after retries (429/5xx back-off up to 4 attempts, `Retry-After` honoured), or the reply is paged, **all CVE fields stay `null`** rather than presenting an undercount as a reassuring number. The OSV cache holds successful answers only.
 - **Caveat:** with no manifest change, the CVE fields are also `null` (the counts are `0`), so for the CVE columns `null` means both "no dependency change" and "unobserved".
 
 ### 5.6 Source 5: deterministic checks (`features/deterministic.py`)
@@ -467,14 +484,14 @@ Regex over the **added lines** of the diff (and removed lines for observability)
 | `observability_delta` | removed log/metric lines **minus** added ones (positive = net removal) |
 | `bound_or_comparison_edit` | added source lines containing a comparison, `==`, `!=`, `+1`, `-1` or `[i±1]`: the cheap "off-by-one-ish edit" signal |
 | `unused_import_or_dead_code_added` | added `import`/`from` lines whose first symbol never appears in the other added lines (very rough, Python/JS) |
-| `dependency_major_bump_count` | packages whose **major** version rose between removed and added manifest/lockfile lines (coarse name/version parse) |
+| `dependency_major_bump_count` | packages whose **major** version rose between removed and added manifest/lockfile lines (coarse name/version parse; a bare `"version": "1.2.3"` line is now attributed to the package named on the nearest preceding line, and skipped when there is none: it used to be read as a package called `version`, so every lockfile entry collapsed into one) |
 | `migration_reversibility` | `destructive` if an added line in a migration path has `DROP TABLE/COLUMN`, `TRUNCATE`, `DELETE FROM`; `reversible` if a migration changed with none; `null` otherwise |
 
 Note `dependency_major_bump_count` (regex) and `n_major_bumps` (parsed manifests, Source 4e) are two different measurements.
 
 ### 5.7 Source 5: API contract change (`features/api_contract.py`)
 
-For changed spec files (`.proto`, `.graphql/.gql`, and `.yaml/.yml/.json` whose first 2,000 characters contain `openapi:` or `swagger:`): OpenAPI → `oasdiff breaking`, protobuf → `buf breaking`, GraphQL → `graphql-inspector diff`. A removed spec is `breaking`, a brand-new one `additive`. `graphql-inspector` exit 0 is `additive`; exit 1 is `breaking` only when it prints `Detected N breaking changes`, otherwise (unparsable schema, crash) the verdict is null. The PR value is the **worst** across spec files: `null` (no spec changed, or no tool installed / the tool failed to give a verdict), `additive`, `breaking`. Each tool is optional.
+For changed spec files (`.proto`, `.graphql/.gql`, and `.yaml/.yml/.json` whose first 2,000 characters contain `openapi:` or `swagger:`): OpenAPI → `oasdiff breaking`, protobuf → `buf breaking`, GraphQL → `graphql-inspector diff`. A removed spec is `breaking`, a brand-new one `additive`. `graphql-inspector` exit 0 is `additive`; exit 1 is `breaking` only when it prints `Detected N breaking changes`, otherwise (unparsable schema, crash) the verdict is null. The PR value is the **worst** across spec files: `null` (no spec changed, or no tool installed / the tool failed to give a verdict), `additive`, `breaking`. A PR is `null` whenever **any** changed spec is unobserved, unless another spec is already `breaking`. `oasdiff` with a non-zero return code or unparseable output gives no verdict; `buf` is run with `--error-format json`. Each tool is optional.
 
 ### 5.8 Source 6: LLM flags
 
@@ -487,10 +504,10 @@ The AIDev feature catalog's merge-model features the miner's own data can supply
 Per PR:
 
 - `has_linked_issue` (`fixes/closes/resolves #N`, `owner/repo#N`, or an issue URL in the body), `body_headings` (Markdown headings), `body_checklist_items` (`- [ ]` / `- [x]`), `body_has_test_plan` ("Test plan", "How to test", "Testing" heading), `agent_boilerplate` (an agent watermark: "Generated with Claude Code", "Co-authored-by: Claude/Copilot", "This PR was generated by", "Devin run", "OpenAI Codex", "Cursor agent", ...).
-- `agent_name`: the first matching agent among `claude_code`, `codex`, `copilot`, `cursor`, `devin`, `jules`, `sweep`, tested against the author login, head branch, git email and body. `head_branch_agent_prefix`: branch starts `claude|codex|copilot|cursor|devin|jules|sweep` followed by `/` or `-`.
+- `agent_name`: the first matching agent among `claude_code`, `codex`, `copilot`, `cursor`, `devin`, `jules`, `sweep`, tested against the author login, head branch, git email and body. Login patterns are anchored (`jules[bot]`, `google-labs-jules[bot]`), a branch prefix needs its `/`, and `cursoragent`, `devin-ai` and `sweep-ai` need an exact match, so `julesb`, `claude-docs` and `cursor-fix` are not agents. `head_branch_agent_prefix`: branch starts `claude|codex|copilot|cursor|devin|jules|sweep` followed by `/` or `-`.
 - `author_account_age_days`: open time minus the account's creation time (one cached `/users` call per author; static so it is point-in-time safe).
 - `has_contributing`, `has_agents_md`: files at the base commit (two `ls-tree` calls): a contributing guide at the root, `.github/` or `docs/`; an agent instructions file (`AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `.cursor`, `.github/copilot-instructions.md`).
-- The body is read at **mining time** (edits are not in the timeline), so body features can see edits made after open (ADR 0010 open item: body at open from GraphQL `userContentEdits`).
+- The body is read at **mining time** (edits are not in the timeline), so body features can see edits made after open (ADR 0010 open item: body at open from GraphQL `userContentEdits`). The timeline has no edit history, so as-of-open can only be `null`; this is deferred, not fixed in 7.0.0 (`body_len`, `has_linked_issue`, `body_*`, `agent_boilerplate`, `author_association`).
 
 Per repo, **prior-only** (a PR counts only if it closed strictly before this one opened, within the last 365 days; `merge_signal_min_prs = 5`; null below that). Implemented by `merge_signals.History`, indexed so it can be recomputed **as of any moment** (also used for snapshots):
 
@@ -516,8 +533,8 @@ The nine columns of `contracts/mined_features.schema.json`, capturing how **this
 
 | Column | Definition |
 | --- | --- |
-| `similar_pr_count` | past mature PRs (within 365 days) with file-set Jaccard overlap ≥ 0.2, capped at the 5 nearest (ties broken by recency); `0`, not null, when none |
-| `similar_pr_bad_rate` | with at least 3 neighbours: `(bad + (k − n)·repo_revert_base_rate)/k`, k = 5, missing neighbours filled with the repo base rate; `null` otherwise |
+| `similar_pr_count` | past mature PRs (within 365 days) with file-set Jaccard overlap ≥ 0.2, capped at the 5 nearest (ties broken by recency); `0`, not null, when none (the contract defines `0` as "none"; unchanged in 7.0.0) |
+| `similar_pr_bad_rate` | with at least 3 neighbours: `(bad + (k − n)·prior)/k`, k = 5, missing neighbours filled with the prior; the prior is the repo's own bad-PR rate among past PRs that were mature at the PR's open time T (`0.0` when none were); `null` otherwise |
 | `path_failure_mode_revert/_ci/_hotfix` | with at least 2 bad past changes on these paths in the last 365 days: share of each primary failure mode (the earliest outcome event) |
 | `path_detection_lag_days` | median days from merge to that outcome event over those bad changes |
 | `revealed_path_scrutiny` | mean per-file review "scrutiny" on the touched files divided by the repo mean (score = comments + 2 × changes-requested + review rounds, bots excluded, 180-day lookback, at least 5 prior PRs per file and for the window); needs review events (2 API calls/PR) |
@@ -544,15 +561,16 @@ For each **merged** PR the miner records *when* each outcome happened, not only 
 
 | Column | Definition |
 | --- | --- |
-| `days_to_revert` | Days from merge to the first commit that **reverts this PR**. Searched in `git log --all` from merge to merge + `label_lookahead_days` (90). Matching is **strict**: the revert must reference the merge commit's SHA (7-char or full), cite this PR's number as `#N` (as squash-merge reverts do, `fix: revert "x (#N)"`), or quote this PR's exact title as `Revert "<title>"`. The old loose rule (title anywhere in the revert body) made short titles like "Fix typo" match unrelated reverts. A revert merges after the PR it undoes, so a `#N` in its message can only point at an earlier PR. `null` = not observed. Needs a merge commit SHA. |
-| `days_to_hotfix` | Days from merge to the first **hotfix-worded** commit (5.10) touching a **significant** shared file with this PR. Files that co-change in nearly every PR (generated files, docs, lockfiles, CHANGELOG) do not count, so a hotfix that merely bumps a changelog or lockfile is not pinned to every PR that touched them. |
-| `days_to_szz_fix` | Days from merge to the earliest later fix commit that repaired a line this PR introduced (SZZ, section 10), bounded by `szz_maturity_days` (90) so older PRs don't accumulate an unbounded label rate. A fix inside the same PR, or dated before the merge, doesn't count. |
+| `days_to_revert` | Days from merge to the first commit that **reverts this PR**. Searched from merge to merge + `label_lookahead_days` (90) on the **default-branch tip** (`git log --all` only as a fallback), so a commit on an unmerged branch is not a revert. Matching is **strict**: the revert must reference the merge commit's SHA (7-char or full), have this PR's number as `#N` **in its subject** (as squash-merge reverts do, `fix: revert "x (#N)"`) or `Reverts owner/repo#N` in its body, or quote this PR's exact title as `Revert "<title>"`. The PR's own merge commit and own commits never count, and a PR number must be lower than the revert's. The old loose rule (title anywhere in the revert body) made short titles like "Fix typo" match unrelated reverts. A revert merges after the PR it undoes, so a `#N` in its message can only point at an earlier PR; the same order is required of a hotfix. `null` = not observed. Needs a merge commit SHA. |
+| `days_to_hotfix` | Days from merge to the first **hotfix-worded** commit (5.10) touching a **significant** shared file with this PR. Files that co-change in nearly every PR (generated files, docs, lockfiles, CHANGELOG) do not count, so a hotfix that merely bumps a changelog or lockfile is not pinned to every PR that touched them. Like reverts, it never matches the PR's own merge commit or commits. |
+| `days_to_szz_fix` | Days from merge to the earliest later fix commit that repaired a line this PR introduced (SZZ, section 10), bounded by `szz_maturity_days` (90) so older PRs don't accumulate an unbounded label rate. A fix inside the same PR, or dated before the merge, doesn't count. **`null` when SZZ did not run.** |
 | `label_revert` | `days_to_revert ≤ revert_window_days` (30) |
 | `label_hotfix` | `days_to_hotfix ≤ hotfix_window_days` (7) |
 | `label_ci_fail` | The **required/gating** build check failed on the merge commit; only the commit's **push-triggered** workflow runs (and other CI apps' checks) count (6.2). **Tri-state:** `true` failed, `false` passed, `null` no CI verdict observed (no CI on push, retention expired, unreadable). `null` is **not** a pass; use `ci_observed`. Failures that come only from flaky checks are corrected to `false` by `flaky.py` (6.4). |
 | `label_ci_fail_optional` | The same for **auxiliary** checks (CodeQL, Scorecards, coverage, ...). Diagnostic only; never in the target. |
 | `label_bad` | **The v1 training target:** `label_revert OR label_hotfix OR (label_ci_fail is true)`. Only *observed* positives count; an unobserved CI verdict does not force `false`. **SZZ is not included** (it tops out near 0.6 precision and catches normal iteration). Union it yourself if wanted: `y = label_bad | label_szz_bug`. |
-| `label_szz_bug` | SZZ found a later fix of a line this PR introduced (`days_to_szz_fix` not null). Noisier, kept separate. |
+| `label_szz_bug` | SZZ found a later fix of a line this PR introduced (`days_to_szz_fix` not null). Noisier, kept separate. `null` when SZZ did not run (for example `--no-szz`), not `false`. |
+| `szz_window_closed` | Optional (contract 1.3). The 90-day SZZ window had fully elapsed by `observed_through`, so a `false` `label_szz_bug` is mature. `null` when the SZZ label was not computed or `szz_maturity_days` is 0. Never a model input. |
 | `ci_observed` | A required-CI verdict existed on the merge commit. |
 | `revert_window_closed` / `hotfix_window_closed` | The 30 d / 7 d window had fully elapsed by `observed_through`. |
 | `label_bad_observed` | `ci_observed` and both windows closed: every constituent of `label_bad` was fully observed. `frames.py` builds the breakage frame from rows with this true. |
@@ -568,18 +586,18 @@ m = df[df.label_bad | (age >= 30)]       # positive, or old enough to know it is
 
 **Unobserved sources (ADR 0002):** `labels.unobserved = downweight` (contract default): an observed source that fired still makes the row positive; otherwise the row counts as clean at weight 0.5 per missing source. CI history on public repos is capped at about 90 days by GitHub.
 
-**Post-merge columns are `null` on unmerged rows:** `days_to_revert/hotfix/szz_fix`, `label_revert/ci_fail/ci_fail_optional/hotfix/szz_bug/bad`, `ci_observed`, `revert_window_closed`, `hotfix_window_closed`, `label_bad_observed`, `ci_fail_flaky_only`, plus `observed_through`.
+**Post-merge columns are `null` on unmerged rows:** `days_to_revert/hotfix/szz_fix`, `label_revert/ci_fail/ci_fail_optional/hotfix/szz_bug/bad`, `ci_observed`, `revert_window_closed`, `hotfix_window_closed`, `szz_window_closed`, `label_bad_observed`, `ci_fail_flaky_only`, plus `observed_through`.
 
 **Declared hotfix (`declared_hotfix`)** is a *feature*, not a label: was a label containing `hotfix` or `rollback` on the PR **at open** (+120 s grace), rebuilt from `labeled`/`unlabeled` timeline events? An author/triager prior set before review. It replaces the earlier `label_is_hotfix`, **dropped** because the PR list returns labels as of mining time, so reactive tags added after a PR went bad (`regression`, `reverted`, `security`, a later `hotfix`) would leak the outcome. Also dropped: `n_commits` (list endpoint never returns it) and `is_draft` (constant for merged PRs).
 
 ### 6.2 How CI is read (`github_api.check_conclusion`)
 
-- Reads the **Checks API** (all pages, up to 2,000 runs) with `filter=all`, **and** the legacy **commit-status API** (Jenkins, Buildkite, CircleCI, Travis), merging them: a repo can gate on either, and reading one would miss failures.
+- Reads the **Checks API** (all pages, up to 2,000 runs) with `filter=all`, **and** the legacy **commit-status API** (Jenkins, Buildkite, CircleCI, Travis), merging them: a repo can gate on either, and reading one would miss failures. A failed or truncated page of either, or of the workflow-runs read below, leaves the verdict `null` rather than judging from the part that arrived.
 - Each check's verdict is its **latest** run. A check whose earlier run failed but latest passed is a **rerun-pass** (input to flaky detection).
 - `failure`, `timed_out`, `startup_failure`, `action_required` are failures; `success`, `neutral`, `skipped` are non-failures. Reduction: any failure → `failure`; some ran and none failed → `success`; else `null`.
 - **Required vs optional.** If branch protection's required checks are readable they are authoritative (a check is required if its name equals, contains or is contained in a required context). Otherwise a **name denylist** of auxiliary checks is used: security scanners (CodeQL, Snyk, Sonar, Semgrep, Trivy, ...), coverage reporters, deploy previews (Netlify, Vercel, ...), housekeeping bots (labeler, stale, greeting, ...), sign-off/PR-metadata checks (CLA, DCO, commitlint, semantic PR title, ...), docs builders. The list deliberately **excludes** ambiguous checks that are often genuinely gating (lint, test, build, typecheck, visual regression, bundlesize, pre-commit): marking one optional would hide a real build failure.
-- **Which runs count (6.3.0).** A check run attaches to whichever commit was the default branch's head when an unrelated event fired (an issue labelled or evaluated, a schedule, a `/command` comment), so a merge commit's check list mixes real CI with automation. For the merge commit, `check_conclusion(sha, events=("push",))` asks the Actions runs API for the workflow runs on that sha (`/actions/runs?head_sha=`), keeps the check suites started by `push`, and drops GitHub Actions check runs from other suites. Check runs from other apps (CircleCI, Buildkite) have no workflow event and always count. A commit left with no counted run has no verdict (`ci_observed` false). If the runs API is unreadable the filter is skipped. It costs one extra API call per merged PR. The close-reason lookup for unmerged PRs (`check_conclusion(final_head)`) keeps counting every run, because CI there runs on `pull_request`. Checked on 14 sampled vite positives: 2 became passes, 12 stayed failures. `preview` joined the optional-check denylist.
-- The historical **CI map** (stage 8) uses the Actions workflow-runs list, excludes `pull_request`-event runs (the PR's own pre-merge iteration would leak the outcome into a *post-merge* signal), and excludes optional workflows so the file/author CI-fail rates match `label_ci_fail`. Only GitHub Actions is covered there; commits with no runs are absent (feature `null`).
+- **Which runs count (6.3.0).** A check run attaches to whichever commit was the default branch's head when an unrelated event fired (an issue labelled or evaluated, a schedule, a `/command` comment), so a merge commit's check list mixes real CI with automation. For the merge commit, `check_conclusion(sha, events=("push",))` asks the Actions runs API for the workflow runs on that sha (`/actions/runs?head_sha=`), keeps the check suites started by `push`, and drops GitHub Actions check runs from other suites. Check runs from other apps (CircleCI, Buildkite) have no workflow event and always count. A commit left with no counted run has no verdict (`ci_observed` false). If the runs API is unreadable the filter is skipped, and the verdict is then reduced from every check run: a failure stays `failure`, but a would-be pass is `null`, because the runs that were not filtered out may have been automation. It costs one extra API call per merged PR. The close-reason lookup for unmerged PRs (`check_conclusion(final_head)`) keeps counting every run, because CI there runs on `pull_request`. Checked on 14 sampled vite positives: 2 became passes, 12 stayed failures. `preview` joined the optional-check denylist.
+- The historical **CI map** (stage 8, cache details in 8.2) uses the Actions workflow-runs list, excludes `pull_request`-event runs (the PR's own pre-merge iteration would leak the outcome into a *post-merge* signal), and excludes optional workflows so the file/author CI-fail rates match `label_ci_fail`. Only GitHub Actions is covered there; commits with no runs are absent (feature `null`).
 
 ### 6.3 Merge-outcome labels (`merge_labels.py`, ADR 0009)
 
@@ -602,7 +620,7 @@ From the PR timeline (reviews, comments, commits, force-pushes, duplicate marks,
 
 A partial timeline (any failed page, or past 2,000 events) is treated as **unreadable** (`null` labels beyond `label_merged`): the lost part would be the newest events (the close), so a partial timeline would mislabel the PR rather than leave it unobserved.
 
-**The close-reason classifier.** Asked only for unmerged PRs in LLM scope. With `--close-reason-llm other_only` (default) it is asked **only when the rules find no reason** (result `other`); `always` asks for every unmerged PR with human activity. Input (`close_transcript`): the title and the timeline up to the close, with each person's role (author, maintainer, bot, other), comments and reviews (1,500 chars each, newest entries kept up to 12,000), label events, renames, closer, force-pushes. If nothing human is in it (nobody responded) the rules decide and no call is made; a person other than the author closing it counts as human even without a comment (a maintainer closing and retitling a PR "AI spam" is a rejection, not abandonment). One of `duplicate | unwanted | ci_technical | abandoned | other` is chosen from a JSON-schema-constrained answer. The classifier's answer decides `close_reason` and `label_unwanted` and **adds to** the duplicate/abandoned/CI-technical flags. It is retried like the flags; if it still has no answer the repo stops rather than label the PR by rules alone. It runs only on the miner's training rows, never on the scoring path.
+**The close-reason classifier.** Asked only for unmerged PRs in LLM scope. With `--close-reason-llm other_only` (default) it is asked **only when the rules find no reason** (result `other`); `always` asks for every unmerged PR with human activity. Input (`close_transcript`): the title **as of the close** and the timeline up to the close, with each person's role (author, maintainer, bot, other), comments and reviews (1,500 chars each, newest entries kept up to 12,000; every line of a comment body or title is quoted with a `| ` prefix, so a body cannot forge a role line), label events, renames, closer, force-pushes. If nothing human is in it (nobody responded) the rules decide and no call is made; a person other than the author closing it counts as human even without a comment (a maintainer closing and retitling a PR "AI spam" is a rejection, not abandonment). One of `duplicate | unwanted | ci_technical | abandoned | other` is chosen from a JSON-schema-constrained answer. The classifier's answer decides `close_reason` and `label_unwanted` and **adds to** the duplicate/abandoned/CI-technical flags. It is **monotone**: it may raise a `false` or `null` flag to `true`, never lower a flag the rules set to `true`. `close_reason_source` is `llm` whenever the LLM's reason is the one used. It is retried like the flags; if it still has no answer the repo stops rather than label the PR by rules alone. It runs only on the miner's training rows, never on the scoring path.
 
 **Rejected alternatives (ADR 0009):** one multiclass target; folding not-merged into `label_bad`; using `state`; fetching unmerged branches as local refs; training a supervised unwanted classifier first (no labelled set yet); treating every silent close as abandoned.
 
@@ -624,6 +642,7 @@ After the repo is mined, a check is **flaky at a merge** if it had at least 3 re
 - The LLM reads **only the diff**. Never the PR title or description: they can mislead it, and they carry the outcome.
 - Flags are **features** for the model, never the verdict, and the LLM is **never on the scoring path** (project invariant).
 - With the LLM off, every flag is `null`.
+- **Data leaves the machine.** The LLM is **on by default**, and the diff of each in-scope PR is sent to the backend (Anthropic via Claude Code, or the `api` endpoint). Obvious secrets are redacted first (below), but the code is not. `--no-llm` sends nothing.
 
 ### 7.2 The 23 flags (`FLAG_SCHEMA`)
 
@@ -660,41 +679,43 @@ The system prompt tells the model: judge strictly from the diff, never speculate
 The flags are features, so only rows the model trains on need them. Order of checks (`_llm_skip_reason`):
 
 1. **Scope** (`--llm-scope training`, default): outside contributors who are not bots plus a stable 5% sample of the rest (`--llm-sample-pct`). `--llm-scope all` sends every row. Out-of-scope rows keep `null` LLM columns, and snapshots/capture use the same scope.
-2. **Trivial diffs** (`llm_skip_trivial`): docs-only, tests-only, lockfile-or-generated-only diffs are not sent (their flags would all be the neutral value). Resolves to `null` without touching the breaker.
-3. **Reuse** (re-mine): an earlier answer for the same `(base_sha, head_sha)` is reused, no call.
-4. The diff sent: `git diff -M -U1 base...head` (1 line of context), secrets redacted (`secret|password|token|api_key = "..."` → `<redacted>`), lockfiles and generated/vendored/minified/snapshot/`.map`/`.svg` files cut to **one line each** (`# path: reason, +N -M lines (diff omitted)`), and the rest capped at `--llm-max-diff-chars` (25,000) keeping whole files where possible and naming what it dropped (a single oversized file is truncated and marked).
-5. An empty diff is status `empty`, not a failure.
+2. **Trivial diffs** (`llm_skip_trivial`): docs-only, tests-only, lockfile-or-generated-only diffs are not sent (their flags would all be the neutral value). Resolves to `null`.
+3. **Reuse** (re-mine): an earlier answer for the same `(base_sha, head_sha)` is reused, no call. It passes through `_validate` again and is skipped when its recorded `prompt_version` or model differs from the current ones (records from older versions without those fields are still reused; `_save_llm_reuse` writes them).
+4. The diff sent: `git diff -M -U1 base...head` (1 line of context), secrets redacted (`_redact_secrets`: quoted and unquoted `key = value` and JSON key-values for `secret|password|token|api_key`, `Authorization` and `Bearer` values, private-key blocks, `ghp_`, `github_pat`, `sk-`, `AKIA`, `xox` and `AIza` tokens, and credentials in URLs → `<redacted>`), lockfiles and generated/vendored/minified/snapshot/`.map`/`.svg` files cut to **one line each** (`# path: reason, +N -M lines (diff omitted)`), and the rest capped at `--llm-max-diff-chars` (25,000) keeping whole files where possible and naming what it dropped (a single oversized file is truncated and marked). When the cap dropped or cut code the model would have read, `llm_diff_truncated` is `true` (optional contract column, never an input).
+5. An empty diff, or one with no code left after slimming (an `.svg`-only change), is status `empty`: flags `null`, no call, not a failure.
+6. A reply with **zero valid flags** is a failure. `_validate` rejects booleans where a number is expected, negatives, NaN and infinity.
 
 Fetch statuses: `off`, `skipped`, `empty`, `ok`, `fail`.
 
 ### 7.4 Backends
 
-- **`claude_cli` (default):** headless Claude Code, `claude -p --output-format json --model <m> --setting-sources "" --tools "" --strict-mcp-config --disable-slash-commands --no-session-persistence --system-prompt ... --json-schema ...`, run from an **empty temp dir** with no tools, MCP, settings or slash commands, so no CLAUDE.md, hook or plugin leaks into the judgement. Uses the local Claude Code login (no API key); model `sonnet` unless `LLM_MODEL`. Timeout 180 s; two quick retries with waits of 10 s × attempt; returns `None` on failure. Token counts and `total_cost_usd` are accumulated per run (on a Pro/Max login that is Claude Code's estimate of API pricing, not a charge).
-- **`api`** (`LLM_BACKEND=api`): any OpenAI-compatible endpoint with the `openai` SDK and `LLM_API_KEY`; default `LLM_BASE_URL` Anthropic's endpoint, default model `claude-sonnet-5`. Transient statuses (408, 409, 425, 429, 5xx) and timeout/connection/rate-limit errors retry up to 6 attempts with back-off and `Retry-After`; permanent errors (bad key/request/unknown model) fail fast so a misconfiguration cannot hang the run. No temperature is sent (newer Claude models reject it).
+- **`claude_cli` (default):** headless Claude Code, `claude -p --output-format json --model <m> --setting-sources "" --tools "" --strict-mcp-config --disable-slash-commands --no-session-persistence --system-prompt ... --json-schema ...`, run from an **empty temp dir** with no tools, MCP, settings or slash commands, so no CLAUDE.md, hook or plugin leaks into the judgement. Uses the local Claude Code login (no API key); model `sonnet` unless `LLM_MODEL`. Timeout 180 s; two quick retries with waits of 10 s × attempt; returns `None` on failure. `llm_model` records the model id the CLI reports (`modelUsage`), else the alias. Token counts and `total_cost_usd` are accumulated per run (on a Pro/Max login that is Claude Code's estimate of API pricing, not a charge).
+- **`api`** (`LLM_BACKEND=api`): any OpenAI-compatible endpoint with the `openai` SDK and `LLM_API_KEY`; default `LLM_BASE_URL` Anthropic's endpoint, default model `claude-sonnet-5`; `llm_model` is the model the response names (`resp.model`), else the alias. Transient statuses (408, 409, 425, 429, 5xx, including 529) and timeout/connection/rate-limit errors retry up to 6 attempts with back-off and `Retry-After`; permanent errors (bad key/request/unknown model) fail fast so a misconfiguration cannot hang the run. No temperature is sent (newer Claude models reject it).
 - `--llm` is **on by default** and is checked before any repo is mined: when no backend is usable (`unavailable_reason`: no `claude` on PATH, or `api` without a key/SDK) both `build_dataset.py` and `mine_repo.py` stop with an error, so no dataset is silently missing its LLM columns. `--no-llm` is the explicit way to mine without them.
+- `--llm-backend` (`LLM_BACKEND`) and `--llm-diff-context` (`LLM_DIFF_CONTEXT`, default 1) are `build_dataset.py` flags that reach the miner as environment variables.
 - `--llm-test` makes one call on a known-risky sample diff (auth check removed, exception swallowed) and reports whether the answer looks sane.
 
 ### 7.5 Never a row without its answer
 
 - A failed call for a PR in scope is retried **in place** up to `llm_row_retries` (3) with waits of `llm_retry_backoff_s × attempt` (60, 120, 180 s); later PRs queue behind it, so the whole miner pauses.
 - If it still fails, the repo **stops**: rows already done stay in the checkpoint, `--out` is **not** written, the miner **exits 3**, and `build_dataset.py` aborts the batch. A rerun resumes from that PR.
-- The circuit breaker (`llm_breaker_threshold`, 5 consecutive failures, raises `LLMUnavailable`) exists in `resolve`, but as the consumer is written a failed answer is retried before `resolve` is called, so the retries-exhausted path is what stops a run in practice.
+- There is no separate circuit breaker (7.0.0 removed the dead one in `resolve` and the `llm_breaker_threshold` setting): the per-PR retry in `mine_repo` is the stop. `llm_breaker_tripped` stays as the flag that records it.
 - The close-reason classifier follows the same rule.
 
 ### 7.6 Plan limits (headless Claude Code)
 
 - At most every 5 minutes (`llm_quota_poll_s`) the miner reads plan usage with `claude -p /usage` (a local command: no model call, no tokens, no quota). `RIFFLE_NO_PLAN_USAGE=1` turns this off.
 - At **95%** of a limit (`llm_quota_pause_pct`), or when a call is refused for a limit (message matched by regex, with the reset time parsed), **every LLM caller pauses until the reset** (one shared deadline across threads) and then continues; PRs wait for their answers. Pause time is counted as `quota_wait`, not work.
-- A reset **more than 12 h away** (a weekly cap, `llm_quota_max_wait_h`) is not waited for: calls fail and the run stops.
+- A reset **more than 12 h away** (a weekly cap, `llm_quota_max_wait_h`) is not waited for: calls fail and the run stops. The total time spent waiting is capped by the same setting, and a limit message in non-JSON CLI output is recognised too.
 - `--no-llm-quota-wait` turns the whole mechanism off. Unreadable usage (no subscription, API backend) never blocks.
 
 ### 7.7 Provenance
 
-Every row carries `llm_model` and `llm_prompt_version`: a SHA-1 (12 hex) of the flag prompt, schema prompt, JSON schema, the close-reason classifier prompt and its schema. Rows mined with different prompts or models can be told apart. Both are `null` when the LLM was off.
+Every row carries `llm_model` and `llm_prompt_version`: a SHA-1 (12 hex) of the flag prompt, schema prompt, JSON schema, the close-reason classifier prompt and its schema, **and** (from 7.0.0) the slimming rules, the redaction patterns, the diff prefix, `llm_max_diff_chars`, `llm_diff_context`, the backend and `merge_labels.TRANSCRIPT_FORMAT`, so the value changes for every dataset at 7.0.0. Rows mined with different prompts, diff settings or models can be told apart. Both are `null` when the LLM was off.
 
 ### 7.8 Choosing one model: `llm_compare.py`
 
-Before a big run, asks two models (default sonnet and haiku) about the same ~300 in-scope diffs, sent exactly as the miner sends them (same prompt, schema, quota pause), and reports per-flag agreement so one model is picked for the whole dataset. `--dry-run` shows the calls first; answers are saved as they arrive, so it resumes.
+Before a big run, asks two models (default sonnet and haiku) about the same ~300 in-scope diffs, sent exactly as the miner sends them (same prompt, schema, quota pause), and reports per-flag agreement so one model is picked for the whole dataset. `--dry-run` shows the calls first; answers are saved as they arrive, so it resumes. A failed call is retried 3 times and not stored, a null association counts as outside, the sample key is always `owner/name`, and `agreement()` adds a macro mean.
 
 ---
 
@@ -709,8 +730,8 @@ Dependency-free (`urllib`). Auth via `GITHUB_TOKEN` (without one: 60 requests/ho
 | `GET /repos/{o}/{r}/pulls?state=closed&sort=created&direction=desc` | PR selection | 1 per 100 PRs |
 | `GET .../pulls?state=open` | stale-open rows | pages |
 | `GET .../pulls/{n}` | rebase commit count; git-primary enrichment | per PR where needed |
-| `GET .../issues/{n}/timeline` | merge labels, at-open metadata, maintainer evidence | 1+ per PR (100/page, 2000 cap) |
-| `GET .../pulls/{n}/reviews`, `.../comments` | `revealed_path_scrutiny` | 2 per PR (10 pages max each) |
+| `GET .../issues/{n}/timeline` | merge labels, at-open metadata, maintainer evidence | 1+ per PR (100/page, 2000 cap); cached 1 hour while the PR is open, 14 days once closed |
+| `GET .../pulls/{n}/reviews`, `.../comments` | `revealed_path_scrutiny` | 2 per PR (10 pages max each); `None` and not cached on a failed page or at the 1,000-item cap |
 | `POST /graphql` (`HeadRefForcePushedEvent`) | force-pushes for the at-open head | 1 per 25 PRs (separate rate budget) |
 | `GET .../commits/{sha}/check-runs`, `/status` | CI verdict (merge commit; head commit of unmerged PRs) | per PR |
 | `GET .../actions/runs` | historical CI map | ≤ 400 pages once, cached |
@@ -721,11 +742,14 @@ Dependency-free (`urllib`). Auth via `GITHUB_TOKEN` (without one: 60 requests/ho
 
 ### 8.2 Rate limits and errors (`_get`)
 
-- Secondary limit (`Retry-After`): sleep that long (capped at 300 s) and retry.
-- Primary limit (403/429, `X-RateLimit-Remaining: 0`): wait for the reset (capped at 3,600 s per wait) and retry, with a `rate_limit` event for the TUI countdown.
-- A 403 without rate-limit signals is a real permission error: reported as **unobserved**, not retried.
+- Secondary limit: `Retry-After` (seconds or an HTTP date), or the secondary-limit message in the body: sleep that long (capped at 300 s) and retry, up to 10 waits in a row on one request.
+- Primary limit (403/429, `X-RateLimit-Remaining: 0`): wait for the reset (capped at 3,600 s per wait) and retry, with a `rate_limit` event for the TUI countdown. **One process-wide gate** pauses every thread while any one of them waits; its state file `.rate_wait` lives under `ci_cache_dir`. The GraphQL block time is counted under a lock.
+- A 403 with no rate-limit signal is a real permission error: returned as 403, reported as **unobserved**, not retried.
 - 404 → unobserved. 5xx and network errors (including `IncompleteRead`, connection resets, cut bodies) back off `min(60, 2^n)` s and retry up to 8 times, then count as unobserved. Other 4xx are permanent for that request.
 - The CI history pre-pass uses a persistent getter that waits 60 s on a limit **indefinitely**, because it is long-running and must survive rate-limit windows.
+- **CI-history cache.** `ci_cache/<owner>_<name>.json` is versioned (`v2`, as `{"v", "built", "map"}`): a bare-dict file from an older version is discarded, the map expires after 7 days (`CI_MAP_TTL_S`) and is rebuilt when it was built before the newest PR (`covers_until`), and the file is written atomically.
+- **API cache** (`api_cache.py`): rows live at most 14 days; an open PR's timeline only 1 hour (`OPEN_TIMELINE_TTL_S`); expired rows are purged when the cache is opened. `RIFFLE_NO_API_CACHE=1` turns it off.
+- **Unobserved never becomes a value.** A check-run, status or workflow-run page that failed or was truncated gives a `null` `check_conclusion`; the review read gives `None` (not cached) on any failed page or at the 1,000-item cap; `labels_at` and force-push reads give `None` on failure or truncation.
 - A failed list page flags the PR list as truncated.
 - **Quotas are per account.** With several PCs use a token from a different account on each.
 - **Unobserved never becomes a value:** any failed call leaves the dependent column `null` (or the list flagged incomplete).
@@ -734,14 +758,15 @@ Dependency-free (`urllib`). Auth via `GITHUB_TOKEN` (without one: 60 requests/ho
 
 ## 9. The git subsystem (`gitio.py`)
 
-Raw `git -C <repo>` via subprocess (minimal dependencies, explicit behaviour); every call is timed and a call over 30 s logs a WARN.
+Raw `git -C <repo>` via subprocess (minimal dependencies, explicit behaviour); every call is timed and a call over 30 s logs a WARN. Every call passes `-c core.quotePath=false`, and numstat, name-status and renames use `-z`, so any path is read as it is. A call has a timeout: `RIFFLE_GIT_TIMEOUT_S` (300), `RIFFLE_GIT_BLAME_TIMEOUT_S` (120) for a blame, `RIFFLE_GIT_LONG_TIMEOUT_S` (3600) for the whole-history log; a file read at a commit is capped at `RIFFLE_MAX_BLOB_BYTES` (4 MiB). A timeout is **unobserved** (`null`), never `0`.
 
 - **History cache.** `_numstat_cache` parses one streamed `git log --all --numstat -M --format=...` into `{sha: (Commit, rows)}` per repo per process. Streaming matters: the output is hundreds of MB on a large repo. `iter_commits_with_files(repo, rev, before)` lists reachable SHAs with a cheap `rev-list --before` and looks them up, so each PR costs a `rev-list`, not a log. SZZ's `head_commits_with_files` reuses it (no second full log). Falls back to a direct log if any SHA is missing from the cache.
 - **Identity** is the mailmap-canonical author (`%aE`, `%aN`) so one person's two emails merge; times are **Unix epoch** (`%ct`), which are immune to the corrupt timezone strings (`+518:00`) in some old histories.
-- **Numstat renames** `a/{b => c}/d` and `old => new` resolve to the new path (also handles literal braces elsewhere in the path).
-- **Blame.** `git blame --line-porcelain` with `-w` (ignore whitespace) and `-M` (detect moved lines), plus `--ignore-revs-file` when the repo ships `.git-blame-ignore-revs` (the path is made absolute: blame runs as `git -C <repo>`, which resolves a relative path against the repo; a relative path once made every blame fail silently). `-C` (cross-file copies) is off: very slow on large histories. Whole-file blame is cached (LRU 64) and shared between ownership (Source 2) and line features (Source 3). SZZ uses `blame_lines`: only the requested ranges (`-L`), **padded by 20 lines** so `-M` doesn't mis-credit a short moved block to the mover (±20 lines matched full-file blame on every line in the flask/itsdangerous fix history). A path that does not exist at the commit is an expected empty result (a PR that adds the file), not a failure.
+- **Renames.** With `-z` the old and new paths come as separate fields, so no brace or arrow parsing is needed (the old `a/{b => c}/d` and `old => new` forms are gone). A renamed file's base-side lookups use the old path.
+- **Blame.** `git blame --line-porcelain` with `-w` (ignore whitespace) and `-M` (detect moved lines), plus `--ignore-revs-file` when the repo ships `.git-blame-ignore-revs` (the path is made absolute: blame runs as `git -C <repo>`, which resolves a relative path against the repo; a relative path once made every blame fail silently). `-C` (cross-file copies) is off: very slow on large histories. Whole-file blame is cached (LRU 64) and shared between ownership (Source 2) and line features (Source 3). SZZ uses `blame_lines`: only the requested ranges (`-L`), **padded by 20 lines** so `-M` doesn't mis-credit a short moved block to the mover (±20 lines matched full-file blame on every line in the flask/itsdangerous fix history). A path that does not exist at the commit is an expected empty result (a PR that adds the file), not a failure. `deleted_or_modified_lines_many` still returns `[]` for a renamed file on its own; the rename is handled by the caller (`mine_repo._szz_fix_bugs`).
 - **Blame failures are counted** (`calls`, `fails`, `absent`) and warned once per process: they used to vanish into an empty result, silently emptying line features and SZZ labels. `--audit` reports blame coverage per repo.
-- **Fetching without refs.** `fetch_pr_heads` (`refs/pull/N/head`) and `fetch_shas` fetch objects with `--no-tags` and **no local refs**, chunked at 200, splitting failed batches in halves (log n rounds per bad ref). Nothing points at them, so `git log --all` never sees unmerged or force-pushed-over commits.
+- **Default branch names** containing `/` are kept whole (`release/1.x` was truncated at the slash).
+- **Fetching without refs.** `fetch_pr_heads` (`refs/pull/N/head`) and `fetch_shas` fetch objects with `--no-tags` and **no local refs**, chunked at 200, splitting failed batches in halves (log n rounds per bad ref). Only a "ref missing" failure is final; any other failure is retried and then raises `FetchError`, so a failed head is unobserved, not gone. Nothing points at them, so `git log --all` never sees unmerged or force-pushed-over commits.
 - `first_parent_chain` (limit 1,000), `count_before`, `commits_in_range`, `existing_commits` (`cat-file --batch-check`), `merge_base`, `commit_parents`, `landed_commit_index`, `rename_pairs` (loose 30% similarity, includes merge commits: a superset of renames blame follows), `deleted_or_modified_lines_many` (one `git diff` per fix commit, not per file), `changed_lines_by_file` (`-U0` hunks for concurrency).
 
 ---
@@ -749,6 +774,8 @@ Raw `git -C <repo>` via subprocess (minimal dependencies, explicit behaviour); e
 ## 10. SZZ fix tracing
 
 **Idea.** For every *fix* commit, blame the lines it deletes or modifies at the fix's **parent**; the commit that last touched each such line is **bug-introducing**. The index is `{bug_introducing_sha: [(fix_sha, fix_time), ...]}`. A merged PR gets `days_to_szz_fix` if any of its commits is bug-introducing for a later fix that is not part of the PR itself.
+
+**Renames (`SZZ_VERSION` 3).** A renamed file is blamed at the fix's parent under its **old** name, so a fix to a renamed file reaches the commit that wrote the line. The version bump makes every cached SZZ index and blame store rebuild.
 
 **Properties and limits.** Noisy by nature (about 0.6 precision), so it is an additional, softer label kept out of `label_bad`. **Blind spot:** only deleted/modified lines are blamed, so a fix that only *adds* lines (a missing null-check) traces to nothing. Fix commits are recognised by subject (5.10), skipping root commits.
 
@@ -762,7 +789,7 @@ Raw `git -C <repo>` via subprocess (minimal dependencies, explicit behaviour); e
 
 Blame is about 90% of SZZ time, so the trims above are a few percent each. SZZ workers ignore SIGINT. If any blames failed, a warning says SZZ labels are undercounted; if at least 100 fix commits trace to zero bugs it warns that blame is almost certainly failing, not that the repo is clean.
 
-Note: `label_szz_bug` is `false` (not `null`) when SZZ is off, because it is computed as "a later fix was found". Filter on the run mode.
+Note: `label_szz_bug` and `days_to_szz_fix` are `null` when SZZ did not run (7.0.0; they used to be `false`), and the optional `szz_window_closed` says whether a `false` is mature.
 
 ---
 
@@ -776,13 +803,13 @@ The at-open row only shows PRs as they opened. **Snapshots** are rows describing
 
 Clones are deleted after mining and force-pushed commits expire on GitHub, so the miner stores, for each **in-scope PR** (`--llm-scope` rule, `--no-snapshots` turns it off), under `snapshots_raw/<owner>_<name>/` (`--snapshot-dir`, `build_dataset --snapshot-root`):
 
-- `capture.jsonl`: one record per PR with `pr` (trimmed PR object), `events` (trimmed timeline: bodies cut to 4,000 characters, users reduced to login/type), `pushes` (force-pushes, or `null` if unreadable), `head_line` (each moment the head changed while open), `heads` (up to `--snapshot-max-heads`, default 5, with the code features of fork-point...head), `open_head`, `open_snapshot`.
+- `capture.jsonl`: one record per PR with `pr` (trimmed PR object), `events` (trimmed timeline: bodies cut to 4,000 characters, users reduced to login/type), `pushes` (force-pushes, or `null` if unreadable), `head_line` (each moment the head changed while open), `heads` (up to `--snapshot-max-heads`, default 5, with the code features of fork-point...head), `open_head`, `open_snapshot`, and the optional top-level `merge_outcome` (assembly passes it as `with_unmerged`; an old capture without it defaults to `True`). A review record keeps its review id, and a dismissed review also carries `dismissed_review {review_id, state}` (optional; the dismissal fix needs the PR captured again).
 - `pr_index.jsonl`: each mined PR's merge-signal inputs (the sidecar), plus the lead-in PRs, so assembly can recompute repo-level signals as of any moment.
 - `maintainers.json`: the maintainer evidence.
 
 **Head over time (`HeadLine`):** the head at moment `t` follows ADR 0010's rule: the newest commit, on the first-parent line that was live at `t`, committed at or before `t`. The live line starts at the head the first force-push after `t` replaced, or at the PR's final head. Commit time stands in for push time (GitHub doesn't record push time for ordinary pushes).
 
-**`pick_heads`:** up to the cap of distinct heads, always the first (at open) and last, the rest spread evenly in time. The at-open head's features are the mined row's, not repeated. Each other head gets `diff_stats`, `deterministic`, `scanners`, `deps_cve`, `api_contract` computed against its own fork point (`code_features`). A head that failed has `error` and null features.
+**`pick_heads`:** up to the cap of distinct heads, always the first (at open) and last, the rest spread evenly in time. The at-open head's features are the mined row's, not repeated. Each other head gets `diff_stats`, `deterministic`, `scanners`, `deps_cve`, `api_contract` computed against its own fork point (`code_features`); `deps_cve` is as of the time the head was first seen. A head that failed has `error` and null features.
 
 **Not recomputed per head:** git-history and blame features (they describe the repo at the fork point and change little while a PR is open) and the LLM flags (the at-open ones), so **snapshots add no LLM calls**.
 
@@ -797,11 +824,11 @@ python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw \
     --out snapshots.parquet --commit-features-out commit_features.parquet
 ```
 
-Outputs: `<out>_snapshots.parquet` and `<out>_commit_features.parquet`. A PR captured twice (two folders for the same repo, e.g. from different machines) is built once from the folder that sorts last, so keys stay unique.
+Outputs: `<out>_snapshots.parquet` and `<out>_commit_features.parquet`. A PR captured twice (two folders for the same repo, e.g. from different machines) is built once from the folder that sorts last, so keys stay unique; within a folder, the last sidecar and capture per PR win, and `History.at` excludes the PR itself and same-number duplicates. Both tables are written through `.tmp` and a rename, even when empty (an empty table has the contract's columns). `capture.jsonl` is parsed once and torn lines are skipped.
 
 **Roles.** Each timeline event gets a role: `author` (commits on the PR branch, or the PR author), `bot`, `maintainer` (association OWNER/MEMBER/COLLABORATOR **or** confirmed from history at that time), else `other`. **Bots count for nothing.**
 
-**Open periods.** Snapshots exist only while the PR is open and ready: the clock starts at open + grace, or at ready-for-review for a PR opened as a draft, and **restarts at a reopen**; closed periods produce nothing; a PR that never left draft produces nothing; a stale-open PR is treated as open for 60 days.
+**Open periods.** Snapshots exist only while the PR is open and ready: the clock starts at open + grace, or at ready-for-review for a PR opened as a draft, and **restarts at a reopen**; closed periods produce nothing; a PR that never left draft produces nothing (and needs no `convert_to_draft` event to say so); a close inside the 5-minute grace window leaves no period, and a reopen restarts the clock at `max(reopen, start)`; a stale-open PR is treated as open for 60 days.
 
 **Moments (candidates):**
 
@@ -813,7 +840,9 @@ Outputs: `<out>_snapshots.parquet` and `<out>_commit_features.parquet`. A PR cap
 
 **Clean-up:** event triggers within **30 minutes** make one snapshot at the last of them (the higher-priority trigger's name kept); a snapshot whose state matches the previous one is dropped unless it is a clock; snapshots within **6 hours** with the same state keep the higher-priority one; nothing at or after close; at most **6 per PR**, kept by priority (open 0, first reply 1, changes requested 2, approval 3, author fix push 4, outcome label / marked duplicate 5, back to draft 6, clock 7, idle / no maintainer reply 8).
 
-**Each row** = every at-open dataset column, then overwritten with: the **code features of the head at that moment**, the **merge signals recomputed as of that moment** (prior-only), and the **state so far**: time since start and since the last human activity, first maintainer reply, review rounds, changes requested, approvals, commits and force-pushes since start (merges from base not counted), whether the author pushed after the last review, maintainer/author/other comment counts, outcome label present, marked duplicate, back in draft, reopen count, and change since the previous snapshot (new commits, new comments, `LA+LD` change). Labels are the PR's **final** outcome.
+**Dismissed reviews** keep their pre-dismissal state (`CHANGES_REQUESTED`, `APPROVED`) until the dismissal time. For an old capture that lacks the dismissal record, `changes_requested_count` and `approvals_count` are `null` (unknowable), not a guess.
+
+**Each row** = every at-open dataset column, then overwritten with: the **code features of the head at that moment**, the **merge signals recomputed as of that moment** (prior-only), and the **state so far**: time since start and since the last human activity, first maintainer reply, review rounds, changes requested, approvals, commits and force-pushes since start (merges from base not counted), whether the author pushed after the last review, maintainer/author/other comment counts, outcome label present, marked duplicate, back in draft, reopen count, and change since the previous snapshot (new commits, new comments, `LA+LD` change). The `*_since_prev` deltas compare with the previous **candidate** moment, before the 6-per-PR cap, so a snapshot's values do not depend on which later moments were kept (causal). `first_maintainer_reply_h` is clamped to 0. `max_sim_open_prs` is windowed by bisect. Labels are the PR's **final** outcome.
 
 **Training helpers.**
 
@@ -821,7 +850,7 @@ Outputs: `<out>_snapshots.parquet` and `<out>_commit_features.parquet`. A PR cap
 - `moment_bucket` (`open`, `<1d`, `1-3d`, `3-7d`, `7-30d`, `>30d`) for reporting metrics per moment.
 - `near_decided`: the last hour before close, or after the PR entered a merge queue / got auto-merge (`added_to_merge_queue`, `auto_merge_enabled`, `auto_squash_enabled`, `auto_rebase_enabled`). For **filtering**, never an input.
 - Split by repo or PR (a PR's snapshots must not straddle train and test).
-- `head_found`: `open` (the at-open head), `exact` (from the head line with force-push history known), `approx` (force-push history unreadable), `capped` (the true head wasn't captured because of the cap, so the nearest earlier captured one is used).
+- `head_found`: `open` (the at-open head), `exact` (from the head line with force-push history known), `approx` (force-push history unreadable), `capped` (the true head wasn't captured because of the cap, or its capture errored, so the nearest earlier good captured one is used).
 
 **Leakage test** (`tests/test_snapshots.py::test_no_leakage`): every snapshot is recomputed from data cut at its moment (later events, head changes, closes and first responses removed) and **nothing may change**.
 
@@ -836,17 +865,17 @@ Outputs: `<out>_snapshots.parquet` and `<out>_commit_features.parquet`. A PR cap
 - `--shard K/N` (TUI: "Number of PCs", "This PC #", "Show split" = ctrl+g). `--shard-plan N` prints the split. Equal repo counts (±1), balanced total commits (the `[~N commits]` tags drive clone, history walk and SZZ cost; with a fixed `--max-prs` the API/LLM cost per repo is equal). Untagged repos count as the median and a warning says the split may drift. The plan also lists each repo's PR count and a PR total per PC from the `[N PRs]` tags (display only; the split does not use them).
 - Each PC writes `dataset_pcKofN.parquet`, `dataset_pcKofN_snapshots.parquet`, `dataset_pcKofN_commit_features.parquet`, `dataset_pcKofN.shard.json` and a `logs/run-<time>-pcKofN.log`.
 - **Every PC must use the same flags that change the data**, notably the same `--merge-outcome` setting, or the merge model sees only some repos.
-- **`merge_shards.py --out dataset.parquet [--dir .]`** reads each PC's manifest and merges **only if**: every PC 1..N is present, all used the same split ID, all used the same miner version (`--allow-version-mix` overrides), no repo is on two PCs, no row repeats (`(repo, pr_number)`, `snapshot_id`, `(repo, pr_number, head_sha)`), either all or no PCs have snapshot tables, and the snapshots still match the dataset (`consistency.py`: compares `miner_version`, `mined_at`, `head_sha`, `outcome_3class` per PR; a re-mine after assembly makes them stale). It writes `<stem>_merged<ext>`, `_merged_snapshots`, `_merged_commit_features` and `<stem>_merged.merge.json` (sources, counts). The three tables **stay three** (different grains), joined at training load.
+- **`merge_shards.py --out dataset.parquet [--dir .]`** reads each PC's manifest and merges **only if**: every PC 1..N is present, all used the same split ID, all used the same miner version (`--allow-version-mix` overrides), no repo is on two PCs, no row repeats (`(repo, pr_number)`, `snapshot_id`, `(repo, pr_number, head_sha)`), either all or no PCs have snapshot tables, and the snapshots still match the dataset (`consistency.py`: compares `miner_version`, `mined_at`, `head_sha`, `outcome_3class` per PR; a re-mine after assembly makes them stale). It also refuses a manifest that lists failed repos, or whose dataset repos differ from the manifest's repos (`--allow-incomplete` overrides; rows for a repo the manifest does not list are always refused), and compares repos case-insensitively in the cross-PC check. It writes `<stem>_merged<ext>`, `_merged_snapshots`, `_merged_commit_features` and `<stem>_merged.merge.json` (sources, counts). The three tables **stay three** (different grains), joined at training load.
 
 ### 12.2 What survives a stop
 
 | Layer | Where | Behaviour on rerun |
 | --- | --- | --- |
 | Finished repos | rows in `--out` | skipped (`--remine` redoes all) |
-| Finished PRs of a stopped repo | `<out>.partial.jsonl` | skipped; rows reloaded for the repo-wide pass |
+| Finished PRs of a stopped repo | `<out>.partial.jsonl` | skipped when their `_ckpt` stamp matches this run (an unstamped row from an older version is accepted); rows reloaded for the repo-wide pass |
 | PR selection | `ci_cache/<owner>_<name>.selection.json` | pinned (same settings) |
 | SZZ blames | `ci_cache/<owner>_<name>.szz.json` + `.blames.jsonl` | only missing (fix, file) pairs blamed |
-| CI history | `ci_cache/<owner>_<name>.json` | reused |
+| CI history | `ci_cache/<owner>_<name>.json` | reused until 7 days old or older than the newest PR |
 | Snapshot capture | `snapshots_raw/<repo>/*.jsonl` | continued when resuming (`resume=True`), restarted on a fresh run |
 | LLM answers (re-mine) | `ci_cache/<owner>_<name>.llm_reuse.json` | reused for PRs with the same commits, then deleted |
 | Clone | `cloned_repos/<owner>_<name>` | kept after a failed/stopped repo (`--skip-existing` reuses) |
@@ -872,7 +901,7 @@ Stop (ctrl+c / TUI Stop) never loses finished PRs. After a stop caused by the LL
 
 ### 13.1 Logs
 
-- **Run log** `logs/run-<time>[-pcKofN].log`: readable summary lines with prefixes `[stage]`, `[pr i/N]`, `[fetch]`, `[window]`, `[ci]`, `[ci-history]`, `[szz]`, `[merge-style]`, `[open-snapshot]`, `[timeline]`, `[lead-in]`, `[merge-outcome]`, `[llm]`, `[llm-quota]`, `[snapshots]`, `[health]`, `[skip]`, `[skips]`, `[resume]`, `[blame]`, `[api]`, `[warn]`, `[error]`.
+- **Run log** `logs/run-<time>[-pcKofN].log`: readable summary lines with prefixes `[stage]`, `[pr i/N]`, `[fetch]`, `[window]`, `[ci]`, `[ci-history]`, `[szz]`, `[merge-style]`, `[open-snapshot]`, `[timeline]`, `[lead-in]`, `[merge-outcome]`, `[llm]`, `[llm-quota]`, `[snapshots]`, `[health]`, `[skip]`, `[skips]`, `[resume]`, `[blame]`, `[api]`, `[warn]`, `[error]`. A repo, path or option that was refused (unsafe path, invalid option) is reported there too.
 - **Run trace** `logs/run-*.trace.jsonl` (`runlog.py`): one JSON line per event: `{"t", "lvl", "stage", "msg", "repo", "pr", ...}`. Levels `DEBUG` (every git/API/LLM call), `INFO` (run and repo stages with durations, one line per PR with its time by stage, quota waits, heartbeats; default), `WARN` (retries, rate-limit waits, slow calls, slow PRs, stalls), `ERROR`. WARN/ERROR also echo to stderr. `--log-level` / `RIFFLE_LOG_LEVEL`; `RIFFLE_TRACE` names the file (unset: nothing written, per-call cost is a timer and a dict update). Stage totals per PR are inclusive (quota_wait inside llm counts in both).
 - **Thresholds:** a call of 30 s or more warns (`SLOW_CALL_S`), a PR of 300 s or more warns with its top stages (`SLOW_PR_S`), no PR finishing for 300 s is a stall, a **heartbeat** every 120 s names what every worker is doing (WARN with the longest-running PRs on a stall). This is what turns an unexplained gap into a named stage.
 - **`trace_report.py logs/run-*.trace.jsonl [--top 10]`**: stage times, slowest PRs with their stage split, quota waits, every WARN/ERROR grouped by message, longest quiet gaps.
@@ -889,13 +918,15 @@ After each repo: `[health] repo: N rows · merged % · outside % (unmerged %) ·
 | LLM columns missing on in-scope rows | over 2% |
 | CI unobserved on most merged rows | over 80% (check retention is about 90 days) |
 
+`llm_rows` counts every in-scope row, including those whose LLM status is `empty` or `skipped`. Those rows have nothing to judge, so they are neither missing nor in the denominator: `llm_missing_share` = missing / (`llm_rows` minus `llm_nothing_to_judge`). `llm_nothing_to_judge` is a new additive stats key.
+
 ### 13.3 Progress events and the UIs
 
-- `progress.py`: with `RIFFLE_EVENTS=<file>` every `emit()` appends a JSON line `{"t", "ev", ...}`; no-op otherwise. Events include `batch_start/done`, `repo_queue/start/done/failed`, `stage`, `pr`, `szz`, `breaker`, `rate_limit`, `llm_quota`, `assemble`. The TUI never parses log text.
-- **`tui.py`** (Textual): configure the batch on the left (repos file, output, PR cap, workers, LLM/SZZ/CI toggles, window, cap, lead-in, domain, shard, naming, re-mine, skip-big), ctrl+r start, ctrl+x stop (SIGINT), ctrl+l clear log, ctrl+y copy log, ctrl+b QR code of the web view, ctrl+k audit, ctrl+g show split, ctrl+n skip repo, ctrl+t test LLM, ctrl+e test run (`--test`), ctrl+o view the test data, ctrl+q quit. Right side: per-repo progress, PR/min, ETA, LLM ok/fail and latency, breaker state, plan usage and reset countdown, live RAM/CPU of the whole process tree, names what killed a run (e.g. out of memory), counts down rate-limit waits, flags repos with no progress, saves every run's log under `logs/`. The form always starts from the defaults (no saved settings). Shows the snapshot files and "ASSEMBLING" then counts.
-- **`dashboard.py`**: read-only web view (standard library only) for other devices on the LAN; page polls `/api/status` every 2 s; URL carries a **random key new on every launch**; binds all interfaces (do not port-forward); `RIFFLE_DASHBOARD=0` disables, `RIFFLE_DASHBOARD_PORT` sets the first port (8765). Log search, level filter, wrap/follow/pause/expand, copy and download, `?` lists shortcuts. **Big picture** (`b`, or `#big`): full-screen dark page readable across a room: run state word (MINING, LLM PAUSED, STOPPED: ERROR, FINISHED, OFFLINE), percent, time, CPU and memory, PRs mined, time left, elapsed, PRs/min, repo and repos done, any alert, last log lines; keeps the screen awake; `d` dims it. The state word also reads **ASSEMBLING** while the snapshot tables are built at batch end (the label "Now mining" becomes "Now building"). A small Riffle icon and `miner v<version>` sit bottom left on every screen size. **On phones** (narrower than 900 px) the same page stacks into one column: status word, large percent, bar, two facts per row (PRs mined / time left, elapsed / PRs per minute), current repo, repos and CPU/memory, alert, log; on touch screens Dim and Exit are buttons, because there is no keyboard and a stray tap must not leave the page.
-- **`doctor.py`** (runs on every TUI launch; `python doctor.py [--check]`, exit 1 on failure; `RIFFLE_NO_DOCTOR=1` skips; `NO_COLOR=1` for plain output): detects the OS family from `/etc/os-release` (Debian, RHEL, Arch, SUSE, Alpine families, matched on `ID` then `ID_LIKE`), macOS, Windows and WSL, plus the package manager on PATH (`apt-get`, `dnf`/`yum`, `pacman`, `zypper`, `apk`, `brew`, `winget`/`scoop`/`choco`). Checks, in sections: OS, Python (3.10+), environment (system / venv / PEP 668), git (Windows: `core.longpaths`), Python packages, `GITHUB_TOKEN` (verified against GitHub, the `.env.example` placeholder doesn't count), LLM setup (claude CLI or API key + SDK), the three API-contract tools one row each (required while API contract diff is on: a missing one is a failure the TUI pauses on, but does not block launch) (`oasdiff` OpenAPI, `buf` protobuf, `graphql-inspector` GraphQL), disk (warn under 20 GB) and RAM (warn under 8 GB; `psutil`, else `/proc/meminfo`, `sysctl` or the Win32 API). Fixes: pip-installs missing packages, asks for a token and saves it to `.env` (mode 600 where supported, gitignored), and offers the OS-specific install command for git, Node, Claude Code and the API tools (`install_plan`), never running one without a yes; with no known installer it prints a manual hint. Non-interactive runs only report, in plain text.
-- **`deps.py`**: on an externally managed Python (PEP 668, Ubuntu/Debian 23.04+) packages go into a private `repo_miner/.venv` created on first need; later launches re-run inside it automatically; no `--break-system-packages`. If `python3-venv` is missing the doctor offers the `apt` command. `RIFFLE_NO_INSTALL=1`, `RIFFLE_NO_VENV=1`.
+- `progress.py`: with `RIFFLE_EVENTS=<file>` every `emit()` appends a JSON line `{"t", "ev", ...}`; no-op otherwise. Events include `batch_start/done`, `repo_queue/start/done/failed`, `stage`, `pr`, `szz`, `breaker` (an LLM stop), `rate_limit`, `llm_quota`, `assemble`. The TUI never parses log text. The events file is read in binary and split on `b'\n'`, and the writer uses `newline='\n'`; the control file is written atomically.
+- **`tui.py`** (Textual): configure the batch on the left (repos file, output, PR cap, workers, LLM/SZZ/CI toggles, window, cap, lead-in, domain, shard, naming, re-mine, skip-big), ctrl+r start, ctrl+x stop (SIGINT), ctrl+l clear log, ctrl+y copy log, ctrl+b QR code of the web view, ctrl+k audit, ctrl+g show split, ctrl+n skip repo, ctrl+t test LLM, ctrl+e test run (`--test`), ctrl+o view the test data, ctrl+q quit (a second ctrl+q force-quits; the first returns at once and waits for the final upload in a worker). Right side: per-repo progress, PR/min, ETA (needs at least 3 points over at least 10 s, and grows during a stall), LLM ok/fail and latency, LLM stop state, plan usage and reset countdown, live RAM/CPU of the whole process tree, names what killed a run (e.g. out of memory), counts down rate-limit waits, flags repos with no progress, saves every run's log under `logs/`. The form always starts from the defaults (no saved settings). Notifications are shown with markup off and dynamic text is escaped, so a repo name or log line cannot inject formatting; the QR screen scrolls and falls back to the URL alone when the terminal is too small; the subprocess stream limit is 16 MiB; the data viewer is keyed by row position; the progress bar resets on Start; the CPU count is `psutil.cpu_count() or 1`. Shows the snapshot files and "ASSEMBLING" then counts.
+- **`dashboard.py`**: read-only web view (standard library only) for other devices on the LAN; page polls `/api/status` every 2 s; URL carries a **random key new on every launch**; binds all interfaces (do not port-forward); `RIFFLE_DASHBOARD=0` disables, `RIFFLE_DASHBOARD_PORT` sets the first port (8765), `RIFFLE_DASHBOARD_BIND` restricts the address (default: all interfaces). Each connection has a 15 s timeout. The page is plain HTTP and the key is in the URL, so anyone on the network who sees the URL can read the view (also stated in the module docstring). Log search, level filter, wrap/follow/pause/expand, copy and download, `?` lists shortcuts. **Big picture** (`b`, or `#big`): full-screen dark page readable across a room: run state word (MINING, LLM PAUSED, STOPPED: ERROR, FINISHED, OFFLINE), percent, time, CPU and memory, PRs mined, time left, elapsed, PRs/min, repo and repos done, any alert, last log lines; keeps the screen awake; `d` dims it. The state word also reads **ASSEMBLING** while the snapshot tables are built at batch end (the label "Now mining" becomes "Now building"). A small Riffle icon and `miner v<version>` sit bottom left on every screen size. **On phones** (narrower than 900 px) the same page stacks into one column: status word, large percent, bar, two facts per row (PRs mined / time left, elapsed / PRs per minute), current repo, repos and CPU/memory, alert, log; on touch screens Dim and Exit are buttons, because there is no keyboard and a stray tap must not leave the page.
+- **`doctor.py`** (runs on every TUI launch; `python doctor.py [--check]`, exit 1 on failure; `RIFFLE_NO_DOCTOR=1` skips; `NO_COLOR=1` for plain output): detects the OS family from `/etc/os-release` (Debian, RHEL, Arch, SUSE, Alpine families, matched on `ID` then `ID_LIKE`), macOS, Windows and WSL, plus the package manager on PATH (`apt-get`, `dnf`/`yum`, `pacman`, `zypper`, `apk`, `brew`, `winget`/`scoop`/`choco`). Checks, in sections: OS, Python (3.10+), environment (system / venv / PEP 668), git (Windows: `core.longpaths`), Python packages, `GITHUB_TOKEN` (verified against GitHub, the `.env.example` placeholder doesn't count), LLM setup (claude CLI or API key + SDK), the three API-contract tools one row each (required while API contract diff is on: a missing one is a failure the TUI pauses on, but does not block launch) (`oasdiff` OpenAPI, `buf` protobuf, `graphql-inspector` GraphQL), disk (warn under 20 GB) and RAM (warn under 8 GB; `psutil`, else `/proc/meminfo`, `sysctl` or the Win32 API). **Auto-update is opt-in.** At launch `doctor.auto_update` fetches `origin/main` and, by default, only reports `[update] main has a newer miner (X, you have Y). ...` and returns `available`. With `RIFFLE_AUTO_UPDATE=1` it fast-forwards a clean checkout on `main` and restarts once; `RIFFLE_NO_AUTO_UPDATE=1` turns the check off. Fixes: pip-installs missing packages, asks for a token and saves it to `.env` (mode 600 where supported, gitignored), and offers the OS-specific install command for git, Node, Claude Code and the API tools (`install_plan`), never running one without a yes; with no known installer it prints a manual hint. Non-interactive runs only report, in plain text.
+- **`deps.py`**: on an externally managed Python (PEP 668, Ubuntu/Debian 23.04+) packages go into a private `repo_miner/.venv` created on first need; later launches re-run inside it automatically; no `--break-system-packages`. If `python3-venv` is missing the doctor offers the `apt` command. `RIFFLE_NO_INSTALL=1`, `RIFFLE_NO_VENV=1`. The `pip install` specs are bounded: `textual>=8.0,<9`, `pandas>=2.0,<4`, `pyarrow>=14.0,<26`, `lizard>=1.17,<2`, `psutil>=5.9,<8`, `segno>=1.6,<2`, `semgrep>=1.0,<2`.
 
 ### 13.3.1 Pre-run tools
 
@@ -910,17 +941,17 @@ Three tables, three grains, three contracts:
 
 | Table | File | Grain | Contract | Columns |
 | --- | --- | --- | --- | --- |
-| dataset | `<out>.parquet` | one row per closed PR | `mined_dataset.schema.json` v1.2 | 208 |
-| snapshots | `<out>_snapshots.parquet` | one row per PR **moment** | `mined_snapshot.schema.json` v1.3 | 239 (the 208 plus 31) |
-| commit features | `<out>_commit_features.parquet` | one row per head commit a PR had while open | `mined_commit_features.schema.json` v1.0 | 53 |
+| dataset | `<out>.parquet` | one row per closed PR | `mined_dataset.schema.json` v1.3 | 210 |
+| snapshots | `<out>_snapshots.parquet` | one row per PR **moment** | `mined_snapshot.schema.json` v1.4 | 241 (the 210 plus 31) |
+| commit features | `<out>_commit_features.parquet` | one row per head commit a PR had while open | `mined_commit_features.schema.json` v1.1 | 53 |
 
 ### 14.1 Conventions that apply to every column
 
 - **Every column is present on every row.** A stage that is off, a tool that is missing, or a signal that could not be observed gives `null`, never a missing key. `additionalProperties` is `false`: a column the contract does not list fails CI.
 - **`null` means "not observed or not enough history". `0` means "measured, found none".** Never coerce one to the other (the repo-wide contract rule).
 - Types below are the contract's types. "or null" is written only where the column is not in the schema's `required` list's non-nullable set; the non-null columns are `repo`, `pr_number`, `base_sha`, `head_sha`, `mined_at`, `miner_version`, `miner_commit`.
-- Columns that are **outcomes, ids or metadata are never model inputs**: `repo`, `pr_number`, `base_sha`, `head_sha`, `author_email`, `created_at`, `closed_at`, `merged_at`, `mined_at`, `observed_through`, every `label_*`, `days_to_*`, `close_reason*`, `outcome_3class`, `nowhere_reason`, `ci_*` outcome details, windows, provenance, `domain`, and the post-open counts. `frames.py` derives the input list from the contract.
-- Row metadata originating in `mine_repo.py`; descriptions in the contract name the module that computes each column.
+- Columns that are **outcomes, ids or metadata are never model inputs**. The contract marks them `x-riffle-non-input` (`merge_via`, `open_snapshot`, the five provenance columns, `llm_diff_truncated`, `szz_window_closed`, ...); the columns computed from the diff range carry `x-riffle-diff-derived` (125 of them), and `frames.py` reads both keywords instead of guessing from description prefixes: `repo`, `pr_number`, `base_sha`, `head_sha`, `author_email`, `created_at`, `closed_at`, `merged_at`, `mined_at`, `observed_through`, every `label_*`, `days_to_*`, `close_reason*`, `outcome_3class`, `nowhere_reason`, `ci_*` outcome details, windows, provenance, `domain`, and the post-open counts. `frames.py` derives the input list from the contract: `x-riffle-non-input`, descriptions that say "never a model input", ids, snapshot bookkeeping, `merge_via`, `open_snapshot` and the five provenance columns. (The old rule that dropped every column whose description began "Row metadata" also dropped about 25 real features.)
+- Descriptions in the contract name the module that computes each column; metadata originating in `mine_repo.py` is described as row metadata or Source 4c.
 - Schema versions are `x-riffle-version`; every schema change is breaking in the contracts sense: add fields as optional, backfill, then make required, bump every consumer in the same PR, regenerate `contracts/REFERENCE.md`, add a row to `docs/contracts.md`.
 
 ### 14.2 Dataset columns, by group
@@ -939,8 +970,8 @@ Notation: `num` = number, `int` = integer, `bool`, `str`, `enum{...}`. Where the
 | `mined_at` | str | When the row was extracted (UTC). Maturity is computed from it. |
 | `miner_version` | str | `version.py` that wrote the row |
 | `miner_commit` | str | The miner's own git commit (12 chars), `-dirty` if its files had uncommitted changes, `unknown` outside a checkout |
-| `llm_model` | str or null | Model the LLM columns were asked of; null if the LLM was off |
-| `llm_prompt_version` | str or null | 12-hex hash of the prompts and schemas (flags and close classifier); null if the LLM was off |
+| `llm_model` | str or null | The resolved model id of the call (the CLI's `modelUsage` or the API response's `model`), else the alias; null if the LLM was off |
+| `llm_prompt_version` | str or null | 12-hex hash of the prompts, schemas, diff-slimming rules, redaction patterns, diff settings, backend and transcript format (7.2); null if the LLM was off |
 | `domain` | str or null | Dataset domain from the repos file's `[domain: NAME]` tag (ADR 0011); null if untagged |
 | `merge_via` | enum{github, landed_commit} or null | How the PR landed; null for unmerged rows |
 | `open_snapshot` | enum{exact, recovered, approx, final} or null | How the at-open diff was found (4.4). `final` rows' diff features may leak: drop or mask them. |
@@ -1045,7 +1076,7 @@ Per-file features collapsed over the changed files (5.2.1). Values are about the
 | `author_file_familiarity` | num or null | Share of touched paths the author touched before |
 | `author_days_since_last_change` | num or null | Days since the author's last commit before base |
 | `author_post_merge_ci_fail_rate` | num* | Smoothed post-merge CI failure rate of the author's commits; null with no CI history |
-| `repo_revert_base_rate` | num or null | Reverts / all commits before base |
+| `repo_revert_base_rate` | num or null | Reverts / all commits before base (merge commits excluded) |
 | `pr_size_pctile_repo`, `nf_pctile_repo`, `entropy_pctile_repo` | num or null | Where this PR's size / files / entropy sits in the repo's per-commit distribution (fraction strictly smaller) |
 
 #### F. Line-level blame (Source 3)
@@ -1063,10 +1094,10 @@ Per-file features collapsed over the changed files (5.2.1). Values are about the
 
 | Column | Type | Meaning |
 | --- | --- | --- |
-| `ccn_delta` | num or null | Sum of CCN changes of modified functions (lizard) |
+| `ccn_delta` | num or null | Sum of CCN changes of modified functions (lizard), deleted functions included; null on a lizard parse error |
 | `max_ccn_changed_func` | num or null | Highest CCN among modified functions |
 | `n_funcs_modified` | num or null | Functions whose CCN changed (including new ones) |
-| `semgrep_findings_new` | num or null | Semgrep findings new at head vs base |
+| `semgrep_findings_new` | num or null | Semgrep findings new at head vs base (multiset, no line numbers); null when the scan did not run or failed (all three semgrep columns) |
 | `semgrep_high_conf_security_new` | num or null | New findings with category security and confidence HIGH |
 | `semgrep_cwe_top25_new` | bool or null | A new finding's CWE is in the Top-25 set |
 
@@ -1074,14 +1105,14 @@ Per-file features collapsed over the changed files (5.2.1). Values are about the
 
 | Column | Type | Meaning |
 | --- | --- | --- |
-| `n_deps_added`, `n_deps_upgraded`, `n_deps_downgraded` | num or null | Dependencies added / upgraded / downgraded (semver comparison) |
+| `n_deps_added`, `n_deps_upgraded`, `n_deps_downgraded` | num or null | Dependencies added / upgraded / downgraded (semver comparison); null when a touched manifest is unparsed or unreadable |
 | `n_major_bumps` | num or null | Upgrades whose major version changed |
-| `osv_vulns_introduced` | num or null | Vulnerability IDs at head not at base (OSV); null = no dependency change or unobserved |
+| `osv_vulns_introduced` | num or null | Vulnerability IDs at head not at base (OSV), as of the PR's open time; null = no dependency change, unobserved, an unresolved version or an undatable record |
 | `osv_vulns_fixed` | num or null | IDs at base not at head |
-| `vuln_has_fix_available` | bool or null | An introduced vulnerability lists a fixed version |
+| `vuln_has_fix_available` | bool or null | False when no introduced record has a fix; null if any has one (OSV does not date a fix's release) |
 | `ghsa_max_severity_introduced` | enum{LOW, MODERATE, HIGH, CRITICAL} or null | Worst severity of introduced records |
 | `ghsa_malware_dep` | bool or null | An introduced record is malware (`MAL-`) |
-| `osv_ghsa_disagreement` | bool* | OSV and GHSA disagree on a newly present version; null with no token |
+| `osv_ghsa_disagreement` | bool* | OSV and GHSA disagree on a newly present version; null with no token or no usable GHSA answer |
 
 #### I. Deterministic checks and API contract (Source 5)
 
@@ -1094,11 +1125,11 @@ Per-file features collapsed over the changed files (5.2.1). Values are about the
 | `unused_import_or_dead_code_added` | num or null | Rough count of added imports never used |
 | `dependency_major_bump_count` | num or null | Regex-detected major version bumps in manifest/lockfile lines |
 | `migration_reversibility` | enum{destructive, reversible} or null | Migration content check |
-| `api_contract_change` | enum{additive, breaking} or null | Spec-diff verdict (5.7) |
+| `api_contract_change` | enum{additive, breaking} or null | Spec-diff verdict (5.7); null when any changed spec is unobserved, unless another is breaking |
 
 #### J. LLM flags (Source 6), diff only; null when out of scope, trivial or LLM off
 
-`llm_touches_authn_authz` (bool), `authz_check_change`, `changes_public_api_signature` (bool), `error_handling_change`, `exception_swallowed` (bool), `db_schema_or_query_change`, `transaction_boundary_change`, `input_validation_change`, `config_or_feature_flag_change`, `feature_flag_guarding`, `security_sensitive_ops` (bool), `resource_lifecycle_change`, `null_handling_change`, `numeric_money_precision` (bool), `time_handling_change` (bool), `retry_timeout_idempotency_change` (bool), `refactor_vs_behavior`, `change_intent`, `unrelated_change_share` (int 0 to 3), `tests_added_for_behavior_change`, `test_code_alignment`, `satd_added` (int), `semantic_risk_1to5` (int 1 to 5). Values for each are listed in 7.2. These 23 columns together with `llm_model` and `llm_prompt_version` are the LLM surface.
+`llm_touches_authn_authz` (bool), `authz_check_change`, `changes_public_api_signature` (bool), `error_handling_change`, `exception_swallowed` (bool), `db_schema_or_query_change`, `transaction_boundary_change`, `input_validation_change`, `config_or_feature_flag_change`, `feature_flag_guarding`, `security_sensitive_ops` (bool), `resource_lifecycle_change`, `null_handling_change`, `numeric_money_precision` (bool), `time_handling_change` (bool), `retry_timeout_idempotency_change` (bool), `refactor_vs_behavior`, `change_intent`, `unrelated_change_share` (int 0 to 3), `tests_added_for_behavior_change`, `test_code_alignment`, `satd_added` (int), `semantic_risk_1to5` (int 1 to 5). Values for each are listed in 7.2. These 23 columns together with `llm_model`, `llm_prompt_version` and the optional `llm_diff_truncated` (bool or null; true when the diff cap cut code the model would have read; never an input) are the LLM surface.
 
 #### K. Merge-model signals: per PR
 
@@ -1132,7 +1163,7 @@ Per-file features collapsed over the changed files (5.2.1). Values are about the
 
 #### N. Breakage labels and observability (ADR 0002): outcomes; null on unmerged rows
 
-`days_to_revert` (num*), `days_to_hotfix` (num*), `days_to_szz_fix` (num*), `label_revert` (bool), `label_ci_fail` (bool*, tri-state), `label_ci_fail_optional` (bool*), `label_hotfix` (bool), `label_szz_bug` (bool), `label_bad` (bool), `ci_observed` (bool), `revert_window_closed` (bool), `hotfix_window_closed` (bool), `label_bad_observed` (bool), `ci_fail_flaky_only` (bool). Definitions in 6.1 and 6.4.
+`days_to_revert` (num*), `days_to_hotfix` (num*), `days_to_szz_fix` (num*, null when SZZ did not run), `label_revert` (bool), `label_ci_fail` (bool*, tri-state), `label_ci_fail_optional` (bool*), `label_hotfix` (bool), `label_szz_bug` (bool, null when SZZ did not run), `label_bad` (bool), `ci_observed` (bool), `revert_window_closed` (bool), `hotfix_window_closed` (bool), `szz_window_closed` (bool, optional), `label_bad_observed` (bool), `ci_fail_flaky_only` (bool). Definitions in 6.1 and 6.4.
 
 #### O. Merge-outcome labels and targets (ADR 0009, proposal Part 4): outcomes, never inputs
 
@@ -1178,8 +1209,8 @@ State (20, "Snapshot state"):
 | `maintainer_replied` | bool | A maintainer has commented or reviewed |
 | `first_maintainer_reply_h` | num or null | Hours from start to the first maintainer reply |
 | `review_rounds` | int | Reviews by humans other than the author |
-| `changes_requested_count` | int | Changes-requested reviews so far |
-| `approvals_count` | int | Approving reviews so far |
+| `changes_requested_count` | int or null | Changes-requested reviews so far, as the review stood at the moment (a dismissed review counts until its dismissal); null when unknowable (an old capture with no dismissal record) |
+| `approvals_count` | int or null | Approving reviews so far, same rule |
 | `commits_since_start` | int | Commits pushed after the start (base merges excluded) |
 | `force_pushes_since_start` | int | Force-pushes after the start |
 | `author_pushed_after_last_review` | bool | The author pushed after the latest review |
@@ -1188,9 +1219,9 @@ State (20, "Snapshot state"):
 | `marked_duplicate_so_far` | bool | Someone marked it duplicate |
 | `is_draft_now` | bool | Back in draft |
 | `reopen_count` | int | Reopens so far |
-| `new_commits_since_prev` | int or null | Commits since the previous kept snapshot (null on the first) |
-| `new_comments_since_prev` | int or null | Human comments since the previous kept snapshot |
-| `diff_size_change_since_prev` | num or null | Change in `LA + LD` since the previous kept snapshot |
+| `new_commits_since_prev` | int or null | Commits since the previous candidate moment, before the 6-per-PR cap (null on the first) |
+| `new_comments_since_prev` | int or null | Human comments since the previous candidate moment |
+| `diff_size_change_since_prev` | num or null | Change in `LA + LD` since the previous candidate moment |
 
 Training (2): `snapshot_weight` (num in (0, 1]; weight, never input) and `moment_bucket` (enum{open, <1d, 1-3d, 3-7d, 7-30d, >30d}).
 
@@ -1228,12 +1259,14 @@ The Go history miner (`services/miner`, ADR 0004) writes a manifest and six Parq
 | Path | Written by | Contents | Lifetime |
 | --- | --- | --- | --- |
 | `dataset.parquet` (`.jsonl`, `.csv`) | `mine_repo` | dataset rows, appended and de-duplicated | kept |
-| `dataset.parquet.partial.jsonl` | `mine_repo` | checkpoint: one row per finished PR (sidecars included) | removed after a clean write |
+| `dataset.parquet.partial.jsonl` | `mine_repo` | checkpoint: one row per finished PR (sidecars and a `_ckpt` stamp included) | removed after a clean write |
 | `dataset.parquet.recover-<time>.jsonl` | `mine_repo` | this run's rows when an append could not read the existing file | kept; merge by hand |
 | `dataset_snapshots.parquet`, `dataset_commit_features.parquet` | `snapshots.py` | snapshot and commit tables | kept |
 | `dataset_pcKofN.shard.json` | `build_dataset` | shard manifest | kept |
 | `dataset_merged*.parquet`, `dataset_merged.merge.json` | `merge_shards` | merged tables and the merge report | kept |
-| `ci_cache/<owner>_<name>.json` | CI history | `{sha: failure|success}` | kept |
+| `ci_cache/<owner>_<name>.json` | CI history | `{"v", "built", "map"}` where `map` is `{sha: failure|success}`; written atomically | kept, rebuilt after 7 days |
+| `ci_cache/.rate_wait` | `github_api` | the shared rate-limit gate | kept |
+| `.sync_state.json`, `.sync_state.json.lock` | `sync` | what was last sent, per store URL, and its lock | kept |
 | `ci_cache/<owner>_<name>.szz.json` | SZZ | `{"fingerprint", "window", "index"}` | kept |
 | `ci_cache/<owner>_<name>.szz.json.blames.jsonl` | SZZ | first line a fingerprint, then `{"sha", "paths": {path: [bug shas]}}` per fix commit | kept (cleared by `--remine-repo`) |
 | `ci_cache/<owner>_<name>.selection.json` | `mine_repo` | pinned PR selection and maintainer evidence | removed after a clean write |
@@ -1276,6 +1309,7 @@ Defaults shown are the code's. Every stage flag has a `--no-` form (`argparse.Bo
 | `--llm-max-diff-chars N` | 25000 | cap on the diff sent |
 | `--close-reason-llm {other_only,always}` | other_only | when the classifier is asked |
 | `--llm-quota-wait / --no-llm-quota-wait` | on | wait for the plan to reset |
+| `--full-repo` | off | mine every closed, non-draft PR the repo has (4.3) |
 | `--szz / --no-szz` | on | SZZ label |
 | `--ci-history / --no-ci-history` | on | historical CI-fail-rate features |
 | `--declared-labels / --no-declared-labels` | on | `declared_hotfix` |
@@ -1296,7 +1330,7 @@ Exit codes: 0 ok, 3 LLM could not answer (output not written, rerun to resume), 
 
 ### 16.2 `build_dataset.py` (many repos)
 
-Pass-through of the mine flags above (`--max-prs`, `--min-age-days`, `--ci-history`, `--szz`, `--declared-labels`, `--merge-outcome`, `--max-unmerged`, `--pr-discovery`, `--llm`, `--no-scanners`, `--no-api-contract`, `--no-review-history`, `--llm-model`, `--workers`, `--llm-concurrency`, `--llm-scope`, `--llm-sample-pct`, `--close-reason-llm`, `--llm-max-diff-chars`, `--llm-quota-wait`, `--window-from/--window-to`, `--lead-in-days`, `--cap-on`, `--snapshots`) plus:
+Pass-through of the mine flags above (`--max-prs`, `--min-age-days`, `--ci-history`, `--szz`, `--declared-labels`, `--merge-outcome`, `--max-unmerged`, `--pr-discovery`, `--llm`, `--no-scanners`, `--no-api-contract`, `--no-review-history`, `--llm-model`, `--workers`, `--llm-concurrency`, `--llm-scope`, `--llm-sample-pct`, `--close-reason-llm`, `--llm-max-diff-chars`, `--llm-quota-wait`, `--window-from/--window-to`, `--lead-in-days`, `--cap-on`, `--full-repo`, `--snapshots`) plus:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -1307,6 +1341,13 @@ Pass-through of the mine flags above (`--max-prs`, `--min-age-days`, `--ci-histo
 | `--skip-existing` | off | reuse an existing clone |
 | `--keep-clones` | off | don't delete a clone after mining |
 | `--repo-retries N` | 2 | extra clone/mine attempts per repo |
+| `--clone-stall-s S` | 600 (`RIFFLE_CLONE_STALL_S`) | kill a clone that prints nothing for S seconds and retry; 0 = never |
+| `--max-files-deep N` | 300 (`RIFFLE_MAX_FILES_DEEP`) | a PR touching more than N files gets per-file features for the N with the most churn only; 0 = never cap |
+| `--llm-backend {claude_cli,api}` | `LLM_BACKEND`, else claude_cli | reaches the miner as `LLM_BACKEND` |
+| `--llm-diff-context N` | 1 (`LLM_DIFF_CONTEXT`) | context lines around each change in the diff sent to the LLM |
+| `--sync / --no-sync` | on | send output to the team store (only when `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` are set) |
+| `--split-by {commits,prs}` | commits | what `--shard` balances (12.1) |
+| `--issue-tokens`, `--token-days D`, `--tokens-out FILE` | | with `--shard-plan`: one write token and join code per PC, expiring after D days; the codes also saved to FILE |
 | `--only-domain NAME` | | mine only repos tagged `[domain: NAME]` |
 | `--shard K/N`, `--shard-plan N` | | sharding (12.1) |
 | `--remine`, `--remine-repo OWNER/NAME`, `--auto-remine`, `--audit` | | re-mining and audit (12.3) |
@@ -1330,7 +1371,7 @@ python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw
 | Tool | Usage |
 | --- | --- |
 | `snapshots.py` | `--dataset F --raw-root D [--out F] [--commit-features-out F]` |
-| `merge_shards.py` | `--out dataset.parquet [--dir .] [--allow-version-mix]` |
+| `merge_shards.py` | `--out dataset.parquet [--dir .] [--allow-version-mix] [--allow-incomplete]` |
 | `scout.py` | `--repos-file F [--agent-search] [--out scout.json]` |
 | `llm_compare.py` | `--dataset F --clone-dir D --models sonnet haiku --n 300 [--dry-run]` |
 | `audit_export.py` | `--dataset F --out label_audit.csv [--n 600]` |
@@ -1351,12 +1392,22 @@ python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw
 | `LLM_MODEL` | both | model; default `sonnet` (cli) or `claude-sonnet-5` (api) |
 | `LLM_BASE_URL` | api backend | default `https://api.anthropic.com/v1/` |
 | `LLM_TIMEOUT` | cli | seconds per call (180) |
-| `LLM_BREAKER_THRESHOLD` | llm_flags | consecutive failures (5) |
+| `LLM_DIFF_CONTEXT` | llm_flags | context lines in the diff sent to the LLM (1) |
 | `LLM_CONCURRENCY` | llm_flags | simultaneous calls (4) |
 | `LLM_SCOPE` | config | `training` or `all` |
 | `LLM_RETRY_BACKOFF_S` | mine_repo | per-PR retry wait unit (60) |
 | `LLM_CALL_RETRY_S` | llm_flags | wait between quick retries inside one call (10) |
 | `RIFFLE_WORKERS` | config | PRs in parallel |
+| `RIFFLE_MAX_FILES_DEEP` | config | files per PR that get per-file features (300; 0 = no cap) |
+| `RIFFLE_GIT_TIMEOUT_S`, `RIFFLE_GIT_BLAME_TIMEOUT_S`, `RIFFLE_GIT_LONG_TIMEOUT_S` | gitio | timeouts for a git call (300), a blame (120) and the whole-history log (3600); a timeout is unobserved |
+| `RIFFLE_MAX_BLOB_BYTES` | gitio | largest file read at a commit (4 MiB) |
+| `RIFFLE_CLONE_STALL_S` | build_dataset | kill a silent clone after this many seconds (600; 0 = never) |
+| `RIFFLE_SEMGREP_RULES` | scanners | a rules file or directory; unset uses `--config auto`, which fetches rules from semgrep.dev |
+| `RIFFLE_SEMGREP_PARALLEL` | scanners | concurrent semgrep processes (2) |
+| `RIFFLE_NO_API_CACHE` | api_cache | turn the GitHub API cache off |
+| `RIFFLE_AUTO_UPDATE` | doctor | `1` lets the launch fast-forward a clean `main` checkout; default only reports a newer miner |
+| `RIFFLE_NO_AUTO_UPDATE` | doctor | `1` turns the update check off |
+| `RIFFLE_SYNC_URL`, `RIFFLE_SYNC_TOKEN`, `RIFFLE_SYNC_TIMEOUT` | sync | team store (`https` except localhost), this PC's write token, how long a Stop waits for the last upload (120 s) |
 | `RIFFLE_TRACE`, `RIFFLE_LOG_LEVEL` | runlog | trace file and level |
 | `RIFFLE_EVENTS` | progress | progress events file (TUI) |
 | `RIFFLE_CONTROL` | build_dataset | file the TUI writes repo names to, to request a skip |
@@ -1365,7 +1416,7 @@ python snapshots.py --dataset dataset.parquet --raw-root snapshots_raw
 | `RIFFLE_NO_WAIT` | tui, doctor | skip the 5 s pause before the TUI opens |
 | `RIFFLE_NO_VENV`, `RIFFLE_IN_VENV` | deps | don't switch into `.venv` / set when inside it |
 | `RIFFLE_NO_PLAN_USAGE` | llm_flags | don't poll `claude -p /usage` |
-| `RIFFLE_DASHBOARD`, `RIFFLE_DASHBOARD_PORT` | dashboard | disable; first port (8765) |
+| `RIFFLE_DASHBOARD`, `RIFFLE_DASHBOARD_PORT`, `RIFFLE_DASHBOARD_BIND` | dashboard | disable; first port (8765); interface to bind (default `0.0.0.0`) |
 | `SZZ_EQUIV_REPO` | tests | a real clone for the SZZ equivalence test |
 
 Note: `.env.example` ships `LLM_MODEL=claude-haiku-4-5-20251001`. Because `.env` is auto-loaded and `LLM_MODEL` applies to **both** backends, copying the template unchanged makes headless Claude Code run that model instead of `sonnet`. Remove or change the line deliberately.
@@ -1405,7 +1456,7 @@ Most are not exposed as flags; they mirror `rules.mining` / `labels` in `contrac
 | `stale_bot_logins` | stale[bot], stale-bot, stalebot | |
 | `unwanted_labels` | wontfix, won't fix, invalid, not planned, out of scope, declined, rejected, spam | |
 | `ci_cache_dir` | ci_cache | cache folder |
-| `llm_backend`, `llm_model`, `llm_base_url`, `llm_timeout`, `llm_breaker_threshold`, `llm_concurrency`, `llm_scope`, `llm_sample_pct` | see 17 / 7 | |
+| `llm_backend`, `llm_model`, `llm_base_url`, `llm_timeout`, `llm_concurrency`, `llm_scope`, `llm_sample_pct` | see 17 / 7 | (`llm_breaker_threshold` was removed in 7.0.0; `llm_breaker_tripped` stays as the stop flag) |
 | `llm_skip_trivial` | True | skip docs/tests/lockfile/generated-only diffs |
 | `llm_diff_context`, `llm_max_diff_chars` | 1, 25000 | diff sent |
 | `close_reason_llm` | other_only | classifier policy |
@@ -1413,6 +1464,7 @@ Most are not exposed as flags; they mirror `rules.mining` / `labels` in `contrac
 | `llm_row_retries`, `llm_retry_backoff_s`, `llm_call_retry_s` | 3, 60, 10 | retry policy |
 | `flaky_detection`, `flaky_min_rerun_passes`, `flaky_lookback_days` | True, 3, 90 | flaky checks |
 | `snapshot_max_heads`, `snapshot_dir` | 5, None | capture |
+| `max_files_per_pr_deep` | 300 | files per PR that get per-file features (0 = off); `--max-files-deep`, `RIFFLE_MAX_FILES_DEEP` |
 | `workers`, `request_timeout`, `max_prs` | see 4.6, 20 s, None | |
 | `window_from`, `window_to`, `lead_in_days`, `cap_on`, `domain`, `min_age_days` | None, None, 180, all, None, 90 | selection |
 | `merge_signal` | auto | `auto|github|landed` (no CLI flag) |
@@ -1446,6 +1498,7 @@ Most are not exposed as flags; they mirror `rules.mining` / `labels` in `contrac
 | `test_tui_options.py` | the TUI passes the v3-v6 options to `build_dataset` and validates them; `build_dataset` accepts every flag the TUI sends |
 | `test_contract_sync.py` | a schema's `x-riffle-miner-version` is a semver and not ahead of `version.py`; every schema's `x-riffle-version` has a row in `docs/contracts.md` |
 | `test_dashboard_big.py` | the big-picture elements are on the page and its script parses |
+| 7.0.0 audit tests: `test_git_audit_fixes.py`, `test_history_shared.py`, `test_deps_cve_point_in_time.py`, `test_scanners_unobserved.py`, `test_api_limits.py`, `test_llm_audit_fixes.py`, `test_snapshot_audit.py`, `test_checkpoint_resume.py`, `test_batch_checkpoint_stop.py`, `test_batch_options.py`, `test_merge_shards_incomplete.py`, `test_sync_safety.py`, `test_tui_robust.py`, `test_mine_wiring.py`, `test_scout_health_small.py`, `test_audit_leftovers.py` | one file per area of the audit: paths and renames, the shared history index, as-of CVEs, null scanners, rate limits and cache expiry, LLM validation and reuse, snapshot rules, checkpoint stamps and atomic writes, process-group stop, option validation, incomplete shard manifests, sync safety, TUI robustness, wiring, and the leftovers. `pipelines/training/tests` has `test_frames_audit.py` and `test_contract_keywords.py`; `infra/docker/riffle-data/tests` has `test_audit_fixes_2.py` |
 
 ---
 
@@ -1456,7 +1509,7 @@ Documented, not bugs, unless noted.
 **Labels and outcomes**
 
 - SZZ blames only deleted/modified lines (adds-only fixes trace to nothing) and has about 0.6 precision. It is kept out of `label_bad` (ADR 0002).
-- `label_szz_bug`, `label_revert` and `label_hotfix` are `false` (not `null`) when SZZ is off or an outcome simply wasn't observed. Use the `*_window_closed`, `ci_observed` and `label_bad_observed` columns, and know the run mode.
+- `label_revert` and `label_hotfix` are `false` (not `null`) when an outcome simply wasn't observed; `label_szz_bug` and `days_to_szz_fix` are `null` when SZZ did not run (7.0.0). Use the `*_window_closed`, `ci_observed` and `label_bad_observed` columns, and know the run mode.
 - GitHub keeps check results for about 90 days on public repos, so older `ci_fail` is unobserved (`label_ci_fail` null; `label_bad_observed` false). The health check flags repos where CI is unobserved on more than 80% of merged rows.
 - Revert and hotfix search uses `git log --all` of **this clone**: a revert that landed after the clone's newest commit is invisible, which is why `observed_through` exists.
 - Hotfix detection is keyword-based on commit subjects (hotfix, hot-fix, rollback, rolled back, quick fix, urgent/emergency/critical + fix, patch, bug, issue, regression or security); a repo that never words its fixes that way (vite) has no positives.
@@ -1473,21 +1526,31 @@ Documented, not bugs, unless noted.
 - `hunk_fix_proximity` approximates "lines a past fix touched" by blaming the base and taking lines **owned by** fix commits, not the fix commits' own diff lines.
 - Blame uses `-w -M`; `-C` is off.
 - A repo allowing both squash and rebase with multi-commit PRs relies on the author-overlap confirmation; a repo flooded with rebase merges that cannot be sniffed (API off) uses `merge^1` and can undercount multi-commit PRs.
-- `semgrep` missing gives `semgrep_findings_new = 0`, not `null` (the scan returns no findings). `lizard` missing gives `null`.
-- CVE fields are `null` both for "no dependency change" and for "unobserved".
+- A semgrep scan that did not run (tool missing, bad exit code, bad JSON, timeout) gives `null` for all three semgrep columns (7.0.0; a missing tool used to give `0`). `lizard` missing or a parse error gives `null`. The default semgrep rules (`--config auto`) are fetched from semgrep.dev unless `RIFFLE_SEMGREP_RULES` pins local ones.
+- CVE fields are `null` both for "no dependency change" and for "unobserved", and also for an unresolved version (a range, `workspace:`, a git URL) or a record that cannot be dated. They are as of the PR's open time: later or withdrawn records are dropped.
+- Pnpm lockfiles, `pyproject.toml` and Gradle files are not parsed: a PR touching one has `null` dependency counts.
 - `dependency_major_bump_count` (regex) and `n_major_bumps` (parsed) can disagree; `min_hotspot_rank_touched` and `min_file_hotspot_rank` duplicate each other.
 - Rows with `open_snapshot = final` have diff features that may leak.
 - `merge_signal`'s landed-commit mode gives no unmerged rows; git-primary discovery misses PRs with no recognisable reference and non-default-branch PRs.
 - Maintainer detection catches people who triage; an employee who never merges or closes others' PRs still counts as outside; `author_association` hides private org members as `CONTRIBUTOR` (which also biases `scout.py`).
+
+**Deferred in 7.0.0** (known, and not changed)
+
+- `author_prs_merged_repo` and `similar_pr_count` stay `0` for "none": the contract defines `0` that way.
+- Body-derived features (`body_len`, `has_linked_issue`, `body_*`, `agent_boilerplate`, `author_association`) cannot be as of open, because the timeline has no edit history; they stay as read at mining time.
+- An unmerged PR whose head cannot be fetched is dropped with a warning; it is not counted as gone and gets no null-feature row.
+- A wiped team store is not detected by `.sync_state.json` (it needs a store listing API).
+- Per-subprocess stop checks in `gitio` (a stop hook before each git call) are not in: a Stop takes effect at the next step.
 
 **Operations**
 
 - GitHub quotas are per account; shard PCs need different accounts.
 - Every shard PC must use the same data-affecting flags and the same miner version (merge refuses version mixes unless overridden).
 - A fresh clone with new commits changes HEAD and invalidates the SZZ blame store.
+- If the batch process is SIGKILLed, its child miner is not signalled automatically.
 - Re-mining a repo after assembling snapshots makes the snapshot table stale; `merge_shards` and `frames.py` refuse stale snapshots.
 - `.env.example`'s `LLM_MODEL` overrides the default model for both backends (17).
-- Some strings in the code are stale: `llm_flags.py`'s docstring still says the stage is "off by default" (it is on by default), and the README's `.env` sample shows `LLM_MODEL=claude-sonnet-5`.
+- The README's `.env` sample shows `LLM_MODEL=claude-sonnet-5`, which is the `api` default, not the headless default `sonnet`.
 
 ---
 
@@ -1525,8 +1588,9 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.9.1 | 10-21 | `--issue-tokens` also sends the plan's flags and the miner version to the store, so the admin page can rotate a split and rebuild its join codes; output identical |
 | 6.10.0 | 10-21 | `doctor.py` checks the join, read and admin tokens beside the GitHub token and can take a join code or a read token (`RIFFLE_READ_TOKEN`); TUI F4 opens the store and copies the read token; output identical |
 | 6.10.1 | 10-21 | the status heartbeat is sent at once at the start of a run and of each repo, then every 3 minutes (was 15, and nothing at the start); the store's Run page refreshes every 30 s; output identical |
-| 6.10.2 | 10-21 | TUI layout only: Start, Stop and the secondary actions sit in an always-visible bar under the scrolling form, the Join, Lead and Store buttons share one row, and the footer lists only the keys in daily use; output identical |; the Lead tools screen is rebuilt as aligned one-line rows with the message pinned under the header, and the join box keeps its result and a pasted-characters hint on screen
-| 6.10.4 | 10-21 | the lead's repo list and who issued the split travel through the store; a joining PC uses the lead's copy and sees the lead's settings and its share; see 6.10.3 for the lock |
+| 6.10.2 | 10-21 | TUI layout only: Start, Stop and the secondary actions sit in an always-visible bar under the scrolling form, the Join, Lead and Store buttons share one row, and the footer lists only the keys in daily use; the Lead tools screen is rebuilt as aligned one-line rows with the message pinned under the header, and the join box keeps its result and a pasted-characters hint on screen; output identical |
+| 6.10.3 | 10-21 | TUI: after joining, the lead's settings are locked (every field the join code decides is disabled, machine settings stay editable), remembered in `.join.json` across restarts, and unlocked only by Leave; output identical |
+| 6.10.4 | 10-21 | the lead's repo list and who issued the split travel through the store (`--issue-tokens` also sends the repo list, so a joining PC fetches it from `/v1/split`, writes it under `joined_repos/<split>/` and points `--repos-file` at that copy); a joining PC uses the lead's copy and sees the lead's settings and its share (the TUI card, F5); see 6.10.3 for the lock |
 | 6.10.5 | 10-21 | audit of the token, sync and join features: a join code is validated (no line breaks into `.env`), health files are limited to the run's repos, a store answering early is reported as a rejected token, reads from the store are bounded, flags cannot be abbreviated, text from the store is shown as text in the TUI; store: tokens.json changes are locked and atomic, revoke by name means a PC token, an admin cannot revoke itself, bad lifetimes, bodies and run.json are refused, search regex bounded, socket timeout |
 | 6.10.6 | 10-21 | second audit round: a repo that was skipped, stopped or failed to clone is no longer shown as mining, an aborted batch (LLM breaker) is not reported as done, uploads share one total deadline and send small files first, upload state is kept per token, the doctor's join saves the lead's repo list, the TUI keeps the join lock when the store is down and re-checks the store every minute; store: failed token backups are retried and shown, rotate refuses to build codes for localhost |
 | 6.10.7 | 10-21 | store pages: stylesheet and scripts are linked by content hash, so a deploy shows at once; no miner output change |
@@ -1539,7 +1603,7 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.11.3 | 10-21 | TUI: Leave shows whenever the PC holds a store token (not only when the form is locked) and forgets the token when there is no saved join code; Lead tools get **Join this PC as selected**, so the lead joins its own PC without pasting a code; run status reports the default LLM model; no output change |
 | 6.11.4 | 10-21 | TUI: Leave forgets only the store token and keeps RIFFLE_SYNC_URL, which Lead tools need (it had cleared both and the lead saw "Store (not set)"); no output change |
 | 6.11.5 | 10-21 | admin page: a refresh no longer resets a pending Revoke confirm (revoke seemed to do nothing while a PC was mining), and a split can be removed (Remove split); no miner output change |
-| 6.12.0 | 10-21 | `--split-by commits|prs` (default commits) chooses what `--shard` balances, and travels in the join code and locks in the TUI; `doctor.py` fast-forwards a clean checkout on `main` to the latest `origin/main` at launch (RIFFLE_NO_AUTO_UPDATE=1 turns it off); no output change for existing runs |
+| 6.12.0 | 10-21 | `--split-by commits|prs` (default commits) chooses what `--shard` balances, and travels in the join code and locks in the TUI; `doctor.py` fast-forwarded a clean checkout on `main` to the latest `origin/main` at launch, by default (RIFFLE_NO_AUTO_UPDATE=1 turned it off; 7.0.0 made it opt-in with `RIFFLE_AUTO_UPDATE=1`, and by default it only reports a newer miner); no output change for existing runs |
 | 6.12.1 | 10-21 | join and Leave cannot leave a token without its saved join code (a failing join no longer crashes the TUI; the join code is saved before the token; the doctor warns on a token with no join code); config treats an empty environment variable as unset; the TUI follows a token the doctor saved while it was open; Clear log, Copy log, Skip repo, Test data and Web view are buttons again; no output change |
 | 6.12.2 | 10-22 | the PR total shows the plan's share (not `?`) until every repo has its own; "not written" says why; PR commit counts for rebase-style repos are read from GraphQL in batches of 50 instead of one REST call per PR and so are each PR's reviews and review comments (10 PRs a call, checked identical to the REST read on 100 PRs; a PR too big for one page still goes through REST; the sidecar's event lists are now in time order) (far less of the 5,000/h REST quota); this run's log, trace and the repo-in-progress checkpoint go to the store every 15 minutes while it mines, not only after a repo or on Stop; a Stopped repo shows `stopped at N/M` (not `mining`) and the header says `stopped`; the status carries `prs_total` (the split plan's share) and the store shows mined-of-planned and PRs left; Stop and quit work on Windows (the TUI used `os.killpg`, which Windows lacks: it now sends CTRL_BREAK, which the miner turns into a normal interrupt, and kills with `taskkill /T`); no output change |
 | 6.12.3 | 10-22 | a GraphQL quota wait is logged (it slept silently for minutes); one Stop is one interrupt (a second within 5 s no longer prints a traceback at exit); the status carries `rate_wait_until` and the store shows `waiting for GitHub until HH:MM`; no output change |
@@ -1550,11 +1614,11 @@ The version rules are in `version.py` (MAJOR: output columns or meaning; MINOR: 
 | 6.13.1 | 10-22 | a PR whose changed paths clash in the exported semgrep tree (a file `icons` beside `icons/a.svg`, as in nuxt/nuxt #27021) is mined, with the clashing file left out of the scan, instead of being skipped with `NotADirectoryError`; PRs that were skipped this way are mined on the next run |
 | 6.13.2 | 10-23 | a workflow-runs page cut off mid-read (`IncompleteRead` on a ~1 MB body, seen 12 times in one run on nuxt/nuxt, remix-run/react-router, solidjs/solid and preactjs/preact) is retried with backoff like any other network error instead of failing the whole repo; 5xx on that path is bounded; a CI-history pre-pass that still fails leaves its features null and the repo is mined |
 | 6.13.3 | 10-23 | the team-store status counts each unfinished repo's own rows in the shared checkpoint: the repo being mined was credited with every checkpointed row (pc1of6 showed 4,499 rows of nuxt/nuxt as vitejs/vite), and a failed or stopped repo's rows kept for the rerun now show under it |
-| 6.10.3 | 10-21 | TUI: after joining, the lead's settings are locked (every field the join code decides is disabled, machine settings stay editable), remembered in `.join.json` across restarts, and unlocked only by Leave; output identical |; `--issue-tokens` also sends the repo list, so a joining PC fetches it (`/v1/split`), writes it under `joined_repos/<split>/` and points `--repos-file` at that copy, and the TUI shows the lead's file, your share and every setting (card, F5)
+| 7.0.0 | 10-23 | audit-fix release; **re-mine before retraining**. Contracts: `mined_dataset` 1.3, `mined_snapshot` 1.4, `mined_commit_features` 1.1 (optional `llm_diff_truncated` and `szz_window_closed`; `x-riffle-non-input` and `x-riffle-diff-derived` keywords). **Labels:** `label_revert` and `label_hotfix` no longer match the PR's own merge commit or commits and need PR-number order; a revert needs `#N` in its subject or `Reverts owner/repo#N` in its body, searched from the default-branch tip (`--all` only as a fallback); `label_szz_bug` and `days_to_szz_fix` are `null` when SZZ did not run; SZZ follows renames (`SZZ_VERSION` 3). **Git and history:** every git call uses `-c core.quotePath=false`, `-z` for numstat, name-status and renames, and a hunk-count patch parser, so non-ASCII, quoted and backslash paths get LOC, blame and SZZ; renamed files use the old path at the base and history follows renames; merge commits are out of author totals, EXP, REXP, SEXP, `author_last`, `n_commits_total`, `repo_revert_base_rate` and the populations; bots are out of NDEV and blame ownership; line ages clamp to 0; entropy counts only files with changed lines; percentile populations skip generated files; `dependency_major_bump_count` attributes a bare `version` line to the preceding package; `similar_pr_bad_rate` uses the repo's own bad-PR rate among PRs mature at T as its prior; a default branch with `/` is kept whole; landed-commit discovery skips reverts and prefers merge or `(#N)` hits and the API's `merge_commit_sha`; a fast-forwarded PR whose head is a merge commit gets its own range and a first-parent author; `FIX` uses the at-open head subject; `author_confirmed_maintainer` is `null` with no timelines; a failed `git fetch` is retried and raises `FetchError` (unobserved, not gone). History index built once per repo and answered by bisect (float last digit may differ in the decay and REXP sums). **Limits:** `RIFFLE_GIT_TIMEOUT_S` 300, `RIFFLE_GIT_BLAME_TIMEOUT_S` 120, `RIFFLE_GIT_LONG_TIMEOUT_S` 3600, `RIFFLE_MAX_BLOB_BYTES` 4 MiB, `--clone-stall-s` 600 (a timeout is `null`, never `0`); `--max-files-deep` 300 (the rest of a big PR is `null`, with `LT`, `la_norm`, `ld_norm` and `sum_*`). **GitHub API:** a failed or truncated check-run, status or workflow-run page gives a `null` verdict (with the workflow-runs read failing, a would-be pass is `null`); review events are `None` and uncached on a failed page or at the cap; `labels_at` and force-pushes are `None` on failure; `Retry-After` as seconds or a date, secondary-limit bodies, capped waits and one process-wide gate; the CI map cache is versioned (v2), expires after 7 days and is rebuilt when older than the newest PR; open-PR timelines cached 1 hour, not 14 days. **Dependencies and scanners:** CVE columns as of the PR's open time (later or withdrawn records dropped; undatable means all null); `vuln_has_fix_available` is `False` or `null`, never `True`; dependency counts are `null` when a manifest is unparsed; parsers for package-lock v1 to v3, yarn.lock, poetry.lock, Pipfile.lock, composer.lock; counts per ecosystem and directory; unresolved versions null the CVE columns; GHSA errors null `osv_ghsa_disagreement`; semgrep failure is `null` for all three columns, findings compared as a multiset without line numbers, `--metrics=off`, `RIFFLE_SEMGREP_RULES` and `RIFFLE_SEMGREP_PARALLEL`; deleted functions count in `ccn_delta`; a lizard parse error is `null`; `api_contract_change` is `null` when any changed spec is unobserved; agent detection anchored (`julesb`, `claude-docs`, `cursor-fix` are not agents). **LLM:** a reply with zero valid flags fails; a diff with no code after slimming is status `empty`; `llm_prompt_version` also hashes the diff rules, redaction, diff settings, backend and transcript format; `llm_model` is the resolved id; reused answers are re-validated and skipped on a different prompt version or model; broader secret redaction; 529 is retried; the quota wait is capped; the close-reason transcript quotes bodies with `| `; the LLM is monotone; the dead breaker and `llm_breaker_threshold` are removed; new `--llm-diff-context` and `--llm-backend`. **Snapshots:** `*_since_prev` against the previous candidate moment; dismissed reviews keep their prior state until dismissal (needs re-capture); `merge_outcome` in capture; duplicates excluded; reopen and grace-window rules; empty tables written with the contract columns; atomic writes. **Training:** all 125 diff-derived columns masked on `final` rows; non-input columns from the contract; the split hash lower-cases the repo and groups shared heads; `merge_shards` refuses incomplete manifests (`--allow-incomplete`). **Resume and checkpoint:** atomic repo-line removal and dataset writes, torn-line tolerance, `_ckpt` stamp (rows with a different stamp are re-mined; unstamped rows are accepted), process-group stop. **Security and config:** repo names validated, clone target contained, `validate_options` before cloning, repos de-duplicated, domain tags case-insensitive, `--max-prs 0` means no cap. **Store and sync:** `batch incomplete` with `files_deferred`, https-only sync, no cross-origin redirects, locked `.sync_state.json`; server: throttle by distinct failing token, DuckDB errors as 422, cache limit `RIFFLE_CACHE_MAX_BYTES`, numeric version sort, `--n`-aware plan, staged BigQuery loads, signed 8-hour admin session, admin token reads no data but can add readers. **UI:** TUI markup off and escaped, second ctrl+q force-quits, ETA rule, `doctor.auto_update` opt-in (`RIFFLE_AUTO_UPDATE=1`), dashboard 15 s timeout and `RIFFLE_DASHBOARD_BIND`. Deferred: see section 20. ADR 0016 |
 
-Contract versions: `mined_dataset` 1.0 (2026-10-18, miner 2.2.0) → 1.1 (provenance, `domain`; miner 4.0.0) → 1.2 (`outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer`; miner 5.0.0). `mined_snapshot` 1.0 (miner 3.1.0) → 1.1 → 1.2 → 1.3 (`snapshot_weight`, `moment_bucket`; miner 6.0.0). `mined_commit_features` 1.0 (miner 3.1.0). Full table: `docs/contracts.md`.
+Contract versions: `mined_dataset` 1.0 (2026-10-18, miner 2.2.0) → 1.1 (provenance, `domain`; miner 4.0.0) → 1.2 (`outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer`; miner 5.0.0). `mined_snapshot` 1.0 (miner 3.1.0) → 1.1 → 1.2 → 1.3 (`snapshot_weight`, `moment_bucket`; miner 6.0.0) → 1.4 (miner 7.0.0). `mined_commit_features` 1.0 (miner 3.1.0) → 1.1 (miner 7.0.0). `mined_dataset` 1.3 (optional `llm_diff_truncated`, `szz_window_closed`; miner 7.0.0). Full table: `docs/contracts.md`.
 
-Related decisions: ADR 0002 (breakage target), ADR 0005 (feature parsers), ADR 0007 (corpus growth, Proposed), ADR 0008 (feature-map columns), ADR 0009 (merge-outcome target), ADR 0010 (features at open), ADR 0011 (domain base models, Proposed), ADR 0012 (flat form).
+Related decisions: ADR 0002 (breakage target), ADR 0005 (feature parsers), ADR 0007 (corpus growth, Proposed), ADR 0008 (feature-map columns), ADR 0009 (merge-outcome target), ADR 0010 (features at open), ADR 0011 (domain base models, Proposed), ADR 0012 (flat form), ADR 0016 (point-in-time CVE data, null-when-unobserved scanners and the 7.0.0 re-mine, Proposed).
 
 ---
 

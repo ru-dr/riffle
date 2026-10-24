@@ -1537,6 +1537,18 @@
         "boolean",
         "null"
       ]
+    },
+    "/llm_diff_truncated": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/szz_window_closed": {
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "mined_features.schema.json": {
@@ -3077,12 +3089,14 @@
     },
     "/changes_requested_count": {
       "type": [
-        "integer"
+        "integer",
+        "null"
       ]
     },
     "/approvals_count": {
       "type": [
-        "integer"
+        "integer",
+        "null"
       ]
     },
     "/commits_since_start": {
@@ -3213,6 +3227,18 @@
     "/moment_bucket": {
       "type": [
         "string"
+      ]
+    },
+    "/llm_diff_truncated": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "/szz_window_closed": {
+      "type": [
+        "boolean",
+        "null"
       ]
     }
   },

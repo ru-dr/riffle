@@ -9,6 +9,7 @@ issue or a revoke.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 import threading
@@ -54,6 +55,9 @@ def pull(store, tokens_path: str) -> bool:
         tmp = tokens_path + ".restore"
         blob.download_to_filename(tmp)
         os.chmod(tmp, 0o600)
+        with open(tmp, encoding="utf-8") as fh:
+            if not isinstance(json.load(fh), dict):             # a damaged copy must not replace nothing with garbage
+                raise ValueError("the backup is not a tokens file")
         os.replace(tmp, tokens_path)
         print("[backup] restored tokens.json from the bucket", file=sys.stderr, flush=True)
         return True
@@ -74,18 +78,21 @@ def restore_all(store, index) -> dict:
         key = blob.name
         if key.startswith("_system/") or key.count("/") < 2:
             continue
-        index.put_file(key, key.split("/", 1)[0], blob.size or 0, None)
+        index.put_file(key, key.split("/", 1)[0], blob.size or 0, None, getattr(blob, "updated", None).timestamp() if getattr(blob, "updated", None) else None)
         files += 1
         if store_mod.is_mirrored(key):
             dest = store.local_path(key)
             if not os.path.isfile(dest):
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
-                blob.download_to_filename(dest)
+                part = dest + ".part"                           # a crash mid-download must not leave a half file that counts as present
+                blob.download_to_filename(part)
+                os.replace(part, dest)
                 mirrored += 1
             if key.endswith("/run.json"):
                 try:
                     with open(dest, encoding="utf-8") as fh:
-                        index.put_run(key.split("/", 1)[0], key.split("/", 1)[1][: -len("/run.json")], json.load(fh))
+                        index.put_run(key.split("/", 1)[0], key.split("/", 1)[1][: -len("/run.json")], json.load(fh),
+                                      getattr(blob, "updated", None).timestamp() if getattr(blob, "updated", None) else 0.0)
                     runs += 1
                 except (OSError, ValueError):
                     pass

@@ -37,6 +37,7 @@ Earlier drafts (1–4) were never merged and need no migration.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 1.3 | 2026-10-23 | Optional `llm_diff_truncated` (the LLM diff cap cut code the model would have read; null when no call was made) and `szz_window_closed` (the SZZ window for the PR has closed; null when not computed). Both are marked `x-riffle-non-input`, as are `merge_via`, `open_snapshot` and the provenance columns; every column computed from the diff range carries `x-riffle-diff-derived: true`, which `frames.diff_derived_columns()` reads (miner v7.0.0) |
 | 1.2 | 2026-10-19 | Optional `outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer` (miner v5.0.0) |
 | 1.1 | 2026-10-19 | Optional `miner_version`, `miner_commit`, `llm_model`, `llm_prompt_version`, `domain` (miner v4.0.0 writes them on every row) |
 | 1.0 | 2026-10-18 | The repo miner's training row as of miner v2.2.0: 199 columns, features at open (ADR 0010), breakage labels (ADR 0002) and merge-outcome labels (ADR 0009) |
@@ -45,6 +46,7 @@ Earlier drafts (1–4) were never merged and need no migration.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 1.4 | 2026-10-23 | Follows `mined_dataset` 1.3: the same two optional columns, `x-riffle-non-input` and `x-riffle-diff-derived` keywords. `changes_requested_count` and `approvals_count` may be null (unknowable: a dismissed review in an old capture). The `*_since_prev` columns compare with the previous candidate moment, kept or capped out (miner v7.0.0) |
 | 1.3 | 2026-10-19 | Optional `snapshot_weight` (1 / the PR's snapshot count) and `moment_bucket` (miner v6.0.0) |
 | 1.2 | 2026-10-19 | Optional `outcome_3class`, `nowhere_reason`, `ci_fail_flaky_only`, `author_confirmed_maintainer` (miner v5.0.0) |
 | 1.1 | 2026-10-19 | The same 5 optional provenance and domain columns as `mined_dataset` 1.1 |
@@ -54,6 +56,7 @@ Earlier drafts (1–4) were never merged and need no migration.
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 1.1 | 2026-10-23 | Columns computed from the diff range carry `x-riffle-diff-derived: true`. No column added or changed (miner v7.0.0) |
 | 1.0 | 2026-10-19 | Code features per head commit a PR had while open (miner v3.1.0) |
 
 ## `outcome_import.schema.json`

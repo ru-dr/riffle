@@ -52,15 +52,32 @@ class Evidence:
         return bool(when and t and when < t)
 
     def save(self, directory: str) -> None:
+        """Write the evidence atomically (temp file, then rename), so a crash mid-write
+        never leaves a half file that the next resume or assembly would choke on."""
         os.makedirs(directory, exist_ok=True)
-        with open(os.path.join(directory, FILE), "w", encoding="utf-8") as fh:
+        path = os.path.join(directory, FILE)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
             json.dump({k: v.strftime("%Y-%m-%dT%H:%M:%SZ") for k, v in sorted(self.first.items())}, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
 
     @classmethod
     def load(cls, directory: str) -> "Evidence":
+        """The saved evidence. A missing, unreadable or corrupt file gives empty (or, for
+        a bad entry, partial) evidence: it only ever adds maintainers, so less of it is
+        the safe direction, and a bad file must not stop the snapshot assembly."""
         path = os.path.join(directory, FILE)
-        if not os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except (OSError, ValueError):
             return cls()
-        with open(path, encoding="utf-8") as fh:
-            raw = json.load(fh)
-        return cls({k: datetime.fromisoformat(v.replace("Z", "+00:00")) for k, v in raw.items()})
+        first: dict[str, datetime] = {}
+        for k, v in (raw.items() if isinstance(raw, dict) else ()):
+            try:
+                first[str(k)] = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+        return cls(first)

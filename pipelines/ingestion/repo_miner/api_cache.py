@@ -39,6 +39,8 @@ class ApiCache:
                 db = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, t REAL, v BLOB)")
+                db.execute("DELETE FROM kv WHERE t < ?", (time.time() - MAX_AGE_S,))      # rows past their age are never read again
+                db.commit()
                 self._db = db
             except (sqlite3.Error, OSError):
                 self._dead = True
@@ -59,14 +61,18 @@ class ApiCache:
             except (sqlite3.Error, zlib.error, ValueError):
                 return None
 
-    def put(self, key: str, value) -> None:
+    def put(self, key: str, value, ttl: float | None = None) -> None:
+        """Store `value`. `ttl` (seconds, under MAX_AGE_S): an answer that is only good for a while, such
+        as the timeline of a PR still open; it is stored as if it were that much older, so it expires
+        (and is purged) sooner."""
+        t = time.time() - (MAX_AGE_S - ttl if ttl is not None and ttl < MAX_AGE_S else 0)
         with self._lock:
             db = self._conn()
             if db is None:
                 return
             try:
                 db.execute("INSERT OR REPLACE INTO kv (k, t, v) VALUES (?, ?, ?)",
-                           (key, time.time(), zlib.compress(json.dumps(value).encode())))
+                           (key, t, zlib.compress(json.dumps(value).encode())))
                 db.commit()
             except (sqlite3.Error, TypeError, ValueError):
                 pass

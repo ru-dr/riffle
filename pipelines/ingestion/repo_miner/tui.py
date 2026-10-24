@@ -27,6 +27,7 @@ token to .env). RIFFLE_NO_DOCTOR=1 skips it; RIFFLE_NO_INSTALL=1 never installs.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import re
@@ -326,22 +327,22 @@ class DataViewer(ModalScreen):
             rows, types = self._read()
         except Exception as e:                                # noqa: BLE001
             self.query_one("#viewer_title", Static).update(
-                f"[b]{self.path}[/b]\n[red]could not read: {type(e).__name__}: {e}[/]")
+                f"[b]{esc(self.path)}[/b]\n[red]could not read: {esc(type(e).__name__)}: {esc(str(e))}[/]")
             return
         fmt = "Parquet" if self.path.endswith(".parquet") else "JSONL"
         other = "Parquet" if fmt == "JSONL" else "JSONL"
         self.query_one("#viewer_title", Static).update(
-            f"[b]{fmt}[/b]  {self.path}\n{len(rows)} rows x {len(rows[0]) if rows else 0} "
+            f"[b]{fmt}[/b]  {esc(self.path)}\n{len(rows)} rows x {len(rows[0]) if rows else 0} "
             f"columns · p: show {other} · esc: close")
         t.add_column("column", key="col")
         if types:
             t.add_column("type", key="type")
-        for r in rows:
-            t.add_column(f"PR #{r.get('pr_number')}", key=f"pr{r.get('pr_number')}")
+        for i, r in enumerate(rows):                          # keyed by position: two rows can share (or lack) a pr_number
+            t.add_column(f"PR #{r.get('pr_number')}", key=f"pr{i}")
         for k in (list(rows[0]) if rows else []):
-            vals = [Text("null", style="dim") if r.get(k) is None else str(r.get(k))[:60]
+            vals = [Text("null", style="dim") if r.get(k) is None else Text(str(r.get(k))[:60])
                     for r in rows]
-            t.add_row(k, *([Text(types[k], style="cyan")] if types else []), *vals)
+            t.add_row(Text(str(k)), *([Text(types[k], style="cyan")] if types else []), *vals)
 
 
 def qr_text(data: str) -> Text | None:
@@ -373,7 +374,7 @@ class QRScreen(ModalScreen):
                 Binding("o", "open", "Open here"), Binding("c", "copy", "Copy link")]
     DEFAULT_CSS = """
     QRScreen { align: center middle; }
-    #qrbox { width: auto; height: auto; max-width: 95%; border: round $accent; background: $surface; padding: 1 2; }
+    #qrbox { width: auto; height: auto; overflow: auto auto; max-width: 95%; max-height: 98%; border: round $accent; background: $surface; padding: 1 2; }
     #qrbox Static { width: auto; }
     #qr_title { text-style: bold; margin-bottom: 1; }
     #qr_hint { color: $text-muted; margin-top: 1; }
@@ -387,7 +388,12 @@ class QRScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         code = qr_text(self.url)
-        with Vertical(id="qrbox"):
+        size = self.app.size
+        if code is not None:                  # a code wider or taller than the terminal can't be scanned: show the link only
+            lines = code.plain.split("\n")
+            if len(lines) + 12 > size.height or max(map(len, lines), default=0) + 8 > size.width:
+                code = Text("(the terminal is too small for the QR code: enlarge it, or use the link below)", style="yellow")
+        with VerticalScroll(id="qrbox"):
             yield Static("Web view · scan with a phone on this Wi-Fi", id="qr_title")
             yield Static(code if code is not None else
                          Text("(QR needs the segno package: pip install segno)", style="yellow"))
@@ -440,11 +446,11 @@ class LeadSettingsScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         lead, d = self.info["lead"], self.doc
         exp = time.strftime("%Y-%m-%d", time.gmtime(lead["expires"])) if lead.get("expires") else "never"
-        ver = lead.get("version") or d.get("v") or "?"
-        same = "same as yours" if ver == self.my_version else f"yours is {self.my_version}: run git pull"
+        ver = esc(str(lead.get("version") or d.get("v") or "?"))
+        same = "same as yours" if ver == esc(str(self.my_version)) else f"yours is {esc(str(self.my_version))}: run git pull"
         with VerticalScroll(id="ls"):
             yield Static("The lead's settings   [dim]read-only · Esc closes[/dim]", id="ls_title")
-            yield Static(f"issued by [b]{esc(str(lead.get('issued_by') or 'the lead'))}[/b] on {(lead.get('created') or '?')[:10]} · "
+            yield Static(f"issued by [b]{esc(str(lead.get('issued_by') or 'the lead'))}[/b] on {esc(str(lead.get('created') or '?')[:10])} · "
                          f"split [b]{esc(str(d['s']))}[/b] · you are PC [b]{d['k']}[/b] of [b]{d['n']}[/b]\n"
                          f"code valid until {exp} · miner {ver} ({same})", id="ls_info")
             yield Static("Settings every PC runs with", classes="sec")
@@ -457,11 +463,11 @@ class LeadSettingsScreen(ModalScreen):
         t = self.query_one("#ls_settings", DataTable)
         t.add_columns("setting", "value")
         for k, v in self.info["settings"]:
-            t.add_row(k, str(v))
+            t.add_row(Text(str(k)), Text(str(v)))
         r = self.query_one("#ls_repos", DataTable)
         r.add_columns("Repo", "Commits", "Mined by")
         for name, w, pc in self.info["repos"]:
-            r.add_row(name, f"~{w:,}" if w else "–", f"PC {pc}" + ("  ◀ you" if pc == self.doc["k"] else ""))
+            r.add_row(Text(str(name)), f"~{w:,}" if w else "–", f"PC {pc}" + ("  ◀ you" if pc == self.doc["k"] else ""))
         if not self.info["repos"]:
             r.add_row("(the list is not on this PC)", "", "")
 
@@ -541,7 +547,7 @@ class LeadScreen(ModalScreen):
         ok = bool(os.environ.get("RIFFLE_ADMIN_TOKEN"))
         self.query_one("#lead_status", Static).update(
             f"Store [b]{esc(url)}[/b]  ·  admin token: " + ("[green]saved[/]" if ok else "[yellow]not saved: paste it below[/]")
-            + f"\nForm: [b]{self.tui._val('pcs') or '1'}[/b] PC(s) · repos file [b]{esc(str(self.tui._val('repos_file')))}[/b]")
+            + f"\nForm: [b]{esc(str(self.tui._val('pcs') or '1'))}[/b] PC(s) · repos file [b]{esc(str(self.tui._val('repos_file')))}[/b]")
 
     def _msg(self, text: str, level: str = "") -> None:
         color = {"bad": "red", "ok": "green", "warn": "yellow"}.get(level)
@@ -638,7 +644,7 @@ class LeadScreen(ModalScreen):
         t = self.query_one("#codes", DataTable)
         t.clear()
         for label, code in rows:
-            t.add_row(label, code[:22] + "…" + code[-8:], key=label)
+            t.add_row(Text(str(label)), Text(code[:22] + "…" + code[-8:]), key=label)
         self._msg(f"Split {sid}: {len(rows)} codes. Copy each one and send it only to that PC's owner. "
                   f"Issuing again for this split replaces these codes.", "ok")
         self._refresh(keep_msg=True)
@@ -714,7 +720,7 @@ class LeadScreen(ModalScreen):
         t.clear()
         for r in rows:
             exp = time.strftime("%Y-%m-%d", time.gmtime(r["expires"])) if r.get("expires") else "never"
-            t.add_row(r["pc"], r.get("split") or "-", exp, admin.ago(r.get("last_upload")), key=r["pc"])
+            t.add_row(Text(str(r["pc"])), Text(str(r.get("split") or "-")), exp, admin.ago(r.get("last_upload")), key=r["pc"])
         self._pcs = rows
         if not rows and not keep_msg:
             self._msg("No PC tokens issued yet.")
@@ -989,7 +995,7 @@ class RiffleTUI(App):
                 when = f" · resets in {_fmt_secs(left)} ({at})" if left > 0 else " · resetting now"
             elif p.get("resets"):
                 when = f" · resets {p['resets'].split(' (')[0]}"
-            parts.append(f"{p['label'].lower()} [{col}]{p['pct']:.0f}%[/]{when}")
+            parts.append(f"{esc(str(p['label']).lower())} [{col}]{p['pct']:.0f}%[/]{esc(when)}")
         return "Claude plan: " + " · ".join(parts)
 
     # ------------------------------------------------------------- dashboard
@@ -1005,7 +1011,7 @@ class RiffleTUI(App):
                   "the key changes every launch", style="cyan")
         self.query_one("#stats", Static).update(
             "Idle. Configure on the left, then Start (ctrl+r).\n"
-            f"[b]Web view:[/b] {self.dash.url}")
+            f"[b]Web view:[/b] {esc(self.dash.url)}")
         self._publish()
 
     def action_open_dashboard(self) -> None:
@@ -1022,6 +1028,11 @@ class RiffleTUI(App):
         except Exception:                              # noqa: BLE001
             pass
         return _system_copy(text)
+
+    def notify(self, message, *, title: str = "", severity="information", timeout=None, markup: bool = False) -> None:
+        """Toasts carry repo names, paths and error text: plain text unless a caller asks for markup, so
+        a stray `[` can never crash the UI."""
+        super().notify(message, title=title, severity=severity, timeout=timeout, markup=markup)
 
     def action_skip_repo(self) -> None:
         """Skip the repo selected in the table (or the one running). A queued
@@ -1064,8 +1075,10 @@ class RiffleTUI(App):
             self.skip_set.add(key)
             self._log(f"[skip] stopping {r.name} at your request", style="yellow")
         try:
-            with open(self.control_path, "w", encoding="utf-8") as fh:
+            tmp = self.control_path + ".tmp"             # the miner polls this file: swap it in whole, never truncate it
+            with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write("".join(f"{x}\n" for x in sorted(self.skip_set)))
+            os.replace(tmp, self.control_path)
         except OSError as e:
             self.notify(f"Could not write the skip list: {e}", severity="error")
         self._update_row(r)
@@ -1660,7 +1673,10 @@ class RiffleTUI(App):
         self.repos.clear()
         self.stats = RunStats(started=time.time())
         self.assembly = None
+        self._res = {}
+        self.query_one("#overall", ProgressBar).update(total=None, progress=0)
         self.query_one("#repos", DataTable).clear()
+        self._cleanup_temp()                                 # the previous run's files
         fd, self.control_path = tempfile.mkstemp(prefix="riffle-control-", suffix=".txt")
         os.close(fd)
         self.skip_set = set()
@@ -1722,24 +1738,53 @@ class RiffleTUI(App):
         self.log_lines.clear()
 
     async def action_quit(self) -> None:
+        """First ctrl+q stops the miner and quits once it has exited (in a worker, so the key handler returns at once);
+        a second one kills it and quits now."""
         proc = self.proc
-        if proc is not None:
-            if self._quitting:                       # a second ctrl+q: do not wait for the upload
-                _signal_group(proc.pid, kill=True)
-                self.exit()
-                return
-            self._quitting = True
-            self.action_stop()
-            wait = 10.0
-            if self.store_state and self.store_state.get("ok"):
-                wait = float(os.environ.get("RIFFLE_SYNC_TIMEOUT", "120")) + 20
-                self._log("[tui] waiting for the miner to upload before quitting (ctrl+q again to quit now)", style="yellow")
-                self.notify("Uploading before quitting. ctrl+q again to quit now.", timeout=8)
+        if proc is None:
+            self._cleanup_temp()
+            self.exit()
+            return
+        if self._quitting:                           # a second ctrl+q: do not wait for the upload
             try:
-                await asyncio.wait_for(proc.wait(), timeout=wait)
-            except (asyncio.TimeoutError, ProcessLookupError):
                 _signal_group(proc.pid, kill=True)
+            except ProcessLookupError:
+                pass
+            self._cleanup_temp()
+            self.exit()
+            return
+        self._quitting = True
+        self.action_stop()
+        wait = 10.0
+        if self.store_state and self.store_state.get("ok"):
+            wait = float(os.environ.get("RIFFLE_SYNC_TIMEOUT", "120")) + 20
+            self._log("[tui] waiting for the miner to upload before quitting (ctrl+q again to quit now)", style="yellow")
+            self.notify("Uploading before quitting. ctrl+q again to quit now.", timeout=8)
+        # a function, not a coroutine object: Textual starts a worker on a later loop turn, and
+        # a coroutine made now would be "never awaited" if the app exits (second ctrl+q) first
+        self.run_worker(functools.partial(self._quit_when_done, proc, wait),
+                        group="quit", exclusive=True)
+
+    async def _quit_when_done(self, proc, wait: float) -> None:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=wait)
+        except (asyncio.TimeoutError, ProcessLookupError):
+            try:
+                _signal_group(proc.pid, kill=True)
+            except ProcessLookupError:
+                pass
+        self._cleanup_temp()
         self.exit()
+
+    def _cleanup_temp(self) -> None:
+        """Delete this run's control and events files (mkstemp leaves them behind)."""
+        for attr in ("control_path", "events_path"):
+            path = getattr(self, attr, None)
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
     def _set_running(self, running: bool) -> None:
         self.query_one("#start", Button).disabled = running
@@ -1762,10 +1807,14 @@ class RiffleTUI(App):
         self.proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=HERE, env=env, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            **_NEW_GROUP)
+            limit=1 << 24, **_NEW_GROUP)
         assert self.proc.stdout is not None
         while True:
-            line = await self.proc.stdout.readline()
+            try:
+                line = await self.proc.stdout.readline()
+            except ValueError:                      # a line over the limit: drop what is buffered and keep reading
+                self._log("[tui] a very long output line was dropped", style="yellow")
+                continue
             if not line:
                 break
             text = line.decode("utf-8", "replace").rstrip()
@@ -1863,25 +1912,29 @@ class RiffleTUI(App):
         if not self.events_path:
             return
         try:
-            with open(self.events_path, encoding="utf-8") as fh:
+            with open(self.events_path, "rb") as fh:
                 fh.seek(self.events_pos)
                 chunk = fh.read()
-                # only consume complete lines
-                cut = chunk.rfind("\n") + 1
-                self.events_pos += len(chunk[:cut].encode("utf-8"))
         except OSError:
             return
-        for line in chunk[:cut].splitlines():
+        # bytes, split on b"\n" only: only complete lines are consumed, and the offset advances by the bytes read
+        # (text mode and CRLF translation made the offset drift on Windows, replaying events)
+        cut = chunk.rfind(b"\n") + 1
+        self.events_pos += cut
+        for raw in chunk[:cut].split(b"\n"):
+            raw = raw.strip()
+            if not raw:
+                continue
             try:
-                self._apply(json.loads(line))
-            except (json.JSONDecodeError, KeyError, TypeError):
+                self._apply(json.loads(raw.decode("utf-8", "replace")))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
                 continue
 
     def _repo(self, name: str) -> RepoStat:
         if name not in self.repos:
             self.repos[name] = RepoStat(name)
             self.query_one("#repos", DataTable).add_row(
-                name, "queued", "—", "—", "0", "0", "—", "—", "—", "—", key=name)
+                Text(name), "queued", "—", "—", "0", "0", "—", "—", "—", "—", key=name)
         return self.repos[name]
 
     def _apply(self, e: dict) -> None:
@@ -2029,7 +2082,7 @@ class RiffleTUI(App):
         # per-repo ETA from this run's PR rate (resumed PRs excluded)
         eta = "—"
         mined = r.done - r.resumed
-        if not r.ended and not r.halted and r.total and r.first_pr and mined >= 2 and now > r.first_pr:
+        if not r.ended and not r.halted and r.total and r.first_pr and mined >= 2 and now - r.first_pr >= 10:
             rate = (mined - 1) / (now - r.first_pr)
             if rate > 0:
                 eta = _fmt_secs((r.total - r.done) / rate)
@@ -2058,7 +2111,7 @@ class RiffleTUI(App):
         if self.stats.started is None:
             idle = "Idle. Configure on the left, then Start (ctrl+r)."
             if self.dash:
-                idle += f"\n[b]Web view:[/b] {self.dash.url}"
+                idle += f"\n[b]Web view:[/b] {esc(self.dash.url)}"
             if self._plan_text():
                 idle += "\n" + self._plan_text()
             self.query_one("#stats", Static).update(idle)
@@ -2071,7 +2124,9 @@ class RiffleTUI(App):
         total = 0
         unknown = False
         for r in self.repos.values():
-            if r.total is not None:
+            if r.stage.startswith("failed") and r.total is not None:
+                total += r.done                      # it will never finish: count what it did, or the ETA never reaches zero
+            elif r.total is not None:
                 total += r.total
             elif r.stage.startswith("failed"):
                 continue
@@ -2084,8 +2139,8 @@ class RiffleTUI(App):
         # throughput over the recent window (robust to slow pre-passes)
         rate = None
         pts = self.stats.pr_times
-        if len(pts) >= 2 and pts[-1] > pts[0]:
-            rate = (len(pts) - 1) / (pts[-1] - pts[0])            # PRs / s
+        if len(pts) >= 3 and now - pts[0] >= 10:                   # too few or too close points give an absurd rate
+            rate = (len(pts) - 1) / (max(pts[-1], now) - pts[0])   # PRs / s; a stall lowers it (and so lengthens the ETA)
         eta = (total - done) / rate if rate and total and not unknown else None
         llm_ok = sum(r.llm_ok for r in self.repos.values())
         llm_fail = sum(r.llm_fail for r in self.repos.values())
@@ -2099,7 +2154,7 @@ class RiffleTUI(App):
         lat = (sum(self.stats.llm_secs) / len(self.stats.llm_secs)) if self.stats.llm_secs else None
         repos_done = sum(1 for r in self.repos.values() if r.ended)
         state = "running" if self.proc else (self._final_state or "finished")
-        parts = [f"[b]{state}[/b]", f"elapsed {_fmt_secs(elapsed)}",
+        parts = [f"[b]{esc(str(state))}[/b]", f"elapsed {_fmt_secs(elapsed)}",
                  f"repos {repos_done}/{len(self.repos)}",
                  f"PRs {done}/{total if total and not unknown else '?'}"]
         if rate:
@@ -2118,21 +2173,21 @@ class RiffleTUI(App):
                     + (f"  ·  ${usage['cost_usd']:.2f} at API prices" if usage["cost_known"] else ""))
         line2 = (f"LLM ok {llm_ok}  fail {llm_fail}  skipped {llm_skip}  ·  avg latency "
                  f"{f'{lat:.1f}s' if lat else '—'}{utxt}  ·  breaker "
-                 + (f"[bold red]{self.stats.breaker}[/]" if self.stats.breaker else "[green]armed[/]"))
+                 + (f"[bold red]{esc(str(self.stats.breaker))}[/]" if self.stats.breaker else "[green]armed[/]"))
         if paused:
             line2 += f"\n[bold yellow]{paused}[/]"
         plan = self._plan_text()
         if plan:
             line2 += "\n" + plan
         line3 = ("[b]Saving to:[/b] " if self.proc else "[b]Saved to:[/b] ") + \
-            "\n            ".join(self.out_paths)
+            "\n            ".join(esc(p) for p in self.out_paths)
         if self.log_path:
-            line3 += f"\n[b]Log:[/b] {self.log_path}"
+            line3 += f"\n[b]Log:[/b] {esc(self.log_path)}"
         store = self._sync_text()
         if store:
             line3 += f"\n[b]Team store:[/b] {store}"
         if self.dash:
-            line3 += f"\n[b]Web view:[/b] {self.dash.url}"
+            line3 += f"\n[b]Web view:[/b] {esc(self.dash.url)}"
         self.query_one("#stats", Static).update(line1 + "\n" + line2 + "\n" + line3)
         bar = self.query_one("#overall", ProgressBar)
         if total and not unknown:
@@ -2196,22 +2251,23 @@ class RiffleTUI(App):
         for pid in set(self._procs) - alive:
             del self._procs[pid]
         vm = psutil.virtual_memory()
+        ncpu = psutil.cpu_count() or 1
         self.stats.rss, self.stats.cpu = int(rss), cpu
         self.stats.rss_peak = max(self.stats.rss_peak, int(rss))
         free = vm.available / vm.total
         color = "bold red" if free < 0.07 else "yellow" if free < 0.15 else "green"
         self._res = {"rss": _fmt_bytes(rss), "peak": _fmt_bytes(self.stats.rss_peak),
                      "free": _fmt_bytes(vm.available), "total": _fmt_bytes(vm.total),
-                     "cpu": f"{cpu:.0f}% of {psutil.cpu_count() * 100}%",
+                     "cpu": f"{cpu:.0f}% of {ncpu * 100}%",
                      "level": self._level(color),
                      # numeric, for the web view's meters
                      "rss_frac": round(rss / vm.total, 4),
                      "used_frac": round(1 - free, 4),
-                     "cpu_frac": round(min(1.0, cpu / (psutil.cpu_count() * 100)), 4)}
+                     "cpu_frac": round(min(1.0, cpu / (ncpu * 100)), 4)}
         warn = "  ← low memory" if free < 0.15 else ""
         return (f"RAM [{color}]{_fmt_bytes(rss)}[/] (peak {_fmt_bytes(self.stats.rss_peak)})  ·  "
                 f"free [{color}]{_fmt_bytes(vm.available)}[/] of {_fmt_bytes(vm.total)}  ·  "
-                f"CPU {cpu:.0f}% of {psutil.cpu_count() * 100}%{warn}")
+                f"CPU {cpu:.0f}% of {ncpu * 100}%{warn}")
 
 
 if __name__ == "__main__":

@@ -125,7 +125,8 @@ def test_provenance_columns():
     p = mine_repo._provenance(st)
     assert set(p) == set(mine_repo.PROVENANCE_COLUMNS)
     assert p["miner_version"] and p["miner_commit"] and p["domain"] == "web-ts"
-    assert p["llm_model"] == st.llm_model and p["llm_prompt_version"] == llm_flags.prompt_version()
+    assert p["llm_model"] == llm_flags.resolved_model(st)
+    assert p["llm_prompt_version"] == llm_flags.prompt_version(st)
     st.enable_llm = False
     assert mine_repo._provenance(st)["llm_model"] is None
     assert len(llm_flags.prompt_version()) == 12

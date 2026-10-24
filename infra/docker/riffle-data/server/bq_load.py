@@ -25,7 +25,7 @@ import json
 import os
 import sys
 
-from tables import TABLES, plan, table_for  # noqa: F401  (re-exported)
+from tables import TABLES, finished, plan, table_for  # noqa: F401  (re-exported)
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -35,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--bucket", default=os.environ.get("RIFFLE_BUCKET"))
     ap.add_argument("--project", default=os.environ.get("GOOGLE_CLOUD_PROJECT"))
     ap.add_argument("--location", default=os.environ.get("BQ_LOCATION", "US"))
+    ap.add_argument("--n", type=int, default=None,
+                    help="the split's current number of PCs: files of an earlier plan with another N are left out")
     ap.add_argument("--only-finished", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="print what would be loaded and stop")
     args = ap.parse_args(argv)
@@ -44,15 +46,19 @@ def main(argv: list[str] | None = None) -> int:
     from google.cloud import bigquery, storage
     gcs = storage.Client(project=args.project)
     blobs = list(gcs.list_blobs(args.bucket))
-    finished = None
+    finished_pcs = None
     if args.only_finished:
-        finished = set()
+        finished_pcs = set()
         for b in blobs:
             parts = b.name.split("/")
             if len(parts) == 4 and parts[1:] == [args.version, args.split, "run.json"]:
-                if json.loads(b.download_as_bytes()).get("reason") == "batch done":
-                    finished.add(parts[0])
-    files, notes = plan([b.name for b in blobs], args.version, args.split, finished)
+                try:
+                    done = finished(json.loads(b.download_as_bytes()))
+                except ValueError:
+                    done = False
+                if done:
+                    finished_pcs.add(parts[0])
+    files, notes = plan([b.name for b in blobs], args.version, args.split, finished_pcs, args.n)
     for n in notes:
         print(f"[bq] {n}")
     if not any(files.values()):
@@ -67,15 +73,31 @@ def main(argv: list[str] | None = None) -> int:
     ds = bigquery.Dataset(f"{bq.project}.{args.dataset}")
     ds.location = args.location
     bq.create_dataset(ds, exists_ok=True)
+    # all or nothing: every table is loaded into a staging table first, and only when all of them worked are the real
+    # tables replaced (a copy job each), so a failure never leaves tables from two different loads side by side
+    staged = []
+    try:
+        for table, keys in files.items():
+            if not keys:
+                continue
+            cfg = bigquery.LoadJobConfig(source_format=bigquery.SourceFormat.PARQUET,
+                                         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE)
+            tmp = f"{bq.project}.{args.dataset}.{table}__loading"
+            job = bq.load_table_from_uri([f"gs://{args.bucket}/{k}" for k in keys], tmp, job_config=cfg)
+            job.result()
+            staged.append(table)
+        for table in staged:
+            cfg = bigquery.CopyJobConfig(write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE)
+            bq.copy_table(f"{bq.project}.{args.dataset}.{table}__loading", f"{bq.project}.{args.dataset}.{table}",
+                          job_config=cfg).result()
+            print(f"[bq] {table}: {bq.get_table(f'{bq.project}.{args.dataset}.{table}').num_rows:,} rows")
+    finally:
+        for table in staged:
+            bq.delete_table(f"{bq.project}.{args.dataset}.{table}__loading", not_found_ok=True)
     for table, keys in files.items():
-        if not keys:
-            continue
-        cfg = bigquery.LoadJobConfig(source_format=bigquery.SourceFormat.PARQUET,
-                                     write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE)
-        job = bq.load_table_from_uri([f"gs://{args.bucket}/{k}" for k in keys],
-                                     f"{bq.project}.{args.dataset}.{table}", job_config=cfg)
-        job.result()
-        print(f"[bq] {table}: {bq.get_table(job.destination).num_rows:,} rows")
+        if not keys:                                        # nothing for it now: an older load of it would be stale
+            bq.delete_table(f"{bq.project}.{args.dataset}.{table}", not_found_ok=True)
+            print(f"[bq] {table}: no files now, the table was removed")
     return 0
 
 

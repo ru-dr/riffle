@@ -9,6 +9,7 @@ simple pagination. Kept dependency-free (urllib) on purpose.
 """
 from __future__ import annotations
 
+import email.utils
 import http.client
 import json
 import threading
@@ -82,18 +83,92 @@ def _reduce_conclusions(concls: list) -> str | None:
     return None
 
 
-RATE_WAIT_FILE = os.path.join("ci_cache", ".rate_wait")
+RATE_WAIT_FILE = os.path.join("ci_cache", ".rate_wait")     # the default place; a run keeps it under its ci_cache_dir
 
 
-def _note_rate_wait(seconds: float) -> None:
+def _note_rate_wait(seconds: float, cache_dir: str | None = None) -> None:
     """Leave the time the quota comes back for the batch driver, which reports it to the team
-    store ("waiting for GitHub until 14:05" rather than a PC that looks stuck). Never raises."""
+    store ("waiting for GitHub until 14:05" rather than a PC that looks stuck). Lives under the
+    run's ci_cache_dir (the cwd's ci_cache when none is given). Never raises."""
+    path = os.path.join(cache_dir, ".rate_wait") if cache_dir else RATE_WAIT_FILE
     try:
-        os.makedirs(os.path.dirname(RATE_WAIT_FILE), exist_ok=True)
-        with open(RATE_WAIT_FILE, "w", encoding="utf-8") as fh:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write(str(int(time.time() + seconds)))
     except OSError:
         pass
+
+
+# One gate for the whole process: the quota belongs to the token, not to a thread, so when one
+# thread is told to wait the others pause with it instead of each finding the limit in turn.
+_GATE_LOCK = threading.Lock()
+_GATE_UNTIL = 0.0
+
+
+def _gate_wait() -> None:
+    """Block while some thread is waiting out a rate limit."""
+    with _GATE_LOCK:
+        left = _GATE_UNTIL - time.time()
+    if left > 0:
+        time.sleep(min(left, 3600.0))
+
+
+def _rate_sleep(seconds: float) -> None:
+    """Wait out a rate limit, and hold every other request back for as long."""
+    global _GATE_UNTIL
+    until = time.time() + seconds
+    with _GATE_LOCK:
+        _GATE_UNTIL = max(_GATE_UNTIL, until)
+    time.sleep(seconds)
+    with _GATE_LOCK:
+        if _GATE_UNTIL <= until:                 # nobody asked for a longer wait meanwhile
+            _GATE_UNTIL = 0.0
+
+
+MAX_SECONDARY_WAITS = 10        # Retry-After / secondary-limit waits in a row on one request before it is given up
+MAX_NO_SIGNAL_429 = 5           # a 429 that says nothing about when to come back: this many backoffs
+
+
+def _retry_after_s(value) -> float | None:
+    """Retry-After as seconds: a number of seconds or an HTTP-date. None when absent or unreadable."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, when.timestamp() - time.time())
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _rate_signal(e: urllib.error.HTTPError) -> tuple[str | None, float]:
+    """What a 403/429 says about a rate limit: ("secondary", seconds) for Retry-After or a
+    secondary-limit message in the body, ("primary", seconds) for an exhausted quota with its
+    reset time, (None, 0) when it says nothing (a permission error, or a bare 429)."""
+    hdrs = e.headers
+    get = hdrs.get if hdrs is not None else (lambda k: None)
+    ra = _retry_after_s(get("Retry-After"))
+    if ra is not None:
+        return "secondary", min(ra + 1, 300.0)
+    if get("X-RateLimit-Remaining") == "0" and get("X-RateLimit-Reset"):
+        try:
+            return "primary", float(min(max(1, int(get("X-RateLimit-Reset")) - int(time.time())) + 1, 3600))
+        except ValueError:
+            pass
+    if e.code == 403:
+        try:
+            msg = (e.read() or b"").decode("utf-8", "replace").lower()
+        except Exception:                                    # noqa: BLE001
+            msg = ""
+        if "secondary rate limit" in msg or "abuse detection" in msg or "rate limit" in msg:
+            return "secondary", 60.0
+    return None, 0.0
 
 
 class GitHubAPI:
@@ -117,6 +192,8 @@ class GitHubAPI:
         self.use_landed = False
         self._user_cache: dict[str, str | None] = {}
         self._gql_blocked_until = 0.0                                     # GraphQL quota gone until then
+        self._gql_lock = threading.Lock()
+        self._user_inflight: dict[str, threading.Event] = {}
         self._disk = api_cache.open_for(st.ci_cache_dir, owner, repo)     # None when switched off
         self._review_cache: dict[tuple[int, bool], dict] = {}
         self._user_lock = threading.Lock()
@@ -182,7 +259,9 @@ class GitHubAPI:
         req = urllib.request.Request(url, headers=self._headers(), data=data,
                                      method="POST" if data is not None else "GET")
         net_fails = 0
+        waits = 0
         while True:
+            _gate_wait()
             try:
                 with runlog.span("api", "request", path=path, attempt=net_fails + 1,
                                  slow_s=runlog.SLOW_CALL_S, err_level="DEBUG"):
@@ -193,31 +272,29 @@ class GitHubAPI:
                         return r.status, json.loads(r.read() or "null"), hdrs
             except urllib.error.HTTPError as e:
                 if e.code in (403, 429):
-                    remaining = e.headers.get("X-RateLimit-Remaining")
-                    retry_after = e.headers.get("Retry-After")
-                    reset = e.headers.get("X-RateLimit-Reset")
-                    # secondary rate limit: honor Retry-After, then retry
-                    if retry_after:
-                        runlog.warn("api", "secondary rate limit; honoring Retry-After",
-                                    path=path, code=e.code, wait_s=min(int(retry_after) + 1, 300))
-                        progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}",
-                                      wait=min(int(retry_after) + 1, 300))
-                        time.sleep(min(int(retry_after) + 1, 300))
+                    kind, wait = _rate_signal(e)
+                    if kind == "secondary":
+                        waits += 1
+                        if waits > MAX_SECONDARY_WAITS:
+                            runlog.warn("api", "secondary rate limit persisted; treating as unobserved",
+                                        path=path, code=e.code)
+                            return e.code, None, {}
+                        runlog.warn("api", "secondary rate limit; waiting", path=path, code=e.code,
+                                    wait_s=int(wait))
+                        progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}", wait=int(wait))
+                        _rate_sleep(wait)
                         continue
                     # primary rate limit (quota exhausted): wait for the reset
                     # window and retry, rather than silently returning no data
                     # (which would mislabel a whole block of PRs). Bounded per
                     # wait so a bad clock can't hang us forever.
-                    if remaining == "0" and reset:
-                        wait = max(1, int(reset) - int(time.time())) + 1
-                        print(f"[api] rate limit hit; waiting {min(wait, 3600)}s",
-                              file=sys.stderr, flush=True)
+                    if kind == "primary":
+                        print(f"[api] rate limit hit; waiting {int(wait)}s", file=sys.stderr, flush=True)
                         runlog.warn("api", "primary rate limit; waiting for reset", path=path,
-                                    code=e.code, wait_s=min(wait, 3600))
-                        progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}",
-                                      wait=min(wait, 3600))
-                        _note_rate_wait(min(wait, 3600))
-                        time.sleep(min(wait, 3600))
+                                    code=e.code, wait_s=int(wait))
+                        progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}", wait=int(wait))
+                        _note_rate_wait(wait, self.st.ci_cache_dir)
+                        _rate_sleep(wait)
                         continue
                     # a 403 without rate-limit signals is a genuine permission
                     # error (private endpoint, forbidden) — report it, don't loop
@@ -225,8 +302,14 @@ class GitHubAPI:
                         runlog.warn("api", "403 without rate-limit headers; treating as unobserved",
                                     path=path)
                         return 403, None, {}
-                    runlog.warn("api", "429 without Retry-After; retrying in 5s", path=path)
-                    time.sleep(5)
+                    waits += 1                      # a bare 429: back off, a bounded number of times
+                    if waits > MAX_NO_SIGNAL_429:
+                        runlog.warn("api", "429 without Retry-After persisted; treating as unobserved",
+                                    path=path)
+                        return 429, None, {}
+                    runlog.warn("api", "429 without Retry-After; backing off", path=path, retry=waits,
+                                wait_s=min(60, 5 * 2 ** (waits - 1)))
+                    time.sleep(min(60, 5 * 2 ** (waits - 1)))
                     continue
                 if e.code == 404:
                     return 404, None, {}
@@ -549,9 +632,11 @@ class GitHubAPI:
             return None
         errs = data.get("errors") or []
         if any(e.get("type") in self.GQL_RATE_TYPES or e.get("code") == "graphql_rate_limit" for e in errs):
-            self._gql_blocked_until = self._gql_reset_time()
+            until = self._gql_reset_time()
+            with self._gql_lock:
+                self._gql_blocked_until = max(self._gql_blocked_until, until)     # threads race here: never move it back
             runlog.warn("api", "graphql quota used up; reading through REST until it resets",
-                        wait_s=int(self._gql_blocked_until - time.time()))
+                        wait_s=int(until - time.time()))
             return None
         if errs and strict:
             return None
@@ -623,11 +708,11 @@ class GitHubAPI:
                     f"/repos/{self.owner}/{self.repo}/pulls/{number}/{kind}",
                     {"per_page": 100, "page": page})
                 if status != 200 or not isinstance(data, list):
-                    return None if page == 1 else items
+                    return None                           # a page that failed: the list is cut, not whole
                 items.extend(data)
                 if len(data) < 100:
-                    break
-            return items
+                    return items
+            return None                                   # a full tenth page: more may follow, so unknown, not cut
 
         reviews = _pages("reviews")
         comments = _pages("comments")
@@ -758,7 +843,6 @@ class GitHubAPI:
         Returns a lowercased set (possibly empty), or None if the timeline is
         unreadable. One paginated call per PR — callers gate it behind a flag.
         """
-        from datetime import datetime, timedelta
         try:
             cutoff = (datetime.fromisoformat(cutoff_iso.replace("Z", "+00:00"))
                       + timedelta(seconds=max(0, grace_s)))
@@ -771,7 +855,9 @@ class GitHubAPI:
             status, data, _ = self._get(
                 f"/repos/{self.owner}/{self.repo}/issues/{number}/timeline",
                 {"per_page": 100, "page": page})
-            if status != 200 or not isinstance(data, list) or not data:
+            if status != 200 or not isinstance(data, list):
+                return None                     # a page that failed: the replay would miss events
+            if not data:
                 break
             saw = True
             for ev in data:
@@ -797,6 +883,8 @@ class GitHubAPI:
             if len(data) < 100:
                 break
             page += 1
+        else:
+            return None                         # 2000 events and more may follow: unknown, not cut
         return active if saw else None
 
     def open_prs(self, created_from: str, created_to: str) -> list[dict]:
@@ -823,18 +911,31 @@ class GitHubAPI:
         call per distinct login, cached; None if unreadable or a bot app."""
         if not login:
             return None
-        with self._user_lock:
-            if login in self._user_cache:
-                return self._user_cache[login]
-        created = self._disk.get(f"us:{login}") if self._disk else None       # an account's creation date never changes
-        if created is None:
-            status, data, _ = self._get(f"/users/{urllib.parse.quote(login)}")
-            created = data.get("created_at") if status == 200 and isinstance(data, dict) else None
-            if created and self._disk:
-                self._disk.put(f"us:{login}", created)
-        with self._user_lock:
-            self._user_cache[login] = created
+        while True:
+            with self._user_lock:
+                if login in self._user_cache:
+                    return self._user_cache[login]
+                wait_for = self._user_inflight.get(login)
+                if wait_for is None:
+                    self._user_inflight[login] = threading.Event()      # this thread reads it; the others wait
+                    break
+            wait_for.wait()                      # another thread is on it: then read its answer from the cache
+        created = None
+        try:
+            created = self._disk.get(f"us:{login}") if self._disk else None       # an account's creation date never changes
+            if created is None:
+                status, data, _ = self._get(f"/users/{urllib.parse.quote(login)}")
+                created = data.get("created_at") if status == 200 and isinstance(data, dict) else None
+                if created and self._disk:
+                    self._disk.put(f"us:{login}", created)
+            with self._user_lock:
+                self._user_cache[login] = created
+        finally:
+            with self._user_lock:
+                self._user_inflight.pop(login, threading.Event()).set()
         return created
+
+    OPEN_TIMELINE_TTL_S = 3600      # how long the timeline of a PR that has not closed is remembered
 
     def pr_timeline(self, number: int) -> list[dict] | None:
         """The PR's issue timeline (reviews, comments, commits, force-pushes,
@@ -856,7 +957,11 @@ class GitHubAPI:
             events.extend(data)
             if len(data) < 100:
                 if self._disk:
-                    self._disk.put(f"tl:{number}", events)
+                    # a PR still open (no close, or reopened since) is not final: a short life, not 14 days
+                    last = next((e.get("event") for e in reversed(events)
+                                 if e.get("event") in ("closed", "merged", "reopened")), None)
+                    self._disk.put(f"tl:{number}", events,
+                                   ttl=None if last in ("closed", "merged") else self.OPEN_TIMELINE_TTL_S)
                 return events
         return None
 
@@ -873,7 +978,7 @@ class GitHubAPI:
             part = numbers[i:i + batch]
             fields = " ".join(
                 f"p{n}: pullRequest(number: {int(n)}) {{ timelineItems("
-                f"itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT], first: 100) {{ nodes {{ "
+                f"itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT], first: 100) {{ pageInfo {{ hasNextPage }} nodes {{ "
                 f"... on HeadRefForcePushedEvent {{ createdAt beforeCommit {{ oid }} }} }} }} }}"
                 for n in part)
             q = (f'query {{ repository(owner: {json.dumps(self.owner)}, '
@@ -888,8 +993,8 @@ class GitHubAPI:
             repo_data = (data or {}).get("repository")             # None: unknown, not "no force-push"
             for n in part:
                 node = (repo_data or {}).get(f"p{n}")
-                if node is None:
-                    out[n] = None                 # batch failed or PR not visible
+                if node is None or ((node.get("timelineItems") or {}).get("pageInfo") or {}).get("hasNextPage"):
+                    out[n] = None                 # batch failed, PR not visible, or more than the 100 read: unknown
                 else:
                     out[n] = [(e.get("createdAt"), (e.get("beforeCommit") or {}).get("oid"))
                               for e in (node.get("timelineItems") or {}).get("nodes") or []
@@ -897,36 +1002,47 @@ class GitHubAPI:
         return out
 
     def _suites_for_events(self, sha: str, events: tuple[str, ...]) -> set[int] | None:
-        """Check-suite ids of the GitHub Actions workflow runs on `sha` that were started
+        return self._suites_detail(sha, events)[0]
+
+    def _suites_detail(self, sha: str, events: tuple[str, ...]) -> tuple[set[int] | None, str]:
+        """(suites, why): why is "ok", "unreadable" (the runs call failed) or "cut" (a full last page).
+        Check-suite ids of the GitHub Actions workflow runs on `sha` that were started
         by one of `events`, or None when the runs can't be read (callers then filter nothing).
         A check run lands on whichever commit was the default branch's head when an
         unrelated event fired (an issue labelled, a schedule, a /command comment), so the
         commit's check list mixes real CI with automation; the run's event tells them apart."""
         suites: set[int] = set()
-        for page in range(1, 4):                              # up to 300 workflow runs on one commit
+        for page in range(1, 11):                             # up to 1000 workflow runs on one commit
             status, data, _ = self._get(f"/repos/{self.owner}/{self.repo}/actions/runs",
                                         {"head_sha": sha, "per_page": 100, "page": page})
             if status != 200 or not isinstance(data, dict):
-                return None
+                return None, "unreadable"
             runs = data.get("workflow_runs") or []
             suites.update(r["check_suite_id"] for r in runs
                           if r.get("event") in events and r.get("check_suite_id") is not None)
             if len(runs) < 100:
-                break
-        return suites
+                return suites, "ok"
+        return None, "cut"                                    # a full last page: runs may be missing, so unreadable, not cut
 
-    def _check_runs_rest(self, sha: str, events) -> tuple[dict, bool]:
-        """{check name: [(completed_at, id, conclusion), ...]} and whether any check run had a verdict."""
+    def _check_runs_rest(self, sha: str, events) -> tuple[dict, bool, bool] | None:
+        """({check name: [(completed_at, id, conclusion), ...]}, whether any check run had a verdict, whether
+        the list is unfiltered), or None when the check runs cannot be read whole (a page failed, more than
+        2000, or the workflow-run list to filter by was cut): a part of the list is not the list. When the
+        workflow runs cannot be read at all the filter is skipped (every check run counts, the documented
+        fallback) and the list is flagged unfiltered: a failure still stands, but a pass cannot be claimed."""
         saw_any = False
         by_name: dict[str, list] = {}
-        suites = self._suites_for_events(sha, events) if events else None
+        suites, why = self._suites_detail(sha, events) if events else (None, "ok")
+        unfiltered = bool(events) and suites is None
+        if unfiltered and why == "cut":
+            return None
         page = 1
         while page <= 20:                       # up to 2000 check-runs
             status, data, _ = self._get(
                 f"/repos/{self.owner}/{self.repo}/commits/{sha}/check-runs",
                 {"per_page": 100, "page": page, "filter": "all"})
-            if status != 200 or not data:
-                break
+            if status != 200 or not isinstance(data, dict):
+                return None
             runs = data.get("check_runs", [])
             if not runs:
                 break
@@ -944,7 +1060,25 @@ class GitHubAPI:
             if len(runs) < 100:
                 break
             page += 1
-        return by_name, saw_any
+        else:
+            return None
+        return by_name, saw_any, unfiltered
+
+    def _statuses_rest(self, sha: str) -> list | None:
+        """Every legacy commit status on `sha` (the combined-status call returns 30 a page unless asked
+        for more, and is paged), or None when they cannot be read whole."""
+        out: list = []
+        for page in range(1, 11):
+            status, data, _ = self._get(f"/repos/{self.owner}/{self.repo}/commits/{sha}/status",
+                                        {"per_page": 100, "page": page})
+            if status != 200 or not isinstance(data, dict):
+                return None
+            part = data.get("statuses") or []
+            out.extend(part)
+            total = data.get("total_count")
+            if len(part) < 100 or (isinstance(total, int) and len(out) >= total):
+                return out
+        return None
 
     def _checks_graphql(self, sha: str, events) -> tuple[dict, list] | None:
         """The same data `_check_runs_rest` and the status call give, from one GraphQL query:
@@ -1016,11 +1150,15 @@ class GitHubAPI:
         # calls); anything it cannot give whole (too many runs, a failed query) is read through REST.
         gql = self._checks_graphql(sha, events)
         by_name: dict[str, list] = {}
+        unfiltered = False           # every check run counted because the workflow events could not be read
         if gql is not None:
             by_name, statuses = gql
             saw_any = bool(by_name)
         else:
-            by_name, saw_any = self._check_runs_rest(sha, events)
+            rest = self._check_runs_rest(sha, events)
+            if rest is None:
+                return {"required": None, "optional": None, "checks": []}      # unreadable is not a verdict
+            by_name, saw_any, unfiltered = rest
             statuses = None
         FAIL = {"failure", "timed_out", "startup_failure", "action_required"}
         for name, runs in by_name.items():
@@ -1035,9 +1173,9 @@ class GitHubAPI:
 
         # 2) legacy commit statuses — merge in, don't replace
         if statuses is None:
-            s2, d2, _ = self._get(
-                f"/repos/{self.owner}/{self.repo}/commits/{sha}/status")
-            statuses = d2.get("statuses") if s2 == 200 and d2 else None
+            statuses = self._statuses_rest(sha)
+            if statuses is None:
+                return {"required": None, "optional": None, "checks": []}
         if statuses:
             for stt in statuses:
                 state = stt.get("state")
@@ -1056,18 +1194,24 @@ class GitHubAPI:
         if not saw_any:
             return {"required": None, "optional": None, "checks": []}
         checks.sort(key=lambda c: c["name"])             # one order whichever API answered
-        return {"required": _reduce_conclusions(req),
-                "optional": _reduce_conclusions(opt), "checks": checks}
+        required, optional = _reduce_conclusions(req), _reduce_conclusions(opt)
+        if unfiltered:                   # automation may be mixed in: a failure is still a failure, a pass is not proven
+            required = required if required == "failure" else None
+            optional = optional if optional == "failure" else None
+        return {"required": required, "optional": optional, "checks": checks}
 
     # -- persistent getter (waits through rate limits) ----------------------
     def _get_persistent(self, path: str, params: dict | None = None):
         """
-        Like _get, but on a rate-limit (403/429) it waits ~60s and retries
-        indefinitely instead of giving up — for the historical CI pre-pass,
-        which is long-running and must survive rate-limit windows. Transient
-        network errors and 5xx get a bounded backoff, then (code, None): the
-        caller keeps its checkpoint and a rerun resumes. A body cut mid-read
-        (IncompleteRead on a ~1 MB runs page) is a network error, not a crash.
+        Like _get, but an exhausted quota is waited out (until its reset) and retried
+        indefinitely instead of giving up: the historical CI pre-pass is long-running and must
+        survive rate-limit windows. The rate-limit signals are read as _get reads them
+        (Retry-After as seconds or a date, X-RateLimit-Remaining/Reset, a secondary-limit
+        message in the body); a secondary limit or a bare 429 is retried a bounded number of
+        times, and a 403 with no rate-limit signal (Actions disabled, SSO) is returned as
+        (403, None), never looped on. Transient network errors and 5xx get a bounded backoff,
+        then (code, None): the caller keeps its checkpoint and a rerun resumes. A body cut
+        mid-read (IncompleteRead on a ~1 MB runs page) is a network error, not a crash.
         """
         url = f"{API}{path}"
         if params:
@@ -1075,15 +1219,37 @@ class GitHubAPI:
             url = f"{url}?{q}"
         req = urllib.request.Request(url, headers=self._headers())
         net_fails = 0
+        waits = 0
         while True:
+            _gate_wait()
             try:
                 with urllib.request.urlopen(req, timeout=self.st.request_timeout) as r:
                     return r.status, json.loads(r.read() or "null")
             except urllib.error.HTTPError as e:
                 if e.code in (403, 429):
-                    print("[ci-history] rate limit reached; waiting 60s and retrying...",
-                          file=__import__("sys").stderr, flush=True)
-                    time.sleep(60)
+                    kind, wait = _rate_signal(e)
+                    if kind == "primary":
+                        print(f"[ci-history] rate limit reached; waiting {int(wait)}s and retrying...",
+                              file=sys.stderr, flush=True)
+                        progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}", wait=int(wait))
+                        _note_rate_wait(wait, self.st.ci_cache_dir)
+                        _rate_sleep(wait)
+                        continue
+                    if kind == "secondary":
+                        waits += 1
+                        if waits > MAX_SECONDARY_WAITS:
+                            return e.code, None
+                        progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}", wait=int(wait))
+                        _rate_sleep(wait)
+                        continue
+                    if e.code == 403:
+                        runlog.warn("api", "403 without rate-limit signals; treating as unobserved",
+                                    path=path)
+                        return 403, None
+                    waits += 1
+                    if waits > MAX_NO_SIGNAL_429:
+                        return 429, None
+                    time.sleep(min(60, 5 * 2 ** (waits - 1)))
                     continue
                 if e.code == 404:
                     return 404, None
@@ -1118,23 +1284,30 @@ class GitHubAPI:
 
     def _ci_window(self, start: str, end: str, take, depth: int = 0) -> int | None:
         """Feed every workflow run created in [start, end] to `take`; the number of runs, or None when a
-        page could not be read. A window with more runs than a filtered list can return (CI_FILTER_CAP)
-        is halved until it fits."""
+        page could not be read or the window cannot be read whole. A window with more runs than a
+        filtered list can return (CI_FILTER_CAP) is halved until it fits; one that still does not fit
+        when it can be halved no more (a second wide, or too deep) is None, never a truncated read.
+        The first page, fetched to learn the total, is the one a window that fits is read from."""
         status, data = self._ci_page({"per_page": 100, "page": 1, "created": f"{start}..{end}"})
         if status != 200 or not isinstance(data, dict):
             return None
         total = int(data.get("total_count") or 0)
         if total == 0:
             return 0
-        if total > self.CI_FILTER_CAP and depth < 14:
-            from datetime import datetime, timedelta, timezone
+        if total > self.CI_FILTER_CAP:
             fmt = "%Y-%m-%dT%H:%M:%SZ"
             s0 = datetime.strptime(start, fmt).replace(tzinfo=timezone.utc)
             e0 = datetime.strptime(end, fmt).replace(tzinfo=timezone.utc)
+            if depth >= 20 or (e0 - s0) < timedelta(seconds=2):
+                runlog.warn("ci-history", "a window has more runs than a list returns and cannot be split",
+                            start=start, end=end, total=total)
+                return None
             mid = (s0 + (e0 - s0) / 2).replace(microsecond=0)
             a = self._ci_window(start, mid.strftime(fmt), take, depth + 1)
+            if a is None:
+                return None
             b = self._ci_window((mid + timedelta(seconds=1)).strftime(fmt), end, take, depth + 1)
-            return None if a is None or b is None else a + b
+            return None if b is None else a + b
         runs = data.get("workflow_runs", [])
         take(runs)
         page, seen = 2, len(runs)
@@ -1148,20 +1321,44 @@ class GitHubAPI:
             page += 1
         return seen
 
-    def build_ci_conclusion_map(self, cache_path: str | None = None) -> dict:
+    CI_MAP_VERSION = 2          # the cache file's format; 1 (a bare {sha: verdict}) is from before the date-window walk and may be cut short
+    CI_MAP_TTL_S = 7 * 86400    # a cached map older than this is rebuilt: runs since then are not in it
+
+    def _load_ci_map(self, cache_path: str) -> tuple[dict | None, float]:
+        """(map, built-at) from the cache file, or (None, 0) for a missing, unreadable or old-format one
+        (a bare {sha: verdict} file from before 6.13.0 may be a truncated map; it is only read to be discarded)."""
+        try:
+            with open(cache_path, encoding="utf-8") as fh:
+                d = json.load(fh)
+        except (OSError, json.JSONDecodeError, ValueError):
+            return None, 0.0
+        if (isinstance(d, dict) and d.get("v") == self.CI_MAP_VERSION and isinstance(d.get("map"), dict)
+                and isinstance(d.get("built"), (int, float))):
+            return d["map"], float(d["built"])
+        return None, 0.0
+
+    def build_ci_conclusion_map(self, cache_path: str | None = None, covers_until: str | None = None) -> dict:
         """
         {commit_sha: 'failure' | 'success'} for the repo's workflow runs, built
         from the Actions workflow-runs list endpoint (100 runs/call — far cheaper
         than one check-runs call per commit). Cached to `cache_path` as JSON, so
         the expensive pre-pass is paid once per repo. Only GitHub Actions is
         covered; commits with no runs are simply absent (feature = None there).
+
+        The cache file is {"v", "built", "map"}: a file of another version is a miss, and one built more
+        than CI_MAP_TTL_S ago (or before `covers_until`, an ISO time the caller needs runs up to, such as
+        the newest PR's merge) is rebuilt, so a later run over newer PRs does not read a map that stops
+        before them. If that rebuild cannot finish, the older complete map is returned rather than a
+        partial one.
         """
+        stale: dict | None = None
         if cache_path and os.path.isfile(cache_path):
-            try:
-                with open(cache_path, encoding="utf-8") as fh:
-                    return json.load(fh)
-            except (OSError, json.JSONDecodeError):
-                pass
+            cached, built = self._load_ci_map(cache_path)
+            if cached is not None:
+                built_iso = datetime.fromtimestamp(built, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if time.time() - built <= self.CI_MAP_TTL_S and not (covers_until and covers_until > built_iso):
+                    return cached
+                stale = cached
 
         # Pages are checkpointed to <cache>.pages.json every few pages, so a
         # stopped run resumes at the next page instead of page 1. The final
@@ -1220,10 +1417,7 @@ class GitHubAPI:
             if page > self.CI_PAGE_CAP:
                 capped = True
                 break
-            status, data = self._get_persistent(
-                f"/repos/{self.owner}/{self.repo}/actions/runs",
-                {"per_page": 100, "page": page},
-            )
+            status, data = self._ci_page({"per_page": 100, "page": page})      # a 4xx (401, 422) is a stop, not a crash: the checkpoint is kept below
             if status != 200 or not data:
                 break
             runs = data.get("workflow_runs", [])
@@ -1244,7 +1438,6 @@ class GitHubAPI:
         # reaches back as far as the repo has runs. Stops at the first long stretch with none, or at
         # the year Actions began.
         if capped or win_end is not None:
-            from datetime import datetime, timedelta, timezone
             fmt = "%Y-%m-%dT%H:%M:%SZ"
             end = datetime.strptime(win_end or oldest, fmt).replace(tzinfo=timezone.utc) if (win_end or oldest) else None
             floor = datetime(2019, 10, 1, tzinfo=timezone.utc)      # GitHub Actions did not exist before this
@@ -1276,8 +1469,10 @@ class GitHubAPI:
             if complete:
                 try:
                     os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
-                    with open(cache_path, "w", encoding="utf-8") as fh:
-                        json.dump(ci, fh)
+                    tmp = cache_path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as fh:
+                        json.dump({"v": self.CI_MAP_VERSION, "built": time.time(), "map": ci}, fh)
+                    os.replace(tmp, cache_path)
                     if os.path.isfile(pages_path):
                         os.remove(pages_path)
                 except OSError:
@@ -1286,6 +1481,8 @@ class GitHubAPI:
                 self._save_ci_pages(pages_path, raw, page, oldest=oldest, win_end=win_end, empty=empty_streak)
                 print(f"[ci-history] stopped ({'at ' + win_end[:10] if win_end else 'at page ' + str(page)}); "
                       f"map not cached, a rerun resumes from there", file=__import__("sys").stderr, flush=True)
+                if stale is not None:
+                    return stale
         return ci
 
     @staticmethod

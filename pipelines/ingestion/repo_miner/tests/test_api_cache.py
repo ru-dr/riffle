@@ -147,7 +147,7 @@ def test_the_heartbeat_sends_everything_that_changed_every_15_minutes(tmp_path, 
 
 def test_a_heartbeat_sync_leaves_out_files_it_cannot_finish(tmp_path, monkeypatch):
     import sync
-    monkeypatch.setenv("RIFFLE_SYNC_URL", "http://store.invalid")
+    monkeypatch.setenv("RIFFLE_SYNC_URL", "https://store.invalid")
     monkeypatch.setenv("RIFFLE_SYNC_TOKEN", "rw_x")
     monkeypatch.chdir(tmp_path)
     out = str(tmp_path / "d.parquet")

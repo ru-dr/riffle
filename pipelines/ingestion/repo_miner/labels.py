@@ -31,6 +31,7 @@ on the days_to_* columns.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -49,7 +50,7 @@ import gitio
 POST_MERGE_COLUMNS = (
     "days_to_revert", "days_to_hotfix", "days_to_szz_fix",
     "label_revert", "label_ci_fail", "label_ci_fail_optional", "label_hotfix",
-    "label_szz_bug", "label_bad",
+    "label_szz_bug", "szz_window_closed", "label_bad",
     "ci_observed", "revert_window_closed", "hotfix_window_closed", "label_bad_observed",
     "ci_fail_flaky_only",
 )
@@ -71,15 +72,46 @@ def _lookahead(st: config.Settings) -> int:
     return getattr(st, "label_lookahead_days", 90)
 
 
-def revert_delay(repo: str, pr: dict, st: config.Settings) -> float | None:
+@functools.lru_cache(maxsize=64)
+def _default_tip(repo: str) -> str | None:
+    """The default branch's name when it resolves in this clone, else None."""
+    try:
+        branch = gitio.default_branch(repo)
+        return branch if gitio.rev_parse_safe(repo, branch) else None
+    except gitio.GitError:
+        return None
+
+
+def _search_revs(repo: str, rev: str | None) -> list[str]:
+    """What to search for later commits: `rev` if given, else the default
+    branch's history (a revert or hotfix that never reached it did not land),
+    else every ref when the clone has no resolvable default branch."""
+    rev = rev or _default_tip(repo)
+    return [rev] if rev else ["--all"]
+
+
+_OWN_PR_RE = re.compile(r"\(#(\d+)\)\s*$")
+
+
+def revert_delay(repo: str, pr: dict, st: config.Settings,
+                 own_commits: set[str] | None = None,
+                 rev: str | None = None) -> float | None:
     """
     Days from merge to the first commit that reverts this PR (or None).
 
     Matching is STRICT: the revert must reference the merge commit's SHA, cite
-    this PR's number (`#N`, as squash-merge reverts do: `fix: revert "x (#N)"`),
-    or quote this PR's exact title in the canonical `Revert "<title>"` form. The
-    old loose rule (PR title appearing anywhere in the revert body) made short
-    titles like "Fix typo" or "Update README" match unrelated reverts.
+    this PR's number as a squash-merge revert does (`fix: revert "x (#N)"`) or as
+    GitHub's revert button does (`Reverts owner/repo#N`), or quote this PR's
+    exact title in the canonical `Revert "<title>"` form. A `#N` elsewhere in a
+    message (a "see #N", a "fixes #N") is not a citation.
+
+    own_commits: the PR's own commits (commits_in_range) and its merge commit.
+    They are never its revert, so a PR whose own message looks like a revert,
+    or whose merge lands at the merge instant, is not counted as reverted by
+    itself. A candidate whose own PR number (`(#M)`) is not later than this PR's
+    cannot be undoing it either.
+
+    rev: the history searched (default: the default branch; see _search_revs).
     """
     merge_sha = pr.get("merge_commit_sha")
     if not merge_sha:
@@ -87,31 +119,38 @@ def revert_delay(repo: str, pr: dict, st: config.Settings) -> float | None:
     merged_at = _parse_ts(pr["merged_at"])
     until = merged_at + timedelta(days=_lookahead(st))
     out = gitio._run(
-        repo, "log", "--all", f"--since={merged_at.isoformat()}",
+        repo, "log", *_search_revs(repo, rev), f"--since={merged_at.isoformat()}",
         f"--until={until.isoformat()}", "--pretty=%H%x1f%ct%x1f%s%n%b%x1e",
         check=False,
     )
+    skip = set(own_commits or ()) | {merge_sha}
     short = merge_sha[:7]
     title = (pr.get("title") or "").strip().lower()
+    number = pr.get("number")
     # a revert merges after the PR it undoes, so its own PR number is always
-    # higher: a `#N` in its message can only point at an earlier PR
-    num_re = re.compile(rf"(?<![\w/])#{pr['number']}(?!\d)") if pr.get("number") else None
+    # higher: a `#N` in its subject can only point at an earlier PR
+    num_re = re.compile(rf"(?<![\w/])#{number}(?!\d)") if number else None
+    reverts_re = (re.compile(rf"(?im)^\s*reverts?\s+(?:[\w.-]+/[\w.-]+)?#{number}(?!\d)")
+                  if number else None)
     best = None
     for rec in out.split("\x1e"):
         parts = rec.strip("\n").split("\x1f", 2)
         if len(parts) < 3:
             continue
-        _sha, ct, msg = parts
-        if not config.is_revert_text(msg):
+        sha, ct, msg = parts
+        if sha in skip or not config.is_revert_text(msg):
             continue
+        subject = msg.split("\n", 1)[0]
         m = msg.lower()
-        matched = (
-            short in msg or merge_sha in msg
-            or (num_re is not None and num_re.search(msg) is not None)
-            or (title and f'revert "{title}"' in m)
-        )
-        if not matched:
+        by_sha = short in msg or merge_sha in msg
+        by_ref = ((num_re is not None and num_re.search(subject) is not None)
+                  or (reverts_re is not None and reverts_re.search(msg) is not None)
+                  or bool(title and f'revert "{title}"' in m))
+        if not (by_sha or by_ref):
             continue
+        own = _OWN_PR_RE.search(subject)
+        if not by_sha and number and own and int(own.group(1)) <= int(number):
+            continue                          # that PR is not later than this one
         try:
             when = _epoch_ts(ct)
         except (ValueError, OSError, OverflowError):
@@ -135,19 +174,25 @@ def _significant_shared(files: set[str]) -> set[str]:
 
 
 def hotfix_delay(repo: str, pr: dict, changed: list[str],
-                 st: config.Settings) -> float | None:
+                 st: config.Settings, own_commits: set[str] | None = None,
+                 rev: str | None = None) -> float | None:
     """
     Days from merge to the first hotfix/rollback commit touching the same files.
     Requires at least one *significant* shared file (not just CHANGELOG, a doc,
     or a lockfile), so a hotfix that merely bumps the changelog or a lockfile
-    doesn't get pinned to every PR that touched those too.
+    doesn't get pinned to every PR that touched those too. The PR's own commits
+    and merge commit (own_commits, plus pr["merge_commit_sha"]) are never its
+    hotfix: a "fix:" PR must not be the hotfix of itself. rev as in revert_delay.
     """
     merged_at = _parse_ts(pr["merged_at"])
     until = merged_at + timedelta(days=_lookahead(st))
     out = gitio._run(
-        repo, "log", "--all", f"--since={merged_at.isoformat()}",
+        repo, "log", *_search_revs(repo, rev), f"--since={merged_at.isoformat()}",
         f"--until={until.isoformat()}", "--pretty=%H%x1f%ct%x1f%s", check=False,
     )
+    skip = set(own_commits or ())
+    if pr.get("merge_commit_sha"):
+        skip.add(pr["merge_commit_sha"])
     changed_set = set(changed)
     best = None
     for rec in out.splitlines():
@@ -155,7 +200,7 @@ def hotfix_delay(repo: str, pr: dict, changed: list[str],
         if len(parts) < 3:
             continue
         sha, ct, subj = parts
-        if not config.is_hotfix_text(subj):
+        if sha in skip or not config.is_hotfix_text(subj):
             continue
         shared = changed_set & set(gitio.changed_files_of_commit(repo, sha))
         if not shared or not _significant_shared(shared):
@@ -213,7 +258,7 @@ def _window_covers(have, want) -> bool:
             and (h1 is None or (w1 is not None and w1 <= h1)))
 
 
-SZZ_VERSION = 2       # bump when the index for the same inputs would change
+SZZ_VERSION = 3       # bump when the index for the same inputs would change
 
 
 def szz_relevant_paths(repo: str, commits: set[str]) -> set[str]:
@@ -505,11 +550,13 @@ def _szz_fix_bugs(repo: str, sha: str, parent: str,
     before = gitio.blame_stats()
     by_path: dict[str, list[str]] = {}
     old_by_path = gitio.deleted_or_modified_lines_many(repo, parent, sha, paths)
+    renames = gitio.rename_map(repo, parent, sha)       # {new path: name at the parent}
     for path in paths:
         old_lines = old_by_path[path]
+        base_path = renames.get(path) or path           # the parent only knows the old name
         bugs: list[str] = []
         if old_lines:
-            blame = gitio.blame_lines(repo, parent, path, old_lines)
+            blame = gitio.blame_lines(repo, parent, base_path, old_lines)
             for ln in old_lines:
                 bl = blame.get(ln)
                 if bl and bl.orig_commit and bl.orig_commit not in bugs:
@@ -556,6 +603,17 @@ def szz_delay(repo: str, pr: dict, base: str, head: str,
     return best
 
 
+def szz_window_closed(pr: dict, obs: datetime, st: config.Settings) -> bool | None:
+    """Had szz_maturity_days elapsed between this PR's merge and `obs` (the
+    observation cutoff)? Before then a fix that would later have been traced to
+    it may not exist yet, so a label_szz_bug of False is immature. None when
+    szz_maturity_days is 0 (no cap, so no window to close)."""
+    cap = getattr(st, "szz_maturity_days", 90)
+    if not cap:
+        return None
+    return (obs - _parse_ts(pr["merged_at"])).total_seconds() / 86400.0 >= cap
+
+
 def _within(delay: float | None, window: int) -> bool:
     return delay is not None and delay <= window
 
@@ -566,13 +624,18 @@ def build_labels(repo: str, pr: dict, changed: list[str], api,
                  obs_cutoff: datetime | None = None,
                  pr_base: str | None = None,
                  pr_head: str | None = None) -> dict:
-    d_rev = revert_delay(repo, pr, st)
-    d_hot = hotfix_delay(repo, pr, changed, st)
     # SZZ range: prefer the corrected PR range from the orchestrator (the merge
     # commit's parent / branch tip), falling back to the API base/head.
     base = pr_base or (pr.get("base") or {}).get("sha")
     head = pr_head or pr.get("merge_commit_sha") or (pr.get("head") or {}).get("sha")
-    d_szz = szz_delay(repo, pr, base, head, szz_index, st) if (base and head) else None
+    # the PR's own commits can never be its revert or hotfix
+    own = gitio.commits_in_range(repo, base, head) if (base and head) else set()
+    d_rev = revert_delay(repo, pr, st, own)
+    d_hot = hotfix_delay(repo, pr, changed, st, own)
+    # SZZ ran only if an index was given; without one (or without a PR range)
+    # there is no answer, which is null, not "no later fix"
+    szz_ran = szz_index is not None and bool(base and head)
+    d_szz = szz_delay(repo, pr, base, head, szz_index, st) if szz_ran else None
     ci_req, ci_opt, ci_checks = ci_fail_labels(api, pr)   # 'failure'|'success'|None
 
     merged_at = _parse_ts(pr["merged_at"])
@@ -600,7 +663,10 @@ def build_labels(repo: str, pr: dict, changed: list[str], api,
         "label_ci_fail": ci_fail if ci_observed else None,
         "label_ci_fail_optional": (ci_opt == "failure") if ci_opt is not None else None,
         "label_hotfix": hot,
-        "label_szz_bug": d_szz is not None,    # any later fix (SZZ, needs --szz)
+        "label_szz_bug": (d_szz is not None) if szz_ran else None,   # any later fix (SZZ, needs --szz)
+        # had the SZZ maturity window elapsed by the cutoff? null when it is not computable
+        # (SZZ did not run, or szz_maturity_days is 0)
+        "szz_window_closed": szz_window_closed(pr, obs, st) if szz_ran else None,
         "label_bad": bad,
         # observability — lets training drop/downweight immature or unobserved rows
         "ci_observed": ci_observed,

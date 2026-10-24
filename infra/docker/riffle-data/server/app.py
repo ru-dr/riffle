@@ -20,6 +20,7 @@ client address and https come from X-Forwarded-*. Nothing here is on the scoring
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import http.cookies
 import http.server
@@ -42,8 +43,8 @@ import tokens
 import ui
 import views
 
-KEY = re.compile(r"^[A-Za-z0-9._-]{1,120}(/[A-Za-z0-9._-]{1,120}){1,7}$")
-WORD = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+KEY = re.compile(r"^[A-Za-z0-9._-]{1,120}(/[A-Za-z0-9._-]{1,120}){1,7}\Z")
+WORD = re.compile(r"^[A-Za-z0-9._-]{1,80}\Z")
 MAX_FILE = int(os.environ.get("RIFFLE_MAX_FILE_BYTES", 2 * 1024 ** 3))
 TRUST_PROXY = os.environ.get("RIFFLE_TRUST_PROXY") == "1"
 SEARCH_MAX_HITS = 300
@@ -60,7 +61,7 @@ STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 COOKIE = "riffle_session"
-ADMIN_COOKIE = "riffle_admin"          # the admin page's own session: an admin token, never a reader's
+ADMIN_COOKIE = "riffle_admin"          # the admin page's own session: a signed value that expires (tokens.session_make), never a token
 
 
 def join_code(url: str, token: str, split: str, k: int, n: int, version: str | None, argv: list[str]) -> str:
@@ -75,30 +76,34 @@ def valid_key(key: str) -> bool:
 
 
 class Throttle:
-    """At most `limit` failed sign-ins per client address in `window` seconds."""
+    """At most `limit` failed sign-ins per client address in `window` seconds. Several failures with the same token
+    count once: a PC behind the same NAT as a colleague that keeps retrying a revoked token must not lock the others
+    out, while guessing (a new token each time) still runs into the limit."""
 
     MAX_KEYS = 5000
 
     def __init__(self, limit: int = 20, window: int = 300):
-        self.limit, self.window, self.fails, self.lock = limit, window, {}, threading.Lock()
+        self.limit, self.window, self.fails, self.lock, self.seq = limit, window, {}, threading.Lock(), 0
 
     def blocked(self, who: str) -> bool:
         now = time.time()
         with self.lock:
-            hits = [t for t in self.fails.get(who, []) if now - t < self.window]
+            hits = [h for h in self.fails.get(who, []) if now - h[0] < self.window]
             if hits:
                 self.fails[who] = hits
             else:
                 self.fails.pop(who, None)                   # no entry for an address that is not failing
-            return len(hits) >= self.limit
+            return len({h[1] for h in hits}) >= self.limit
 
-    def fail(self, who: str) -> None:
+    def fail(self, who: str, token: str | None = None) -> None:
         now = time.time()
         with self.lock:
             if len(self.fails) >= self.MAX_KEYS:            # bounded: drop addresses whose failures have all aged out
-                for k in [k for k, v in self.fails.items() if not v or now - v[-1] >= self.window]:
+                for k in [k for k, v in self.fails.items() if not v or now - v[-1][0] >= self.window]:
                     del self.fails[k]
-            self.fails.setdefault(who, []).append(now)
+            self.seq += 1
+            ident = hashlib.sha256(token.encode()).hexdigest() if token else f"#{self.seq}"
+            self.fails.setdefault(who, []).append((now, ident))
 
 
 class DataCache:
@@ -136,6 +141,7 @@ class Service:
         self.index = index_mod.Index(os.path.join(data_dir, "index.db"))
         self.spool = os.path.join(data_dir, "spool")
         self.throttle = Throttle()
+        self._run_lock = threading.Lock()
         self.data_cache = DataCache(DATA_TTL_S)
         os.makedirs(self.spool, exist_ok=True)
 
@@ -159,11 +165,11 @@ class Service:
                 state = "expired"
             elif not r:
                 state = "never"
-            elif reason == "batch done":
+            elif tables.finished((r or {}).get("status")):
                 state = "done"
-            elif reason == "stopped":
+            elif reason in ("stopped", "batch aborted"):
                 state = "stopped"
-            else:
+            else:                                           # "batch incomplete" (a partial upload) is still mining, not finished
                 state = "mining" if now - r["updated"] < 25 * 60 else "silent"
             st = (r or {}).get("status", {})
             pcs.append({"pc": name, "split": rec.get("split"), "created": rec.get("created"), "expires": rec.get("expires"),
@@ -299,6 +305,10 @@ class Service:
         if length > MAX_FILE:
             return 413, "too large"
         full = f"{pc}/{key}"
+        parts = full.split("/")
+        if self.index.files(like=index_mod.like_escape(full) + "/%", limit=1) or any(
+                self.index.file("/".join(parts[:i])) for i in range(2, len(parts))):
+            return 409, "a file and a directory would share this path"      # e.g. x/a exists and x/a/b is sent
         fd, tmp = tempfile.mkstemp(dir=self.spool)
         h, left = hashlib.sha256(), length
         try:
@@ -328,14 +338,23 @@ class Service:
                 except (OSError, ValueError):
                     os.remove(tmp)
                     return 400, "run.json must be a JSON object (at most 1 MB)"
-            self.store.put(full, tmp)
+            if status is not None and status.get("reason") == "batch done" and not tables.finished(status):
+                status["reason"], status["reason_wanted"] = "batch incomplete", "batch done"   # a partial upload is never finished
+            with self._run_lock if status is not None else contextlib.nullcontext():          # two run.json PUTs: the last to land wins in the file and the index alike
+                self.store.put(full, tmp)
+                self.index.put_file(full, pc, length, h.hexdigest())
+                if status is not None:
+                    self.index.put_run(pc, key[: -len("/run.json")], status)
+        except OSError as e:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            if isinstance(e, (NotADirectoryError, IsADirectoryError, FileExistsError)):
+                return 409, "a file and a directory would share this path"
+            raise
         except Exception:                                   # noqa: BLE001
             if os.path.exists(tmp):
                 os.remove(tmp)
             raise
-        self.index.put_file(full, pc, length, h.hexdigest())
-        if status is not None:
-            self.index.put_run(pc, key[: -len("/run.json")], status)
         return 200, "ok"
 
     # -- reading ---------------------------------------------------------
@@ -371,7 +390,7 @@ class Service:
 
     def health_for(self, pc: str, prefix: str) -> dict[str, dict]:
         out = {}
-        for f in self.index.files(pc, f"{pc}/{prefix}/health/%"):
+        for f in self.index.files(pc, index_mod.like_escape(f"{pc}/{prefix}") + "/health/%"):
             fh = self.store.open_local(f["key"])
             if fh is None:
                 continue
@@ -387,7 +406,7 @@ class Service:
         run = self.index.run(pc, prefix)
         if not run:
             return None
-        files = self.index.files(pc, f"{pc}/{prefix}/%")
+        files = self.index.files(pc, index_mod.like_escape(f"{pc}/{prefix}") + "/%")
         for f in files:
             f["kind"] = views.kind_of(f["key"])
             f["uri"] = self.store.uri(f["key"])
@@ -395,20 +414,26 @@ class Service:
 
     def table_catalogue(self, version: str | None, split: str | None) -> dict:
         data = [f["key"] for f in self.index.files(like="%/data/%.parquet")]
-        combos = sorted({(k.split("/")[1], k.split("/")[2]) for k in data if k.count("/") == 4})
+        combos = sorted({(k.split("/")[1], k.split("/")[2]) for k in data if k.count("/") == 4},
+                        key=lambda c: (tables.version_key(c[0]), c[1]))
         if not combos:
             return {"versions": [], "splits": [], "tables": [], "version": None, "split": None}
         if (version, split) not in combos:
-            version, split = combos[-1]
+            version, split = max(combos, key=lambda c: (tables.version_key(c[0]), c[1]))      # 6.13 is newer than 6.9
         finished = {r["pc"] for r in self.index.runs()
-                    if r["prefix"] == f"{version}/{split}" and isinstance(r["status"], dict) and r["status"].get("reason") == "batch done"}
-        out = []
+                    if r["prefix"] == f"{version}/{split}" and isinstance(r["status"], dict) and tables.finished(r["status"])}
+        out, n = [], self.split_n(split)
         for incl in (False, True):
-            files, _notes = tables.plan(data, version, split, None if incl else finished)
+            files, _notes = tables.plan(data, version, split, None if incl else finished, n)
             out.append(files)
-        return {"versions": sorted({c[0] for c in combos}), "splits": sorted({c[1] for c in combos if c[0] == version}),
+        return {"versions": sorted({c[0] for c in combos}, key=tables.version_key), "splits": sorted({c[1] for c in combos if c[0] == version}),
                 "version": version, "split": split, "finished_pcs": sorted(finished),
                 "tables": [{"name": t, "finished": len(out[0][t]), "all": len(out[1][t])} for t, _p in tables.TABLES]}
+
+    def split_n(self, split: str) -> int | None:
+        """The number of PCs the split is planned for now (the lead may have planned it again with another N)."""
+        n = tokens.load(self.tokens_path)["splits"].get(split, {}).get("n")
+        return n if isinstance(n, int) and not isinstance(n, bool) else None
 
     def parquet(self, q: dict) -> views.Parquet:
         """The relation a request names: one file (`key`) or one table across PCs."""
@@ -421,7 +446,7 @@ class Service:
             cat = self.table_catalogue(q["version"], q["split"])
             data = [f["key"] for f in self.index.files(like="%/data/%.parquet")]
             finished = None if q.get("all") == "1" else set(cat.get("finished_pcs", []))
-            keys = tables.plan(data, q["version"], q["split"], finished)[0][q["table"]]
+            keys = tables.plan(data, q["version"], q["split"], finished, self.split_n(q["split"]))[0][q["table"]]
             if not keys:
                 raise LookupError("no finished PC has this table yet; tick 'include unfinished PCs'")
         paths = []
@@ -432,7 +457,24 @@ class Service:
             if not p:
                 raise LookupError("file is not available")
             paths.append(p)
-        return views.Parquet(paths, [self.store.root, self.store.cache])
+        dirs = [self.store.root, self.store.cache]
+        try:
+            return views.Parquet(paths, dirs)
+        except views.Busy:
+            raise
+        except ValueError:
+            if len(paths) < 2:
+                raise
+        good = []                                           # one unreadable file must not take the whole table view down
+        for p in paths:
+            try:
+                views.Parquet([p], dirs).close()
+                good.append(p)
+            except ValueError:
+                print(f"[data] skipping unreadable parquet {p}", file=sys.stderr, flush=True)
+        if not good:
+            raise ValueError("none of this table's files can be read as parquet")
+        return views.Parquet(good, dirs)
 
     def text_path(self, key: str) -> str:
         if not valid_key(key) or not self.index.file(key):
@@ -509,6 +551,14 @@ def make_handler(svc: Service):
             cookie = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
             return cookie[ADMIN_COOKIE].value if ADMIN_COOKIE in cookie else None
 
+        def _admin_who(self) -> tuple[str, str] | None:
+            """('admins', name) for a Bearer admin token or the admin page's signed session cookie, else None."""
+            if self.headers.get("Authorization"):
+                who = tokens.who(svc.tokens_path, self._token())
+                return who if who and who[0] == "admins" else None
+            cookie = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
+            return tokens.session_who(svc.tokens_path, cookie[ADMIN_COOKIE].value) if ADMIN_COOKIE in cookie else None
+
         def _public_url(self) -> str:
             return (os.environ.get("RIFFLE_PUBLIC_URL") or f"{'https' if self.https() else 'http'}://{self.headers.get('Host', 'localhost')}").rstrip("/")
 
@@ -518,13 +568,13 @@ def make_handler(svc: Service):
 
         def _guard(self, page: bool) -> bool:
             """True when the reader is signed in; otherwise answers and returns False."""
+            if self._is_reader():
+                return True
             if svc.throttle.blocked(self.client()):
                 self._send(429, "too many failed sign-ins; wait a few minutes")
                 return False
-            if self._is_reader():
-                return True
             if self._token():
-                svc.throttle.fail(self.client())
+                svc.throttle.fail(self.client(), self._token())
             if page:
                 self._send(302, "", extra={"Location": "/login"})
             else:
@@ -534,11 +584,11 @@ def make_handler(svc: Service):
 
         # -- PUT ------------------------------------------------------------
         def do_PUT(self):
-            if svc.throttle.blocked(self.client()):
-                return self._reject(429, "too many failed attempts")
             info = tokens.lookup(svc.tokens_path, self._token())
             if not info or info["kind"] != "pcs":
-                svc.throttle.fail(self.client())
+                if svc.throttle.blocked(self.client()):
+                    return self._reject(429, "too many failed attempts")
+                svc.throttle.fail(self.client(), self._token())
                 return self._reject(401, "PC token required")
             who = (info["kind"], info["name"])
             path = urlparse(self.path).path
@@ -587,7 +637,7 @@ def make_handler(svc: Service):
             token = (form.get("token") or [""])[0].strip()
             who = tokens.who(svc.tokens_path, token)
             if not who or who[0] != "readers":
-                svc.throttle.fail(self.client())
+                svc.throttle.fail(self.client(), token)
                 return self._send(401, ui.login("That token was not accepted. Check that you copied all of it, and that it is a read token (it starts with rd_)."), "text/html; charset=utf-8")
             cookie = f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000" + ("; Secure" if self.https() else "")
             self._send(302, "", extra={"Location": "/", "Set-Cookie": cookie})
@@ -599,22 +649,21 @@ def make_handler(svc: Service):
             token = (form.get("token") or [""])[0].strip()
             who = tokens.who(svc.tokens_path, token)
             if not who or who[0] != "admins":
-                svc.throttle.fail(self.client())
+                svc.throttle.fail(self.client(), token)
                 return self._send(401, ui.login("That token was not accepted. The admin page needs an admin token (it starts with ad_), "
                                                 "not a read token.", admin=True), html_t)
-            cookie = f"{ADMIN_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" + ("; Secure" if self.https() else "")
+            cookie = f"{ADMIN_COOKIE}={tokens.session_make(svc.tokens_path, who[1])}; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" + ("; Secure" if self.https() else "")
             self._send(302, "", extra={"Location": "/admin", "Set-Cookie": cookie})
 
         # -- admin: token issue and revoke ------------------------------------
         def _admin(self) -> bool:
+            if self._admin_who():
+                return True
             if svc.throttle.blocked(self.client()):
                 self._send(429, json.dumps({"error": "too many failed attempts"}), "application/json")
                 return False
-            who = tokens.who(svc.tokens_path, self._admin_token())
-            if who and who[0] == "admins":
-                return True
             if self._admin_token():
-                svc.throttle.fail(self.client())
+                svc.throttle.fail(self.client(), self._admin_token())
             self._send(401, json.dumps({"error": "admin token required"}), "application/json")
             return False
 
@@ -626,13 +675,15 @@ def make_handler(svc: Service):
                 return
             try:
                 body = json.loads(raw or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("the request body must be a JSON object")
                 if path == "/v1/admin/splits":
                     flags = body.get("flags")
                     out = tokens.issue_split(svc.tokens_path, str(body.get("split_id", "")), int(body.get("n", 0)),
                                              float(body["days"]) if body.get("days") else None,
                                              flags if isinstance(flags, list) else None, body.get("miner_version"),
                                              body.get("repos_name"), body.get("repos_text"),
-                                             (tokens.who(svc.tokens_path, self._admin_token()) or ("", ""))[1])
+                                             (self._admin_who() or ("", ""))[1])
                     svc.tokens_changed()
                     return self._json({"split_id": body["split_id"], "pcs": out})
                 if path == "/v1/admin/rotate":
@@ -662,11 +713,14 @@ def make_handler(svc: Service):
                     else:
                         kind, name = str(body.get("kind") or "pcs"), str(body.get("name", ""))   # a bare name means a PC token
                         if kind == "admins":
-                            me = tokens.who(svc.tokens_path, self._admin_token())
+                            me = self._admin_who()
                             admins = tokens.load(svc.tokens_path)["admins"]
                             if (me and me[1] == name) or (name in admins and len(admins) <= 1):
                                 return self._json({"error": "an admin cannot revoke itself or the last admin; add another admin first"}, 409)
-                        gone = [name] if tokens.revoke_kind(svc.tokens_path, kind, name) else []
+                        try:
+                            gone = [name] if tokens.revoke_kind(svc.tokens_path, kind, name) else []
+                        except ValueError as e:                                      # the last admin, decided under the tokens lock
+                            return self._json({"error": str(e)}, 409)
                     if gone or removed:
                         svc.tokens_changed()
                     return self._json({"revoked": gone, "removed": removed})
@@ -683,7 +737,9 @@ def make_handler(svc: Service):
             """What a joined PC may read about its own split: the lead's flags, repos list and who issued it."""
             info = tokens.lookup(svc.tokens_path, self._token())
             if not info or info["kind"] != "pcs":
-                svc.throttle.fail(self.client())
+                if svc.throttle.blocked(self.client()):
+                    return self._json({"error": "too many failed attempts"}, 429)
+                svc.throttle.fail(self.client(), self._token())
                 return self._json({"error": "PC token required"}, 401)
             meta = tokens.load(svc.tokens_path)["splits"].get(info["split"] or "")
             if not meta:
@@ -722,7 +778,9 @@ def make_handler(svc: Service):
             if path == "/v1/whoami":
                 info = tokens.lookup(svc.tokens_path, self._token())
                 if not info:
-                    svc.throttle.fail(self.client())
+                    if svc.throttle.blocked(self.client()):
+                        return self._json({"error": "too many failed attempts"}, 429)
+                    svc.throttle.fail(self.client(), self._token())
                     return self._json({"error": "token not accepted (wrong, revoked or expired)"}, 401)
                 return self._json(info)
             if path == "/v1/split":
@@ -740,8 +798,7 @@ def make_handler(svc: Service):
             if path == "/admin/logout":
                 return self._send(302, "", extra={"Location": "/admin/login", "Set-Cookie": f"{ADMIN_COOKIE}=; Path=/; Max-Age=0"})
             if path == "/admin":
-                who = tokens.who(svc.tokens_path, self._admin_token())
-                if not who or who[0] != "admins":
+                if not self._admin_who():
                     return self._send(302, "", extra={"Location": "/admin/login"})
                 return self._send(200, ui.shell("admin", "Admin"), html_t)
             if path.startswith("/static/"):
@@ -764,6 +821,12 @@ def make_handler(svc: Service):
                     return self._json({"error": str(e)}, 404)
                 except ValueError as e:
                     return self._json({"error": str(e)}, 400)
+                except views.Busy as e:
+                    return self._json({"error": str(e)}, 503)
+                except Exception as e:                      # noqa: BLE001
+                    if type(e).__module__.split(".")[0] == "duckdb":         # an unreadable parquet is an answer, not a crash
+                        return self._json({"error": f"cannot read the data: {str(e)[:200]}"}, 422)
+                    raise
             self._send(404, "not found")
 
         def _static(self, name: str):

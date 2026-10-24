@@ -18,7 +18,7 @@
       if (r.status === 401) { location.href = "/login"; return new Promise(function () {}); }
       var up = +r.headers.get("X-Data-Updated"), nx = +r.headers.get("X-Data-Next");
       if (up && nx) { DATA.updated = up; DATA.next = nx; document.dispatchEvent(new Event("riffle-data")); }
-      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; });
+      return r.json().then(function (j) { if (!r.ok) { var err = new Error(j.error || r.statusText); err.status = r.status; throw err; } return j; });
     });
   }
   function bytes(n) { var u = ["B", "KB", "MB", "GB"], i = 0; while (n >= 1024 && i < 3) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + " " + u[i]; }
@@ -33,7 +33,7 @@
   function runState(run) {
     var reason = run.status.reason, age = Date.now() / 1000 - run.updated;
     if (reason === "batch done") return ["done", "green"];
-    if (reason === "stopped") return ["stopped", "amber"];
+    if (reason === "stopped" || reason === "batch aborted") return ["stopped", "amber"];
     return age < LIVE_S ? ["mining", "green"] : ["silent", "red"];
   }
   function tag(text, color) { return el("span", "tag " + (color || ""), text); }
@@ -428,8 +428,10 @@
       return st[0] === "mining";
     }).catch(function (e) {
       $("#r-cap").textContent = "Run";
-      $("#r-title").textContent = "Run not found";
-      $("#r-sub").replaceChildren("No run matches this link (" + e.message + "). The PC may not have synced this version yet, or the link lost its prefix. ", link("Back to every PC", "/"));
+      var missing = e.status === 404;                                   // any other failure (server busy, a bad answer) is not "no such run"
+      $("#r-title").textContent = missing ? "Run not found" : "Could not load this run";
+      $("#r-sub").replaceChildren(missing ? "No run matches this link (" + e.message + "). The PC may not have synced this version yet, or the link lost its prefix. "
+        : "The store did not answer properly (" + e.message + "). Reload the page to try again. ", link("Back to every PC", "/"));
       [].forEach.call(document.querySelectorAll(".intro ~ section"), function (x) { x.hidden = true; });
     }); }
     liveLoop(load);                                                     // follows a PC that is mining, idle otherwise
@@ -904,7 +906,7 @@
         headers: { "Content-Type": "application/json", "X-Requested-With": "riffle" }, body: body ? JSON.stringify(body) : undefined
       }).then(function (r) {
         if (r.status === 401) { location.href = "/admin/login"; return new Promise(function () {}); }
-        return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; });
+        return r.json().then(function (j) { if (!r.ok) { var err = new Error(j.error || r.statusText); err.status = r.status; throw err; } return j; });
       });
     }
     function say(node, text) { node.textContent = text; }

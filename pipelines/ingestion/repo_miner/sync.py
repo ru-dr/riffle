@@ -30,10 +30,16 @@ import json
 import os
 import socket
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+try:
+    import fcntl
+except ImportError:                                         # Windows: no cross-process lock, the in-process one remains
+    fcntl = None
 
 import progress
 import config  # noqa: F401  (loads .env, so RIFFLE_SYNC_* are set whoever imports this first)
@@ -45,11 +51,36 @@ CONNECT_S = 30.0
 MAX_FILE_BYTES = 2 * 1024 ** 3          # the store's per-file limit; bigger files are skipped with a warning
 
 
+def _secure_url(url: str) -> bool:
+    """https, or plain http to this machine only (a local store or a test): the token is a bearer secret."""
+    u = urllib.parse.urlsplit(url)
+    return u.scheme == "https" or (u.scheme == "http" and (u.hostname or "") in ("localhost", "127.0.0.1", "::1"))
+
+
 def settings() -> tuple[str, str] | None:
-    """(base_url, token) when sync is configured, else None."""
+    """(base_url, token) when sync is configured, else None. A URL that would send the token in the clear
+    (http to another host) is treated as not configured, with a warning."""
     url = (os.environ.get("RIFFLE_SYNC_URL") or "").strip().rstrip("/")
     token = (os.environ.get("RIFFLE_SYNC_TOKEN") or "").strip()
+    if url and token and not _secure_url(url):
+        print(f"[sync] RIFFLE_SYNC_URL must be https (http is allowed only for localhost); sync is off",
+              file=sys.stderr, flush=True)
+        return None
     return (url, token) if url and token else None
+
+
+class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only within the same host and never downgrade to http: the bearer token must not
+    follow a redirect to another origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        old, new = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
+        if (new.scheme, new.netloc) != (old.scheme, old.netloc):
+            raise urllib.error.HTTPError(req.full_url, code, f"{msg} (redirect to another origin refused)", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_SameHostRedirect)
 
 
 def this_run_logs() -> list[str]:
@@ -79,11 +110,16 @@ def collect(out: str, health_dir: str = "health", logs: list[str] | None = None,
     files += [(p, "health/" + os.path.basename(p))
               for p in sorted(glob.glob(os.path.join(health_dir, "*.json")))
               if mine is None or os.path.basename(p).lower() in mine]
-    seen, unique = set(), []
+    seen, keys, unique = set(), set(), []
     for p, key in files:                    # `out` and its .jsonl twin can be the same path
-        if os.path.abspath(p) not in seen:
-            seen.add(os.path.abspath(p))
-            unique.append((p, key))
+        if os.path.abspath(p) in seen:
+            continue
+        seen.add(os.path.abspath(p))
+        if key in keys:                     # two different files with one name would overwrite each other in the store
+            print(f"[sync] not sending {p}: another file is already sent as {key}", file=sys.stderr, flush=True)
+            continue
+        keys.add(key)
+        unique.append((p, key))
     return unique
 
 
@@ -96,14 +132,30 @@ def _load_state(path: str) -> dict:
         return {}
 
 
-def _save_state(path: str, state: dict) -> None:
-    tmp = path + ".tmp"
-    try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(state, fh)
-        os.replace(tmp, path)
-    except OSError:
-        pass
+_STATE_LOCK = threading.Lock()
+
+
+def _save_state(path: str, dirty: dict) -> None:
+    """Merge `dirty` ({store: {key: signature}}, only what this sync changed) into the file as it is now, under a lock,
+    so two syncs (a heartbeat's and a repo's, or two runs) never write each other's older picture back."""
+    with _STATE_LOCK:
+        lock = None
+        try:
+            if fcntl is not None:
+                lock = open(path + ".lock", "a+")
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            disk = _load_state(path)
+            for store_key, entries in dirty.items():
+                disk.setdefault(store_key, {}).update(entries)
+            tmp = f"{path}.{os.getpid()}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(disk, fh)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+        finally:
+            if lock is not None:
+                lock.close()
 
 
 class _OutOfTime(TimeoutError):
@@ -147,7 +199,7 @@ def _put(url: str, token: str, key: str, body, size: int, sha256: str | None, ti
         headers={"Authorization": f"Bearer {token}", "Content-Length": str(size),
                  "Content-Type": "application/octet-stream",
                  **({"X-Content-SHA256": sha256} if sha256 else {})})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _OPENER.open(req, timeout=timeout) as r:
         r.read()
 
 
@@ -162,6 +214,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
     and begin again from zero every time); they go at a repo's end and on Stop."""
     cfg = settings()
     result = {"sent": 0, "skipped": 0, "failed": [], "stopped": None}
+    deferred = 0                                            # files left out for size (max_bytes): not sent, not unchanged
     if not cfg:
         result["stopped"] = "off"
         return result
@@ -174,7 +227,9 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
     deadline = time.monotonic() + budget_s
     all_state = _load_state(state_path)
     # per store AND per token: a machine re-joined as another PC (or a rotated token) sends everything again
-    state = all_state.setdefault(f"{url}#{hashlib.sha256(token.encode()).hexdigest()[:12]}", {})
+    store_key = f"{url}#{hashlib.sha256(token.encode()).hexdigest()[:12]}"
+    state = all_state.setdefault(store_key, {})
+    dirty: dict = {store_key: {}}
     try:
         files = collect(out, health_dir, logs, repos)
         files.sort(key=lambda f: os.path.getsize(f[0]) if os.path.isfile(f[0]) else 0)   # small first: logs and health never starve behind a big table
@@ -195,6 +250,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
             continue
         if max_bytes is not None and st.st_size > max_bytes:
             result["skipped"] += 1
+            deferred += 1
             continue
         if st.st_size > MAX_FILE_BYTES:
             result["failed"].append(f"{rel} (over {MAX_FILE_BYTES >> 30} GiB)")
@@ -209,8 +265,9 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
                 _put(url, token, key, _Prefix(fh, st.st_size, deadline), st.st_size, sha,
                      min(CONNECT_S + st.st_size / 2e6, left))
             state[key] = sig
+            dirty[store_key][key] = sig
             result["sent"] += 1
-            _save_state(state_path, all_state)              # a Stop mid-sync must not forget what already went
+            _save_state(state_path, dirty)              # a Stop mid-sync must not forget what already went
         except urllib.error.HTTPError as e:
             result["failed"].append(f"{rel} (HTTP {e.code})")
             if e.code in (401, 403):
@@ -234,21 +291,25 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
             continue
 
     if result["stopped"] in (None, "out of time"):
+        if status.get("reason") == "batch done" and (result["failed"] or result["stopped"] or deferred):
+            # the store counts only "batch done" as a finished PC: never say it after a partial upload
+            status = dict(status, reason="batch incomplete", reason_wanted="batch done")
         doc = dict(status, host=socket.gethostname(), synced_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                   files_sent=result["sent"], files_failed=len(result["failed"]))
+                   files_sent=result["sent"], files_failed=len(result["failed"]),
+                   files_deferred=deferred)
         body = json.dumps(doc, indent=2).encode()
         try:
             _put(url, token, f"{prefix}/run.json", body, len(body), None, 10.0)
         except (urllib.error.URLError, OSError, TimeoutError, http.client.HTTPException):
             result["failed"].append("run.json")
-    _save_state(state_path, all_state)
+    _save_state(state_path, dirty)
     return result
 
 
 def _get_json(url: str, token: str, path: str, timeout: float, limit: int):
     """GET a small JSON document from the store (at most `limit` bytes). Raises HTTPError, URLError, OSError or ValueError."""
     req = urllib.request.Request(f"{url.rstrip('/')}{path}", headers={"Authorization": f"Bearer {token}"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _OPENER.open(req, timeout=timeout) as r:
         raw = r.read(limit + 1)
     if len(raw) > limit:
         raise ValueError("the answer is larger than expected")
