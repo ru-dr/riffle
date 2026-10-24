@@ -51,17 +51,21 @@
   }
   /* A table. opts: sort {col, dir, on}; cell(v, i, row) for custom cells; dash shows null as "–"; hsm = columns hidden on phones;
      left = numeric-looking columns that should stay left; go(row) = a link the whole row opens; click(row, tr); tall = scrolls with a
-     sticky header; sticky1 = the first column stays put when scrolling sideways. Columns of numbers get right-aligned headers. */
+     sticky header; num = columns of numbers even when every value is empty; sticky1 = the first column stays put when scrolling sideways. Columns of numbers get right-aligned headers.
+     On a phone a list becomes one card per row (each cell labelled with its column, `wide` cells take the full width);
+     data grids (tall, sticky1, sort, scroll) keep their columns and scroll sideways instead. */
   function grid(cols, rows, opts) {
     opts = opts || {};
-    var hide = opts.hsm || [], left = opts.left || [];
+    var hide = opts.hsm || [], left = opts.left || [], wide = opts.wide || [], num = opts.num || [];
+    var cards = !(opts.tall || opts.sticky1 || opts.sort || opts.scroll);
     var numeric = cols.map(function (_, i) {
       if (left.indexOf(i) >= 0) return false;
+      if (num.indexOf(i) >= 0) return true;
       var seen = false;
       for (var r = 0; r < rows.length; r++) { var v = rows[r][i]; if (v == null) continue; if (typeof v !== "number") return false; seen = true; }
       return seen;
     });
-    var t = h("table", "t" + (opts.sticky1 ? " sticky1" : "")), hr = h("tr");
+    var t = h("table", "t" + (opts.sticky1 ? " sticky1" : "") + (cards ? " cards" : "")), hr = h("tr");
     cols.forEach(function (c, i) {
       var th = h("th", (opts.sort ? "sort" : "") + (numeric[i] ? " n" : "") + (hide.indexOf(i) >= 0 ? " hsm" : ""),
         c + (opts.sort && opts.sort.col === c ? (opts.sort.dir === "desc" ? " ↓" : " ↑") : ""));
@@ -80,6 +84,7 @@
         var v = r[i], td = opts.cell ? opts.cell(v, i, r) : cell(v, opts.dash);
         if (numeric[i] && !td.classList.contains("n") && !td.classList.contains("wrapc")) td.classList.add("n");
         if (hide.indexOf(i) >= 0) td.classList.add("hsm");
+        if (cards) { td.dataset.label = cols[i]; if (wide.indexOf(i) >= 0) td.classList.add("wide"); }
         tr.append(td);
       });
       body.append(tr);
@@ -165,7 +170,7 @@
     var a = (m.alert || [""])[0]; f.alert.textContent = a; f.alert.className = "rule balert" + ((m.alert || [])[1] === "bad" ? " bad" : "") + (a ? "" : " none");
     var rank = { bad: 0, warn: 1 }, rows = (m.rows || []).slice().sort(function (x, y) { return (rank[x.cls] == null ? 2 : rank[x.cls]) - (rank[y.cls] == null ? 2 : rank[y.cls]); });
     var tbl = rows.length ? grid(m.headers, rows.map(function (r) { return r.vals.concat([r]); }), {
-      left: [], dash: true, hsm: [4, 5, 6], cell: function (v, i, row) {
+      left: [], dash: true, scroll: true, hsm: [4, 5, 6], cell: function (v, i, row) {
         var td = h("td"), rw = row[row.length - 1], c = { run: "green", warn: "amber", bad: "red", done: "green" }[rw.cls] || "";
         if (i === 0) td.append(el("b", "bname", v));
         else if (i === 1) td.append(tag(v, c));
@@ -364,6 +369,7 @@
     var pc = qs.get("pc"), prefix = qs.get("prefix"), filter = "all";
     function load() { return api("run", { pc: pc, prefix: prefix }).then(function (d) {
       var r = d.run, s = r.status, st = runState(r);
+      [].forEach.call(document.querySelectorAll(".intro ~ section"), function (x) { x.hidden = false; });
       $("#r-cap").textContent = "Run · split " + (s.split_id || "none") + " · miner " + (s.miner_version || "?");
       $("#r-title").replaceChildren(document.createTextNode(r.pc + " "), tag(st[0], st[1]));
       $("#r-sub").textContent = "Last sync " + ago(r.updated) + " (" + s.reason + ") from " + (s.host || "unknown host") + ".";
@@ -388,7 +394,7 @@
       function drawRepos() {
         var rows = all.filter(function (x) { return filter === "all" || x[1] === filter; });
         host.replaceChildren(grid(["Repo", "State", "PRs mined", "Selected", "Left", "Health"], rows, {
-          dash: true, hsm: [3, 4], left: [5], emptyText: "No repo in this state.",
+          dash: true, hsm: [3, 4], left: [5], wide: [5], num: [2, 3, 4], emptyText: "No repo in this state.",
           cell: function (v, i) {
             var td = cell(v, true);
             if (i === 1) { td = h("td"); td.append(tag(v, v === "done" ? "green" : v === "failed" ? "red" : v === "mining" ? "amber" : "")); }
@@ -420,7 +426,12 @@
         }
       }));
       return st[0] === "mining";
-    }).catch(function (e) { $("#r-title").textContent = "Run not found"; $("#r-sub").textContent = e.message; }); }
+    }).catch(function (e) {
+      $("#r-cap").textContent = "Run";
+      $("#r-title").textContent = "Run not found";
+      $("#r-sub").replaceChildren("No run matches this link (" + e.message + "). The PC may not have synced this version yet, or the link lost its prefix. ", link("Back to every PC", "/"));
+      [].forEach.call(document.querySelectorAll(".intro ~ section"), function (x) { x.hidden = true; });
+    }); }
     liveLoop(load);                                                     // follows a PC that is mining, idle otherwise
   }
 
@@ -807,7 +818,7 @@
       try { re = needle ? new RegExp(isRe ? needle : needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : null; } catch (e) { re = null; }
       $("#note").textContent = (d.note ? d.note + " " : "") + d.hits.length + " match" + (d.hits.length === 1 ? "" : "es");
       $("#hits").replaceChildren(grid(["PC", "File", "Line", "Level", "Text"], rows, {
-        hsm: [1], left: [3], emptyText: "No matches. Try fewer words, another level, or tick regex only if you meant one.",
+        hsm: [1], left: [3], wide: [1, 4], emptyText: "No matches. Try fewer words, another level, or tick regex only if you meant one.",
         go: function (row) { return viewHref(row[5], row[2]); },
         cell: function (v, i, row) {
           var td = h("td");
@@ -861,7 +872,7 @@
     C.hbar($("#c-kind"), d.by_kind.map(function (x) { return { l: x[0], v: x[1] }; }), { aria: "Bytes by kind", th: "Kind", vh: "Bytes", ml: 150, fv: bytes });
     C.hbar($("#c-pcsize"), d.by_pc.map(function (x) { return { l: x[0], v: x[1] }; }), { aria: "Bytes by PC", th: "PC", vh: "Bytes", ml: 150, fv: bytes });
     var rows = d.largest.map(function (f) { return [f.key.split("/")[0], f.key.split("/").slice(3).join("/"), f.size, f.updated]; });
-    $("#storfiles").replaceChildren(grid(["PC", "Largest files", "Size", "Updated"], rows, { left: [3], emptyText: "Nothing uploaded yet.",
+    $("#storfiles").replaceChildren(grid(["PC", "Largest files", "Size", "Updated"], rows, { left: [3], wide: [1], emptyText: "Nothing uploaded yet.",
       cell: function (v, i) { var td = h("td"); if (i === 1) { td.className = "mut"; td.style.fontFamily = "var(--mono)"; td.style.fontSize = "12px"; td.textContent = v; } else if (i === 2) { td.className = "n"; td.textContent = bytes(v); } else if (i === 3) td.textContent = ago(v); else td.textContent = v; return td; } }));
   }
   /* one PC's run in detail: what it is set to (including the LLM model), where it is, and the exact command */
@@ -927,6 +938,7 @@
       var tools = $("#nc-tools"); tools.replaceChildren(copyBtn(d.pcs.map(function (p) { return "PC " + p.k + "/" + p.n + "\t" + p.code; }).join("\n"), "Copy all"));
       var rows = d.pcs.map(function (p) { return [p.pc, p.code]; });
       $("#nc-rows").replaceChildren(grid(["PC", "Join code", ""], rows.map(function (r) { return r.concat([r[1]]); }), {
+        wide: [1],
         cell: function (v, i, row) {
           var td = h("td");
           if (i === 0) td.textContent = v;
@@ -953,13 +965,13 @@
         // splits
         var sp = d.splits.map(function (x) { return [x.split_id, x, x, x, x, x, x]; });          // one element per column
         $("#splits").replaceChildren(sp.length ? grid(["Split", "PCs", "Uploaded", "Miner", "Created", "Flags", ""], sp, {
-          hsm: [3, 4, 5], left: [1, 2],
+          hsm: [3, 4, 5], left: [1, 2], wide: [5],
           cell: function (v, i, row) {
             var x = row[1], td = h("td");
             if (i === 0) td.textContent = x.split_id;
             else if (i === 1) td.textContent = x.n + " (" + x.tokens + " active)";
             else if (i === 2) td.textContent = x.uploaded + "/" + x.tokens + " uploaded";
-            else if (i === 3) td.textContent = x.version || "?";
+            else if (i === 3) td.textContent = x.version || "–";
             else if (i === 4) td.textContent = (x.created || "").slice(0, 10);
             else if (i === 5) { td.append(flagList(x.flags || [], x.models || [])); }
             else {
@@ -975,12 +987,11 @@
           }
         }) : el("div", "empty", "No split has been planned yet. Plan one from the miner's TUI: Lead tools (F3)."));
         // PCs
-        // on a phone the Revoke button comes before the wide Run column, so it stays in reach without scrolling sideways
-        var order = window.matchMedia("(max-width:48rem)").matches ? [0, 1, 2, 3, 4, 5, 6, 8, 7] : [0, 1, 2, 3, 4, 5, 6, 7, 8];
+        var order = [0, 1, 2, 3, 4, 5, 6, 7, 8];
         var pcCols = ["PC", "Split", "State", "Progress", "PRs mined", "Expires", "Last upload", "Run", ""];
         $("#pcs").replaceChildren(grid(order.map(function (k) { return pcCols[k]; }),
           d.pcs.map(function (p) { var r = [p.pc, p.split, p.state, p, p.prs_done, p.expires, p.last_upload, p, p]; return order.map(function (k) { return r[k]; }); }), {
-          emptyText: "No PC tokens issued yet. Plan a split from the miner's TUI (Lead tools, F3).", hsm: [1, 3, 4, 5, 6], left: [5, 6],
+          emptyText: "No PC tokens issued yet. Plan a split from the miner's TUI (Lead tools, F3).", hsm: [1, 3, 4, 5, 6], left: [5, 6], wide: [7],
           cell: function (v, i0, row) {
             var p = row[3], td = h("td"), i = order[i0];
             if (i === 0) { td.append(el("div", "", p.pc), el("div", "cap", p.host || "")); }
@@ -1019,9 +1030,9 @@
       }
       window.riffleFieldError(e.target.name, "");
       call("POST", "readers", { name: name }).then(function (r) {
-        box.hidden = false; box.replaceChildren(el("b", "", "Read token for " + r.name + " (shown once): "), el("code", "", r.token), document.createTextNode(" "), copyBtn(r.token));
+        box.hidden = false; box.className = "alert ok"; box.replaceChildren(el("b", "", "Read token for " + r.name + " (shown once): "), el("code", "", r.token), document.createTextNode(" "), copyBtn(r.token));
         e.target.reset(); draw();
-      }).catch(function (err) { box.hidden = false; box.textContent = err.message; });
+      }).catch(function (err) { box.hidden = false; box.className = "alert"; box.replaceChildren(el("b", "", "Not added"), el("span", "", err.message)); });
     };
     liveLoop(draw, { big: true, kind: "admin" });
   }
