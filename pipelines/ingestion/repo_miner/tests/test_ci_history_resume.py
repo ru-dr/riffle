@@ -51,3 +51,50 @@ def test_failed_page_is_not_cached_and_rerun_resumes(tmp_path):
     assert len(second) == 1101
     assert os.path.isfile(cache)
     assert not os.path.isfile(cache + ".pages.json")
+
+
+class _Resp:
+    """An urlopen response whose body is cut off mid-read when `cut` (an IncompleteRead)."""
+    status = 200
+    headers = {}
+
+    def __init__(self, cut):
+        self.cut = cut
+
+    def read(self):
+        if self.cut:
+            import http.client
+            raise http.client.IncompleteRead(b"x", 5)
+        return b'{"workflow_runs": []}'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _real_api():
+    import config
+    return github_api.GitHubAPI("o", "r", config.Settings())
+
+
+def test_persistent_get_retries_a_cut_off_body(monkeypatch):
+    # the 6.13.1 runs on nuxt/nuxt and remix-run/react-router died here: a ~1 MB
+    # runs page cut mid-read raised IncompleteRead out of the whole repo
+    calls = []
+
+    def fake_open(req, timeout=None):
+        calls.append(1)
+        return _Resp(cut=len(calls) < 3)
+
+    monkeypatch.setattr(github_api.urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(github_api.time, "sleep", lambda s: None)
+    status, data = _real_api()._get_persistent("/repos/o/r/actions/runs", {"page": 1})
+    assert (status, data) == (200, {"workflow_runs": []}) and len(calls) == 3
+
+
+def test_persistent_get_gives_up_without_raising(monkeypatch):
+    monkeypatch.setattr(github_api.urllib.request, "urlopen", lambda req, timeout=None: _Resp(cut=True))
+    monkeypatch.setattr(github_api.time, "sleep", lambda s: None)
+    assert _real_api()._get_persistent("/repos/o/r/actions/runs") == (0, None)

@@ -1211,7 +1211,12 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
               file=sys.stderr, flush=True)
         runlog.stage("ci history")
         progress.emit("stage", repo=f"{owner}/{name}", stage="ci history")
-        ci_map = api.build_ci_conclusion_map(cache_path)
+        try:
+            ci_map = api.build_ci_conclusion_map(cache_path)
+        except Exception as e:      # an auxiliary feature: never fail the repo over it
+            runlog.warn("ci-history", "pre-pass failed; CI-history features stay null",
+                        exc=type(e).__name__, err=str(e)[:200])
+            ci_map = {}
         print(f"[ci-history] {len(ci_map)} commits with a CI verdict", file=sys.stderr)
     reuse_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.llm_reuse.json")
     if st.enable_llm and os.path.isfile(reuse_path):
