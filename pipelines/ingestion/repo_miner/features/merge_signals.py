@@ -59,22 +59,29 @@ _TEST_PLAN_RE = re.compile(r"^\s{0,3}(?:#{1,6}\s*)?(?:\*\*)?\s*(?:test(?:ing)?\s
                            r"how (?:was this|to) test(?:ed)?|testing)\b",
                            re.IGNORECASE | re.MULTILINE)
 
-# (agent, regexes over login / head branch / git email / body), checked in order
+# (agent, login patterns, git-email patterns, body patterns). A login is matched whole (^...$), so a person
+# named julesb or claude-docs is not an agent; the branch prefix is the agent's name plus "/" (see
+# _BRANCH_PREFIX_RE), never "-", for the same reason.
+_BOT = r"(?:\[bot\])?"
 _AGENTS = (
-    ("claude_code", (r"claude\[bot\]", r"^claude/", r"noreply@anthropic\.com",
-                     r"generated with \[?claude code", r"co-authored-by: claude")),
-    ("codex", (r"chatgpt-codex", r"codex\[bot\]", r"^codex/", r"openai codex")),
-    ("copilot", (r"^copilot$", r"copilot-swe-agent", r"copilot\[bot\]", r"^copilot/",
-                 r"co-authored-by: copilot")),
-    ("cursor", (r"cursor\[bot\]", r"cursoragent", r"^cursor/", r"cursor agent")),
-    ("devin", (r"devin-ai-integration", r"devin-ai", r"^devin/", r"devin run")),
-    ("jules", (r"google-labs-jules", r"^jules", r"jules\.google")),
-    ("sweep", (r"sweep-ai", r"^sweep/")),
+    ("claude_code", (r"^claude\[bot\]$",), (r"noreply@anthropic\.com",),
+     (r"generated with \[?claude code", r"co-authored-by: claude")),
+    ("codex", (r"^chatgpt-codex-connector" + _BOT + r"$", r"^codex\[bot\]$"), (),
+     (r"openai codex",)),
+    ("copilot", (r"^copilot$", r"^copilot-swe-agent" + _BOT + r"$", r"^copilot\[bot\]$"), (),
+     (r"co-authored-by: copilot",)),
+    ("cursor", (r"^cursor\[bot\]$", r"^cursoragent" + _BOT + r"$"), (r"cursoragent@cursor\.com",),
+     (r"cursor agent",)),
+    ("devin", (r"^devin-ai-integration" + _BOT + r"$", r"^devin-ai" + _BOT + r"$"), (r"devin-ai-integration",),
+     (r"devin run",)),
+    ("jules", (r"^jules\[bot\]$", r"^google-labs-jules" + _BOT + r"$"), (r"jules\.google",), ()),
+    ("sweep", (r"^sweep-ai" + _BOT + r"$",), (), ()),
 )
-_AGENT_RES = tuple((name, tuple(re.compile(p, re.IGNORECASE) for p in pats))
-                   for name, pats in _AGENTS)
-_BRANCH_PREFIX_RE = re.compile(r"^(?:claude|codex|copilot|cursor|devin|jules|sweep)[/-]",
-                               re.IGNORECASE)
+_AGENT_RES = tuple((name, *(tuple(re.compile(p, re.IGNORECASE) for p in group) for group in groups))
+                   for name, *groups in _AGENTS)
+_BRANCH_AGENTS = {"claude": "claude_code", "codex": "codex", "copilot": "copilot", "cursor": "cursor",
+                  "devin": "devin", "jules": "jules", "sweep": "sweep"}
+_BRANCH_PREFIX_RE = re.compile(r"^(" + "|".join(_BRANCH_AGENTS) + r")/", re.IGNORECASE)
 _BOILERPLATE_RE = re.compile(
     r"generated with \[?claude code|co-authored-by: (?:claude|copilot)|"
     r"this (?:pull request|pr) was (?:automatically )?(?:generated|created) by|"
@@ -113,9 +120,14 @@ def body_features(body: str | None) -> dict:
 
 def agent_name(login: str | None, head_ref: str | None, git_email: str | None,
                body: str | None) -> str | None:
-    fields = [login or "", head_ref or "", git_email or "", body or ""]
-    for name, res in _AGENT_RES:
-        if any(rx.search(f) for rx in res for f in fields):
+    """The coding agent that opened a PR, from its author login, head branch prefix, git identity or body
+    watermark; None for none. Checked in the agents' order, the first agent with any hit wins."""
+    login, head_ref, git_email, body = login or "", head_ref or "", git_email or "", body or ""
+    prefix = _BRANCH_PREFIX_RE.match(head_ref)
+    branch = _BRANCH_AGENTS[prefix.group(1).lower()] if prefix else None
+    for name, logins, emails, bodies in _AGENT_RES:
+        if (any(rx.search(login) for rx in logins) or name == branch
+                or any(rx.search(git_email) for rx in emails) or any(rx.search(body) for rx in bodies)):
             return name
     return None
 
@@ -212,39 +224,51 @@ class History:
                                 .total_seconds() / 3600 if sc.get("first_response") else None),
                 "first_at": _ts(sc.get("first_response")),
                 "tokens": frozenset(sc.get("tokens") or ())})
+        self.by_number: dict = {}
+        for q in self.prs:
+            self.by_number.setdefault(q["number"], q)
         self.by_close = sorted((p for p in self.prs if p["closed"] < far), key=lambda p: p["closed"])
         self.close_times = [p["closed"] for p in self.by_close]
         self.by_open = sorted(self.prs, key=lambda p: p["opened"])
         self.open_times = [p["opened"] for p in self.by_open]
+        # open_now needs "opened < t and closed > t". Never-closed PRs are scanned as they are;
+        # a closed one can only be open at t if it opened within the longest closed span before it
+        self.unclosed = [p for p in self.by_open if p["closed"] >= far]
+        self.max_span = max((p["closed"] - p["opened"] for p in self.by_close), default=timedelta(0))
 
     def at(self, p: dict, t: datetime, st: config.Settings, with_unmerged: bool) -> dict:
         """COLUMNS for PR p (an entry of self.prs) as of moment t."""
         out = {c: None for c in COLUMNS}
         lo = bisect.bisect_left(self.close_times, t - timedelta(days=st.merge_signal_lookback_days))
         hi = bisect.bisect_left(self.close_times, t)           # closed strictly before t
-        prior = [q for q in self.by_close[lo:hi] if q is not p]
+        # a PR is never its own history, and neither is a second sidecar of the same PR number
+        # (a resumed run can write one twice)
+        same = lambda q: q is p or (p["number"] is not None and q["number"] == p["number"])  # noqa: E731
+        prior = [q for q in self.by_close[lo:hi] if not same(q)]
         outs = [q for q in prior if q["outsider"]]
         out["repo_outside_closed_count"] = len(outs)
         if with_unmerged and len(outs) >= st.merge_signal_min_prs:
             out["repo_outside_merge_rate"] = round(sum(q["merged"] for q in outs) / len(outs), 4)
         if p["agent"]:
-            same = [q for q in prior if q["agent"] == p["agent"]]
-            out["agent_recent_closed_count"] = len(same)
-            if with_unmerged and len(same) >= st.merge_signal_min_prs:
-                out["agent_recent_merge_rate"] = round(sum(q["merged"] for q in same) / len(same), 4)
+            mine = [q for q in prior if q["agent"] == p["agent"]]
+            out["agent_recent_closed_count"] = len(mine)
+            if with_unmerged and len(mine) >= st.merge_signal_min_prs:
+                out["agent_recent_merge_rate"] = round(sum(q["merged"] for q in mine) / len(mine), 4)
         resp = [q["first_hours"] for q in prior
                 if q["first_hours"] is not None and q["first_at"] < t]
         if len(resp) >= st.merge_signal_min_prs:
             out["repo_median_first_response_hours"] = round(statistics.median(resp), 2)
         a = bisect.bisect_left(self.open_times, t - timedelta(days=30))
         b = bisect.bisect_left(self.open_times, t)
-        out["repo_agent_pr_load_30d"] = sum(1 for q in self.by_open[a:b] if q["agent"] and q is not p)
+        out["repo_agent_pr_load_30d"] = sum(1 for q in self.by_open[a:b] if q["agent"] and not same(q))
         # open at t: opened before t and not yet closed
-        open_now = [q for q in self.by_open[:b] if q["closed"] > t and q is not p]
+        w = bisect.bisect_left(self.open_times, t - self.max_span)
+        open_now = [q for q in self.by_open[w:b] if q["closed"] > t and not same(q)]
+        open_now += [q for q in self.unclosed if q["opened"] < t - self.max_span and not same(q)]
         out["max_sim_open_prs"] = round(max((_jaccard(p["tokens"], q["tokens"])
                                              for q in open_now), default=0.0), 4)
         m = bisect.bisect_left(self.close_times, t - timedelta(days=90))
-        recent = [q for q in self.by_close[m:hi] if q["merged"] and q is not p]
+        recent = [q for q in self.by_close[m:hi] if q["merged"] and not same(q)]
         out["max_sim_recent_merged"] = (round(max(_jaccard(p["tokens"], q["tokens"])
                                                   for q in recent), 4) if recent else None)
         return out

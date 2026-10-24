@@ -88,7 +88,7 @@ def scout(entries, st: config.Settings, agent_search: bool = False) -> list[dict
                 row["agent_prs_12m"] = agent_counts(api)
         res.append(row)
         print(json.dumps(row), file=sys.stderr, flush=True)
-    return sorted(res, key=lambda r: r.get("score") or -1, reverse=True)
+    return sorted(res, key=lambda r: r["score"] if r.get("score") is not None else -1, reverse=True)
 
 
 def main():

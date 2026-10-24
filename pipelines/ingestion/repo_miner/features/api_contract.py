@@ -31,7 +31,8 @@ import tempfile
 from shutil import which
 
 import config
-import gitio
+import gitio  # noqa: F401  (kept importable here for callers and tests)
+from features import deps_cve
 
 # severity ordering for aggregation
 _RANK = {None: -1, "additive": 0, "breaking": 1}
@@ -39,17 +40,23 @@ _UNRANK = {0: "additive", 1: "breaking"}
 
 
 def compute(repo: str, base: str, head: str, changed: list[str],
-            st: config.Settings) -> dict:
+            st: config.Settings, renames: dict | None = None) -> dict:
+    """renames: {new_path: old_path}, so a spec renamed in the PR is read at its old path on the
+    base side instead of looking brand new. None keeps every path as it is."""
     if not getattr(st, "enable_api_contract", True):
         return {"api_contract_change": None}
 
+    renames = renames or {}
     best = -1                       # highest severity seen; -1 = nothing usable
-    saw_verdict = False
+    unobserved = False              # a spec changed whose verdict could not be had
     for path in changed:
         if not _candidate_ext(path):
             continue                # cheap prefilter: skip non-spec files
-        head_content = gitio.file_content_at(repo, head, path)
-        base_content = gitio.file_content_at(repo, base, path)
+        head_content, head_ok = deps_cve._read_at(repo, head, path)
+        base_content, base_ok = deps_cve._read_at(repo, base, renames.get(path, path))
+        if not (head_ok and base_ok):
+            unobserved = True       # git could not be read: neither "removed" nor "new"
+            continue
         sniff = head_content if head_content is not None else base_content
         kind = _spec_kind(path, sniff)
         if kind is None:
@@ -62,11 +69,14 @@ def compute(repo: str, base: str, head: str, changed: list[str],
         else:
             verdict = _diff_one(kind, base_content, head_content, path, st)
 
-        if verdict is not None:
-            saw_verdict = True
+        if verdict is None:
+            unobserved = True           # tool missing or failed: not an "additive" for this spec
+        else:
             best = max(best, _RANK[verdict])
 
-    if not saw_verdict:
+    if best == _RANK["breaking"]:
+        return {"api_contract_change": "breaking"}   # one observed break stands whatever else is unknown
+    if unobserved or best < 0:
         return {"api_contract_change": None}
     return {"api_contract_change": _UNRANK.get(best)}
 
@@ -126,22 +136,24 @@ def _oasdiff(base_content: str, head_content: str, path: str) -> str | None:
             ["oasdiff", "breaking", b, h, "-f", "json"],
             capture_output=True, text=True,
         )
-        # oasdiff prints a JSON array of breaking changes; empty => additive.
+        # oasdiff prints a JSON array of breaking changes and exits 0 either way; a non-zero exit
+        # is a failure (a spec it could not load), which has no verdict.
+        if proc.returncode != 0:
+            return None
         out = (proc.stdout or "").strip()
         if not out:
             return "additive"
         try:
             data = json.loads(out)
         except json.JSONDecodeError:
-            # tool ran but output wasn't parseable JSON; fall back on exit code
-            return "breaking" if proc.returncode not in (0,) else "additive"
+            return None
         if isinstance(data, list):
             return "breaking" if len(data) > 0 else "additive"
         if isinstance(data, dict):
             # some versions wrap results; look for a non-empty breaking list
             items = data.get("breakingChanges") or data.get("changes") or []
             return "breaking" if items else "additive"
-        return "additive"
+        return None
     except Exception:
         return None
     finally:
@@ -192,17 +204,26 @@ def _buf_breaking(base_content: str, head_content: str, path: str) -> str | None
             with open(os.path.join(d, "buf.yaml"), "w", encoding="utf-8") as fh:
                 fh.write("version: v1\n")
         proc = subprocess.run(
-            ["buf", "breaking", head_dir, "--against", base_dir],
+            ["buf", "breaking", head_dir, "--against", base_dir, "--error-format", "json"],
             capture_output=True, text=True,
         )
-        # buf exits non-zero and lists changes when breaking changes are found.
+        # buf exits 100 and prints one JSON object per finding. A finding of type COMPILE is a
+        # spec that does not build, which is a failure, not a breaking change.
         if proc.returncode == 0:
             return "additive"
-        out = (proc.stdout or "") + (proc.stderr or "")
-        # distinguish "breaking changes found" from "buf failed to build"
-        if re.search(r"(breaking|wire|changed|deleted|removed)", out, re.IGNORECASE):
+        if proc.returncode != 100:
+            return None
+        kinds = []
+        for line in (proc.stdout or "").splitlines():
+            if not line.strip():
+                continue
+            try:
+                kinds.append(str(json.loads(line).get("type", "")).upper())
+            except (json.JSONDecodeError, AttributeError):
+                return None
+        if kinds and all(k not in ("COMPILE", "") for k in kinds):
             return "breaking"
-        return None            # build/config error, not a real verdict
+        return None
     except Exception:
         return None
     finally:

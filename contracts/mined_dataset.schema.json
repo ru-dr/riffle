@@ -2,8 +2,8 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://riffle.dev/contracts/mined_dataset.schema.json",
   "title": "Riffle repo miner training row",
-  "x-riffle-version": "1.2",
-  "x-riffle-miner-version": "5.0.0",
+  "x-riffle-version": "1.3",
+  "x-riffle-miner-version": "7.0.0",
   "description": "One row of the training dataset written by the repo miner (pipelines/ingestion/repo_miner, .parquet or .jsonl): one closed PR, merged or unmerged (ADR 0009), with every feature computed from the PR as it opened (ADR 0010) and its outcome labels. Labels and the counts behind them are outcomes and never model inputs. The nine repo-local columns are defined in mined_features.schema.json. null means not observed or not enough history, never 0. Every column is present on every row; a stage that is turned off leaves its columns null. Since 1.1 rows also carry provenance (miner_version, miner_commit, llm_model, llm_prompt_version) and domain; these are optional in the schema so rows mined before miner 4.0.0 still validate, and the miner writes them on every row. Since 1.2: outcome_3class, nowhere_reason, ci_fail_flaky_only and author_confirmed_maintainer, optional in the schema for older rows; the miner writes them on every row.",
   "type": "object",
   "additionalProperties": false,
@@ -214,7 +214,8 @@
         "number",
         "null"
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-diff-derived": true
     },
     "EXP": {
       "type": [
@@ -228,70 +229,80 @@
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "FIX": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-diff-derived": true
     },
     "LA": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "LD": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "LT": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-diff-derived": true
     },
     "ND": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "NF": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "NS": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "REXP": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "SEXP": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "agent_boilerplate": {
       "type": [
@@ -336,7 +347,8 @@
         "breaking",
         null
       ],
-      "description": "Source 5 API contract diff. Computed in `pipelines/ingestion/repo_miner/features/api_contract.py`."
+      "description": "Source 5 API contract diff. Computed in `pipelines/ingestion/repo_miner/features/api_contract.py`.",
+      "x-riffle-diff-derived": true
     },
     "author_account_age_days": {
       "type": [
@@ -364,7 +376,8 @@
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "author_email": {
       "type": [
@@ -378,7 +391,8 @@
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "author_is_bot": {
       "type": [
@@ -413,7 +427,8 @@
         "moved",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "base_behind_by": {
       "type": [
@@ -459,14 +474,16 @@
         "number",
         "null"
       ],
-      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`.",
+      "x-riffle-diff-derived": true
     },
     "ccn_delta": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`.",
+      "x-riffle-diff-derived": true
     },
     "change_intent": {
       "enum": [
@@ -480,14 +497,16 @@
         "chore",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "changes_public_api_signature": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "changes_requested_reviews": {
       "type": [
@@ -534,14 +553,16 @@
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "cochange_partners_missing": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "concurrent_open_prs_same_files": {
       "type": [
@@ -565,7 +586,8 @@
         "both",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "created_at": {
       "type": [
@@ -591,7 +613,8 @@
         "both",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "declared_hotfix": {
       "type": [
@@ -605,21 +628,24 @@
         "number",
         "null"
       ],
-      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`.",
+      "x-riffle-diff-derived": true
     },
     "docs_only": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "entropy_pctile_repo": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "error_handling_change": {
       "enum": [
@@ -629,21 +655,24 @@
         "modified",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "exception_swallowed": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "expected_test_cochange_missing": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "feature_flag_guarding": {
       "enum": [
@@ -653,28 +682,32 @@
         "unguarded",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "frac_generated_lines": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "frac_test_lines": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "ghsa_malware_dep": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "ghsa_max_severity_introduced": {
       "enum": [
@@ -684,14 +717,16 @@
         "CRITICAL",
         null
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "hardcoded_secret_added": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`.",
+      "x-riffle-diff-derived": true
     },
     "has_agents_md": {
       "type": [
@@ -754,14 +789,16 @@
         "modified",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "la_norm": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-diff-derived": true
     },
     "label_abandoned": {
       "type": [
@@ -851,157 +888,180 @@
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "ld_norm": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-diff-derived": true
     },
     "llm_touches_authn_authz": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_NDEV": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_NUC": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_abandoned_lines_share": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_ccn_changed_func": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_file_churn_365d": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_file_churn_90d": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_file_complexity_ccn": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_file_fix_density": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_file_hotspot_score": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_file_minor_contributor_count": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_file_post_merge_ci_fail_rate": {
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row.",
+      "x-riffle-diff-derived": true
     },
     "max_file_revert_density": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_file_top_author_share": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_fix_decay_density": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_hotfix_count_365d": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_hunk_fix_proximity": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_mod_lines_distinct_authors": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_mod_lines_prior_fix_share": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_recent_merge_burst_7d": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_revert_decay_density": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "max_sim_open_prs": {
       "type": [
@@ -1022,49 +1082,56 @@
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "mean_file_age_days": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "mean_file_fix_density": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "mean_file_revert_density": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "mean_hunk_fix_proximity": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`.",
+      "x-riffle-diff-derived": true
     },
     "mean_mod_lines_self_authored_share": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`.",
+      "x-riffle-diff-derived": true
     },
     "median_mod_line_age_days_median": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`.",
+      "x-riffle-diff-derived": true
     },
     "merge_via": {
       "enum": [
@@ -1072,7 +1139,8 @@
         "landed_commit",
         null
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-non-input": true
     },
     "merged_at": {
       "type": [
@@ -1087,38 +1155,44 @@
         "reversible",
         null
       ],
-      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`.",
+      "x-riffle-diff-derived": true
     },
     "min_days_since_last_fix": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "min_days_since_last_revert": {
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`. Type not pinned yet: null in every sampled row.",
+      "x-riffle-diff-derived": true
     },
     "min_file_hotspot_rank": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "min_hotspot_rank_touched": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-diff-derived": true
     },
     "min_mod_line_age_days_min": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`."
+      "description": "Source 3 line-level blame. Computed in `pipelines/ingestion/repo_miner/features/line_history.py`.",
+      "x-riffle-diff-derived": true
     },
     "mined_at": {
       "type": "string",
@@ -1129,77 +1203,88 @@
         "number",
         "null"
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "n_deps_downgraded": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "n_deps_upgraded": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "n_files_added": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "n_files_removed": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "n_files_renamed": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "n_funcs_modified": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`.",
+      "x-riffle-diff-derived": true
     },
     "n_major_bumps": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "n_topk_hotspots_touched": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-diff-derived": true
     },
     "new_env_or_config_key": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`.",
+      "x-riffle-diff-derived": true
     },
     "nf_pctile_repo": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "null_handling_change": {
       "enum": [
@@ -1209,21 +1294,24 @@
         "new_nullable_deref",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "numeric_money_precision": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "observability_delta": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`.",
+      "x-riffle-diff-derived": true
     },
     "observed_through": {
       "type": [
@@ -1240,50 +1328,60 @@
         "final",
         null
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-non-input": true
     },
     "osv_ghsa_disagreement": {
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. Type not pinned yet: null in every sampled row."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`. Type not pinned yet: null in every sampled row.",
+      "x-riffle-diff-derived": true
     },
     "osv_vulns_fixed": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "osv_vulns_introduced": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "patch_missing_files": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "path_detection_lag_days": {
-      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row.",
+      "x-riffle-diff-derived": true
     },
     "path_failure_mode_ci": {
-      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row.",
+      "x-riffle-diff-derived": true
     },
     "path_failure_mode_hotfix": {
-      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row.",
+      "x-riffle-diff-derived": true
     },
     "path_failure_mode_revert": {
-      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row.",
+      "x-riffle-diff-derived": true
     },
     "path_size_pctile": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`."
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`.",
+      "x-riffle-diff-derived": true
     },
     "post_open_commits": {
       "type": [
@@ -1308,7 +1406,8 @@
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "refactor_vs_behavior": {
       "enum": [
@@ -1317,7 +1416,8 @@
         "mixed",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "release_cycle_position": {
       "type": [
@@ -1369,17 +1469,20 @@
         "modified",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "retry_timeout_idempotency_change": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "revealed_path_scrutiny": {
-      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
+      "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row.",
+      "x-riffle-diff-derived": true
     },
     "revert_window_closed": {
       "type": [
@@ -1393,42 +1496,48 @@
         "integer",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "security_sensitive_ops": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "semantic_risk_1to5": {
       "type": [
         "integer",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "semgrep_cwe_top25_new": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`.",
+      "x-riffle-diff-derived": true
     },
     "semgrep_findings_new": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`.",
+      "x-riffle-diff-derived": true
     },
     "semgrep_high_conf_security_new": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`."
+      "description": "Source 4d scanners. Computed in `pipelines/ingestion/repo_miner/features/scanners.py`.",
+      "x-riffle-diff-derived": true
     },
     "similar_pr_bad_rate": {
       "description": "Repo-local mined feature (mined_features.schema.json). Computed in `pipelines/ingestion/repo_miner/features/repo_local.py`. Type not pinned yet: null in every sampled row."
@@ -1445,14 +1554,16 @@
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "sum_hotfix_count_365d": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`."
+      "description": "Source 2 repo history. Computed in `pipelines/ingestion/repo_miner/features/history.py`.",
+      "x-riffle-diff-derived": true
     },
     "targets_default_branch": {
       "type": [
@@ -1469,14 +1580,16 @@
         "aligned",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "test_only": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`."
+      "description": "Source 4a/4b diff and paths. Computed in `pipelines/ingestion/repo_miner/features/diff_stats.py`.",
+      "x-riffle-diff-derived": true
     },
     "tests_added_for_behavior_change": {
       "enum": [
@@ -1485,14 +1598,16 @@
         "n_a",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "time_handling_change": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "title_len": {
       "type": [
@@ -1506,56 +1621,64 @@
         "boolean",
         "null"
       ],
-      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`.",
+      "x-riffle-diff-derived": true
     },
     "touches_ci_config": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`.",
+      "x-riffle-diff-derived": true
     },
     "touches_codeowners_or_riffle_yml": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`.",
+      "x-riffle-diff-derived": true
     },
     "touches_dep_manifest": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`.",
+      "x-riffle-diff-derived": true
     },
     "touches_infra": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`.",
+      "x-riffle-diff-derived": true
     },
     "touches_lockfile": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`.",
+      "x-riffle-diff-derived": true
     },
     "touches_migration": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`."
+      "description": "Source 4b path flag. Computed in `pipelines/ingestion/repo_miner/config.py`.",
+      "x-riffle-diff-derived": true
     },
     "touches_topk_hotspot": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Row metadata or Source 4c PR metadata. Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-diff-derived": true
     },
     "transaction_boundary_change": {
       "enum": [
@@ -1566,57 +1689,66 @@
         "narrowed",
         null
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "unrelated_change_share": {
       "type": [
         "integer",
         "null"
       ],
-      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`."
+      "description": "Source 6 LLM flag (diff only). Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-diff-derived": true
     },
     "unused_import_or_dead_code_added": {
       "type": [
         "number",
         "null"
       ],
-      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`."
+      "description": "Source 5 deterministic checks. Computed in `pipelines/ingestion/repo_miner/features/deterministic.py`.",
+      "x-riffle-diff-derived": true
     },
     "vuln_has_fix_available": {
       "type": [
         "boolean",
         "null"
       ],
-      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`."
+      "description": "Source 4e dependencies and CVEs. Computed in `pipelines/ingestion/repo_miner/features/deps_cve.py`.",
+      "x-riffle-diff-derived": true
     },
     "miner_version": {
       "type": "string",
-      "description": "Repo miner version that wrote the row (version.py). Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Repo miner version that wrote the row (version.py). Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-non-input": true
     },
     "miner_commit": {
       "type": "string",
-      "description": "The miner's git commit (12 characters), with -dirty when its files had uncommitted changes, or unknown. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "The miner's git commit (12 characters), with -dirty when its files had uncommitted changes, or unknown. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-non-input": true
     },
     "llm_model": {
       "type": [
         "string",
         "null"
       ],
-      "description": "LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "LLM model the row's LLM columns were asked of; null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-non-input": true
     },
     "llm_prompt_version": {
       "type": [
         "string",
         "null"
       ],
-      "description": "Hash of the LLM prompts and schemas (flags and close-reason classifier); null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`."
+      "description": "Hash of the LLM prompts and schemas (flags and close-reason classifier); null when the LLM was off. Provenance (proposal 1.7, 1.8). Computed in `pipelines/ingestion/repo_miner/mine_repo.py`.",
+      "x-riffle-non-input": true
     },
     "domain": {
       "type": [
         "string",
         "null"
       ],
-      "description": "Dataset domain of the repository (ADR 0011), from its [domain: NAME] tag in the repos file; null when untagged. Computed in `pipelines/ingestion/repo_miner/build_dataset.py`."
+      "description": "Dataset domain of the repository (ADR 0011), from its [domain: NAME] tag in the repos file; null when untagged. Computed in `pipelines/ingestion/repo_miner/build_dataset.py`.",
+      "x-riffle-non-input": true
     },
     "outcome_3class": {
       "enum": [
@@ -1651,6 +1783,22 @@
         "null"
       ],
       "description": "The PR author had merged or closed someone else's PR before this one opened, from the repo's timelines (proposal 2.2). author_association shows today's status and hides private org members, so this is what decides outside contributors. Null when no timelines were read. Computed in `pipelines/ingestion/repo_miner/maintainers.py`."
+    },
+    "llm_diff_truncated": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "True when the LLM diff size cap dropped or cut code the model would have read; false when the whole diff was shown; null when no LLM call was made (off, skipped, empty or a reused answer). Metadata about the call, never a model input. Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`.",
+      "x-riffle-non-input": true
+    },
+    "szz_window_closed": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "True when the SZZ observation window for the PR has closed: `szz_maturity_days` (default 90) had passed between the PR's merge and the observation cutoff (`observed_through`), so a `label_szz_bug` of false is mature. False while the window is still open: a fix that would later be traced to this PR may not exist yet. Null when the SZZ label was not computed (SZZ off, an unmerged PR) or `szz_maturity_days` is 0 (no cap, so no window). Never a model input. Computed in `pipelines/ingestion/repo_miner/labels.py`.",
+      "x-riffle-non-input": true
     }
   }
 }

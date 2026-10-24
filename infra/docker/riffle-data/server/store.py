@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import time
 import tempfile
 import shutil
 
 # keys (below the PC's name) the VM keeps a local copy of
+CACHE_MAX_BYTES = int(os.environ.get("RIFFLE_CACHE_MAX_BYTES", 20 * 1024 ** 3))   # downloaded big files; the oldest go first
+CACHE_KEEP_S = 600                                          # a file used this recently may be open in a request: kept
 MIRRORED = ("*/logs/*.log", "*/logs/*.trace.jsonl", "*/health/*.json", "*/run.json")
 
 
@@ -81,7 +84,41 @@ class Store:
                 raise
             with open(stamp, "w") as fh:
                 fh.write(str(blob.generation))
+        else:
+            os.utime(dest)                                  # a use, for the eviction order
+        self.evict(dest)
         return dest
+
+    def evict(self, keep: str | None = None, limit: int | None = None) -> int:
+        """Delete the least recently used cached downloads until the cache fits `limit` bytes (they are re-downloaded when
+        asked for again). The file just fetched and anything used in the last few minutes stay. Returns bytes freed."""
+        limit = CACHE_MAX_BYTES if limit is None else limit
+        files, total = [], 0
+        for dirpath, _d, names in os.walk(self.cache):
+            for name in names:
+                path = os.path.join(dirpath, name)
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    continue
+                total += st.st_size
+                if not name.endswith(".gen"):
+                    files.append((st.st_mtime, st.st_size, path))
+        freed, now = 0, time.time()
+        for mtime, size, path in sorted(files):
+            if total - freed <= limit:
+                break
+            if path == keep or now - mtime < CACHE_KEEP_S:
+                continue
+            try:
+                os.remove(path)
+                freed += size
+                if os.path.exists(path + ".gen"):
+                    freed += os.path.getsize(path + ".gen")
+                    os.remove(path + ".gen")
+            except OSError:
+                pass
+        return freed
 
     def open_local(self, key: str):
         """The local copy, or None (a big file that lives only in the bucket)."""

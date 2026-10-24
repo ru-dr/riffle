@@ -76,7 +76,10 @@ def main(argv: list[str] | None = None) -> int:
             print("tokens:", "restored" if backup.pull(store, path) else "kept (this disk already has tokens, or the bucket has none)")
             print("rebuilt:", backup.restore_all(store, index.Index(os.path.join(DATA, "index.db"))))
         else:
-            print(f"indexed {index.Index(os.path.join(DATA, 'index.db')).rebuild(os.path.join(DATA, 'store'))} files")
+            store = _store()
+            extra = [(b.name, b.size, b.updated.timestamp() if b.updated else None)
+                     for b in store._bucket.list_blobs()] if store._bucket is not None else []     # the big files live only there
+            print(f"indexed {index.Index(os.path.join(DATA, 'index.db')).rebuild(os.path.join(DATA, 'store'), extra)} files")
         if args.cmd in ("add-pc", "add-reader", "add-admin", "revoke", "issue-split", "revoke-split"):
             backup.push(_store(), path)
     except ValueError as e:

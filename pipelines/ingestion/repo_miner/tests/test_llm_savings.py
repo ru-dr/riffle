@@ -103,7 +103,6 @@ def test_skipped_rows_resolve_to_null_without_touching_the_breaker():
     fetched = L.fetch("/nonexistent", "a", "b", st, skip="scope")
     assert fetched["status"] == "skipped"
     assert all(v is None for v in L.resolve(fetched, st).values())
-    assert not L.last_call_failed()
 
 
 # ---- close reason: rules first -----------------------------------------------

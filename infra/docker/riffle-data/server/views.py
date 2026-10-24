@@ -15,6 +15,7 @@ import decimal
 import json
 import os
 import re
+import threading
 
 MAX_ROWS = 500
 MAX_SCAN_BYTES = 300 * 1024 ** 2
@@ -58,12 +59,30 @@ def jsonable(v):
 
 # -- parquet -----------------------------------------------------------------
 
+class Busy(Exception):
+    """Every parquet slot is in use: another request is reading the tables right now."""
+
+
+MAX_PARQUET_READERS = 2                                     # each connection may use memory_limit, so this bounds the whole server
+_SLOTS = threading.BoundedSemaphore(MAX_PARQUET_READERS)
+
+
 class Parquet:
     """One or more parquet files (the same table from several PCs) as one relation."""
 
     def __init__(self, paths: list[str], allowed_dirs: list[str]):
         import duckdb
+        if not _SLOTS.acquire(timeout=10):
+            raise Busy("the data viewer is busy with other requests; try again in a moment")
         self.paths = paths
+        self.con = None
+        try:
+            self._open(duckdb, paths, allowed_dirs)
+        except BaseException:
+            self.close()
+            raise
+
+    def _open(self, duckdb, paths, allowed_dirs):
         self.con = duckdb.connect(":memory:")
         self.con.execute("SET memory_limit='1GB'")
         self.con.execute("SET threads=2")
@@ -72,7 +91,10 @@ class Parquet:
         self.con.execute("SET enable_external_access=false")
         listing = ", ".join("'" + p.replace("'", "''") + "'" for p in paths)
         self.rel = f"read_parquet([{listing}], union_by_name=true, filename=true)"
-        desc = self.con.execute(f"DESCRIBE SELECT * FROM {self.rel}").fetchall()
+        try:
+            desc = self.con.execute(f"DESCRIBE SELECT * FROM {self.rel}").fetchall()
+        except duckdb.Error as e:
+            raise ValueError(f"cannot read the parquet file: {str(e)[:200]}") from None
         self.columns = [(r[0], r[1]) for r in desc]
         self.types = dict(self.columns)
 
@@ -169,7 +191,12 @@ class Parquet:
         return out
 
     def close(self) -> None:
-        self.con.close()
+        if self.con is not None:
+            self.con.close()
+            self.con = None
+        if not getattr(self, "_released", False):
+            self._released = True
+            _SLOTS.release()
 
 
 # -- text, JSON lines, JSON ----------------------------------------------------

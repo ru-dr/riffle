@@ -13,8 +13,11 @@ import gitio
 
 
 def _entropy(per_file_changes: list[int]) -> float:
+    # only files with changed lines share in the change: a binary or
+    # rename-only file (0 lines) must not widen the normalising denominator
+    per_file_changes = [c for c in per_file_changes if c > 0]
     total = sum(per_file_changes)
-    if total <= 0 or len(per_file_changes) <= 1:
+    if len(per_file_changes) <= 1:
         return 0.0
     ent = 0.0
     for c in per_file_changes:
@@ -65,17 +68,11 @@ def compute(repo: str, base: str, head: str, st: config.Settings) -> dict:
         # numstat (no textual diff). Count those raw markers directly — not the
         # coerced numbers the rest of the pipeline sees (where "-" became 0),
         # and not "0\t0" rows, which are real zero-change renames/mode changes.
-        "patch_missing_files": _count_undiffable(repo, base, head),
+        "patch_missing_files": gitio.count_undiffable(repo, base, head),
     }
 
     # file status counts + missing patches
-    status = gitio._run(
-        repo, "diff", "--name-status", "-M", f"{base}...{head}", check=False
-    )
-    for line in status.splitlines():
-        if not line.strip():
-            continue
-        code = line.split("\t")[0]
+    for code, _old, _path in gitio.diff_name_status(repo, base, head):
         if code.startswith("A"):
             out["n_files_added"] += 1
         elif code.startswith("D"):
@@ -95,21 +92,3 @@ def compute(repo: str, base: str, head: str, st: config.Settings) -> dict:
 
     # la_norm / ld_norm need LT (base size of modified files) — filled by history
     return out
-
-
-def _count_undiffable(repo: str, base: str, head: str) -> int:
-    """
-    Count files git couldn't produce a textual diff for (binary or too large).
-    git's numstat prints a literal '-' in both the added and deleted columns
-    for exactly these files, so we read the raw numstat and count rows whose
-    first two tab-separated fields are both '-'. This is git's own ground-truth
-    marker; '0\\t0' rows (pure renames / mode changes) are NOT counted.
-    """
-    out = gitio._run(repo, "diff", "--numstat", "-M", f"{base}...{head}",
-                     check=False)
-    count = 0
-    for line in out.splitlines():
-        cols = line.split("\t")
-        if len(cols) >= 2 and cols[0] == "-" and cols[1] == "-":
-            count += 1
-    return count

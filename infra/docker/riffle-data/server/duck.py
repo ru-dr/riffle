@@ -28,7 +28,7 @@ import json
 import os
 import sys
 
-from tables import TABLES, plan
+from tables import TABLES, finished, plan
 
 
 class LocalSource:
@@ -86,19 +86,19 @@ def finished_pcs(source, keys: list[str], version: str, split: str) -> set[str]:
         parts = key.split("/")
         if len(parts) == 4 and parts[1:] == [version, split, "run.json"]:
             try:
-                if json.loads(source.text(key)).get("reason") == "batch done":
+                if finished(json.loads(source.text(key))):
                     out.add(parts[0])
             except (OSError, ValueError):
                 continue
     return out
 
 
-def connect(source, version: str, split: str, include_unfinished: bool = False, db: str = ":memory:"):
+def connect(source, version: str, split: str, include_unfinished: bool = False, db: str = ":memory:", n: int | None = None):
     """A DuckDB connection with the three views. Returns (connection, notes)."""
     import duckdb
     keys = source.keys()
     allowed = None if include_unfinished else finished_pcs(source, keys, version, split)
-    files, notes = plan(keys, version, split, allowed)
+    files, notes = plan(keys, version, split, allowed, n)
     con = duckdb.connect(db)
     for table, _pat in TABLES:
         if not files[table]:
@@ -118,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--project", default=os.environ.get("GOOGLE_CLOUD_PROJECT"))
     ap.add_argument("--local", help="read the store's disk (a directory of <pc>/<version>/<split>/...) instead of a bucket")
     ap.add_argument("--cache", default=os.path.expanduser("~/.cache/riffle-data"))
+    ap.add_argument("--n", type=int, default=None, help="the split's current number of PCs (leaves out files of an earlier plan)")
     ap.add_argument("--include-unfinished", action="store_true")
     ap.add_argument("--db", default=":memory:", help="write a DuckDB file holding the views, to open later")
     ap.add_argument("-c", "--command", help="SQL to run; prints the result")
@@ -128,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         source = GcsSource(args.bucket, args.cache, args.project)
     else:
         sys.exit("pass --bucket (or set RIFFLE_BUCKET) or --local DIR")
-    con, notes = connect(source, args.version, args.split, args.include_unfinished, args.db)
+    con, notes = connect(source, args.version, args.split, args.include_unfinished, args.db, args.n)
     for n in notes:
         print(f"[duck] {n}", file=sys.stderr)
     views = [r[0] for r in con.execute("SELECT view_name FROM duckdb_views() WHERE NOT internal").fetchall()]

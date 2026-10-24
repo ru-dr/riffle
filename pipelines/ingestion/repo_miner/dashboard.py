@@ -8,11 +8,14 @@ laptop on the same network can open the printed URL; the page polls
 
 Read-only by design: nothing on the page can start, stop or change a run.
 The URL carries a random key, new on every launch, so other people on the
-network can't watch without it. It binds to all interfaces of this machine;
-don't port-forward it to the internet.
+network can't watch without it. It is plain HTTP (the key travels in the URL, in
+the clear) and binds to all interfaces of this machine, so use it on a network you
+trust and don't port-forward it to the internet. Each connection has a socket
+timeout, so an idle or half-open client can't hold a thread for ever.
 
     RIFFLE_DASHBOARD=0        disable
     RIFFLE_DASHBOARD_PORT=N   first port to try (default 8765)
+    RIFFLE_DASHBOARD_BIND=ADDR  interface to bind (default 0.0.0.0; 127.0.0.1 = this computer only)
 """
 from __future__ import annotations
 
@@ -39,6 +42,9 @@ def lan_ip() -> str:
         return "127.0.0.1"
     finally:
         s.close()
+
+
+REQUEST_TIMEOUT = 15.0                              # seconds a connection may sit idle
 
 
 class Dashboard:
@@ -72,7 +78,7 @@ class Dashboard:
         handler = _make_handler(self)
         for port in range(self.port, self.port + 20):
             try:
-                self._server = ThreadingHTTPServer(("0.0.0.0", port), handler)
+                self._server = ThreadingHTTPServer((os.getenv("RIFFLE_DASHBOARD_BIND") or "0.0.0.0", port), handler)
                 self.port = port
                 break
             except OSError:
@@ -92,6 +98,8 @@ class Dashboard:
 
 def _make_handler(dash: Dashboard):
     class Handler(BaseHTTPRequestHandler):
+        timeout = REQUEST_TIMEOUT                  # socket timeout per connection (a stalled client frees its thread)
+
         def log_message(self, *args) -> None:      # keep the TUI's terminal clean
             pass
 

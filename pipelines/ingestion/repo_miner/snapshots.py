@@ -130,6 +130,28 @@ class Timeline:
                 continue
             self.items.append((when, ev.get("event"), self._role(ev, when), ev))
         self.items.sort(key=lambda x: x[0])
+        # review id -> (when dismissed, the state it had before). Captures from before this
+        # was stored have none, so a review they show as "dismissed" is of unknown state
+        self.dismissals: dict = {}
+        for when, kind, _role, ev in self.items:
+            d = ev.get("dismissed_review")
+            if kind == "review_dismissed" and isinstance(d, dict) and d.get("review_id") is not None:
+                self.dismissals.setdefault(d["review_id"], (when, str(d.get("state") or "").lower()))
+
+    def review_state(self, ev: dict, t: datetime) -> str | None:
+        """A review's state as it stood at t. GitHub reports a dismissed review as
+        "dismissed" for good, which would show a changes-requested review as nothing in
+        every earlier snapshot, so the state before the dismissal comes from the
+        review_dismissed event. None when it cannot be told (a dismissed review in a
+        capture without that event)."""
+        state = str(ev.get("state", "")).lower()
+        d = self.dismissals.get(ev.get("id")) if ev.get("id") is not None else None
+        if d is not None:
+            when, before = d
+            if t >= when:
+                return "dismissed"
+            return state if state != "dismissed" else (before if before and before != "dismissed" else None)
+        return None if state == "dismissed" else state
 
     def _role(self, ev: dict, when: datetime) -> str:
         if ev.get("event") == "committed":
@@ -164,15 +186,16 @@ def open_segments(record: dict, tl: Timeline, grace: timedelta) -> list[tuple[da
     start = opened + grace
     if ready and (not to_draft or ready[0] < to_draft[0]):
         start = ready[0]                      # opened as a draft
-    elif pr.get("draft") and not ready:
-        return []                             # never left draft
+    elif pr.get("draft") and not ready and not to_draft:
+        return []                             # opened as a draft and never left it
     segs, cur = [], start
     for w, k in kinds:
-        if k == "closed" and cur is not None and w < end and w > cur:
-            segs.append((cur, w))
-            cur = None
+        if k == "closed" and cur is not None and w < end:
+            if w > cur:
+                segs.append((cur, w))
+            cur = None                        # a close inside the grace window leaves no period
         elif k == "reopened" and cur is None and w < end:
-            cur = w
+            cur = max(w, start)
     if cur is not None and end > cur:
         segs.append((cur, end))
     return segs
@@ -199,7 +222,7 @@ def candidates(record: dict, tl: Timeline, segs, st: config.Settings) -> list[tu
     for when, kind, role, ev in tl.items:
         if not in_seg(when) or role == "bot":
             continue
-        state = str(ev.get("state", "")).lower()
+        state = (tl.review_state(ev, when) or "") if kind == "reviewed" else ""
         if role == "maintainer" and kind in ("commented", "reviewed") and not seen_reply:
             out.append((when, "first_maintainer_reply", role))
             seen_reply = True
@@ -274,8 +297,9 @@ class Context:
         self.segs = open_segments(record, self.tl, self.grace)
         self.head_line = [(_ts(w), s) for w, s in record.get("head_line") or []]
         self.heads = {h["sha"]: h for h in record.get("heads") or []}
-        self.hist_pr = next((p for p in history.prs
-                             if p["number"] == record.get("pr_number")), None)
+        self.hist_pr = history.by_number.get(record.get("pr_number"))
+        # captures from before the flag existed were made with merge outcomes on
+        self.with_unmerged = bool(record.get("merge_outcome", True))
         self.close = _ts(record["pr"].get("merged_at") or record["pr"].get("closed_at"))
         self.merge_queue_at = min((w for w, k, _r, _e in self.tl.items if k in MERGE_QUEUE_EVENTS),
                                   default=None)
@@ -290,10 +314,15 @@ class Context:
         if sha == self.record.get("open_head"):
             return sha, "open"
         exact = "exact" if self.record.get("pushes") is not None else "approx"
-        if sha in self.heads:
+        if self._usable(sha):
             return sha, exact
-        captured = [s for s in line if s in self.heads]   # latest captured head before t
+        # not captured, or captured without readable features: the latest usable head before t
+        captured = [s for s in line if self._usable(s)]
         return (captured[-1], "capped") if captured else (self.record.get("open_head"), "capped")
+
+    def _usable(self, sha: str | None) -> bool:
+        h = self.heads.get(sha) if sha else None
+        return bool(h) and not h.get("error") and bool(h.get("at_open") or h.get("features"))
 
     def code_at(self, sha: str | None) -> tuple[dict, str | None]:
         h = self.heads.get(sha) if sha else None
@@ -308,7 +337,8 @@ class Context:
         last_human = max([start] + [w for w, *_ in human])
         maint = [x for x in human if x[2] == "maintainer" and x[1] in ("commented", "reviewed")]
         reviews = [x for x in human if x[1] == "reviewed" and x[2] != "author"]
-        state = lambda x: str(x[3].get("state", "")).lower()  # noqa: E731
+        states = [self.tl.review_state(x[3], t) for x in reviews]
+        known = None not in states            # a dismissed review of unknown state hides these two counts
         author_push = [w for w, k, r, _e in human
                        if r == "author" and k in ("committed", "head_ref_force_pushed")]
         first_start = self.segs[0][0]
@@ -328,11 +358,13 @@ class Context:
             "time_since_start_h": round((t - start).total_seconds() / 3600, 2),
             "time_since_last_human_activity_h": round((t - last_human).total_seconds() / 3600, 2),
             "maintainer_replied": bool(maint),
-            "first_maintainer_reply_h": (round((maint[0][0] - first_start).total_seconds() / 3600, 2)
+            # a reply inside the grace window (or before a draft was readied) is at hour 0
+            "first_maintainer_reply_h": (max(0.0, round((maint[0][0] - first_start).total_seconds() / 3600, 2))
                                          if maint else None),
             "review_rounds": len(reviews),
-            "changes_requested_count": sum(1 for x in reviews if state(x) == "changes_requested"),
-            "approvals_count": sum(1 for x in reviews if state(x) == "approved"),
+            "changes_requested_count": (sum(1 for st_ in states if st_ == "changes_requested")
+                                        if known else None),
+            "approvals_count": sum(1 for st_ in states if st_ == "approved") if known else None,
             "commits_since_start": sum(1 for w, k, r, ev in items if k == "committed"
                                        and w > first_start and (ev.get("parents") or 0) <= 1),
             "force_pushes_since_start": sum(1 for w, k, *_ in items
@@ -354,7 +386,7 @@ class Context:
         code, base = self.code_at(sha)
         row.update(code)
         if self.hist_pr is not None:
-            row.update(self.history.at(self.hist_pr, t, self.st, with_unmerged=True))
+            row.update(self.history.at(self.hist_pr, t, self.st, with_unmerged=self.with_unmerged))
         row.update(self.state_at(t))
         key = f"{row.get('repo')}#{row.get('pr_number')}#{trigger}#{_iso(t)}"
         row.update({
@@ -393,24 +425,26 @@ def build(record: dict, at_open: dict, history: merge_signals.History,
                     rows[-1] = r
                 continue
         rows.append(r)
+    # since_prev deltas are taken against the previous candidate in time, before the cap, so a
+    # row's delta never depends on which later rows the cap happens to keep
+    for i, r in enumerate(rows):
+        if i == 0:
+            r.update(new_commits_since_prev=None, new_comments_since_prev=None,
+                     diff_size_change_since_prev=None)
+            continue
+        prev = rows[i - 1]
+        r["new_commits_since_prev"] = r["commits_since_start"] - prev["commits_since_start"]
+        r["new_comments_since_prev"] = sum(
+            r[c] - prev[c] for c in ("maintainer_comment_count", "author_comment_count",
+                                     "other_comment_count"))
+        size = lambda x: ((x.get("LA") or 0) + (x.get("LD") or 0))  # noqa: E731
+        r["diff_size_change_since_prev"] = size(r) - size(prev)
     keep = sorted(range(len(rows)), key=lambda i: (PRIORITY[rows[i]["trigger"]], i))[:MAX_PER_PR]
     rows = [rows[i] for i in sorted(keep)]
-    prev = None
     for i, r in enumerate(rows):
         r["snapshot_index"] = i
         r["snapshot_weight"] = round(1 / len(rows), 6)
         r["moment_bucket"] = moment_bucket(r["trigger"], r["time_since_start_h"])
-        if prev is None:
-            r.update(new_commits_since_prev=None, new_comments_since_prev=None,
-                     diff_size_change_since_prev=None)
-        else:
-            r["new_commits_since_prev"] = r["commits_since_start"] - prev["commits_since_start"]
-            r["new_comments_since_prev"] = sum(
-                r[c] - prev[c] for c in ("maintainer_comment_count", "author_comment_count",
-                                         "other_comment_count"))
-            size = lambda x: ((x.get("LA") or 0) + (x.get("LD") or 0))  # noqa: E731
-            r["diff_size_change_since_prev"] = size(r) - size(prev)
-        prev = r
     return rows
 
 
@@ -437,14 +471,32 @@ def _read_rows(path: str) -> list[dict]:
     return cap.read_jsonl(path)
 
 
-def _write_rows(rows: list[dict], path: str) -> None:
+def _contract_columns(name: str) -> list[str]:
+    """The column names of a miner table's contract, so an empty table still has them."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(6):
+        path = os.path.join(here, "contracts", name)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                return list(json.load(fh).get("properties", {}))
+        here = os.path.dirname(here)
+    return []
+
+
+def _write_rows(rows: list[dict], path: str, columns: list[str] | None = None) -> str:
+    """Write `rows` to `path.tmp` and return that path; the caller renames it into place
+    (os.replace), so a crash never leaves a half-written table. With no rows, the table
+    still carries `columns` (the contract's), so a loader sees an empty table, not one
+    without columns."""
+    tmp = f"{path}.tmp"
     if path.endswith(".parquet"):
         import pandas as pd
-        pd.DataFrame(rows).to_parquet(path, index=False)
+        pd.DataFrame(rows, columns=None if rows else (columns or None)).to_parquet(tmp, index=False)
     else:
-        with open(path, "w", encoding="utf-8") as fh:
+        with open(tmp, "w", encoding="utf-8") as fh:
             for r in rows:
                 fh.write(json.dumps(r, default=str) + "\n")
+    return tmp
 
 
 def assemble(dataset_rows: list[dict], raw_root: str, st: config.Settings) -> tuple[list, list]:
@@ -456,15 +508,22 @@ def assemble(dataset_rows: list[dict], raw_root: str, st: config.Settings) -> tu
     at_open = {(r.get("repo"), r.get("pr_number")): r for r in dataset_rows}
     chosen: dict[tuple, tuple] = {}            # (repo, pr) -> (folder, record)
     folders: dict[str, tuple] = {}
+    total = 0
     for d in sorted(glob.glob(os.path.join(raw_root, "*"))):
-        records = cap.read_jsonl(os.path.join(d, cap.CAPTURE_FILE))
+        records = cap.read_jsonl(os.path.join(d, cap.CAPTURE_FILE))      # parsed once
         if not records:
             continue
-        folders[d] = (merge_signals.History(cap.read_jsonl(os.path.join(d, cap.INDEX_FILE))),
-                      maintainers.Evidence.load(d))
+        # a resumed run can write a PR's capture and sidecar twice (the first copy was
+        # written before the checkpoint row): the last one wins, so a PR is never its own
+        # duplicate in the history
+        sidecars = {}
+        for i, sc in enumerate(cap.read_jsonl(os.path.join(d, cap.INDEX_FILE))):
+            sidecars[sc.get("number") if sc.get("number") is not None else ("anon", i)] = sc
+        folders[d] = (merge_signals.History(list(sidecars.values())), maintainers.Evidence.load(d))
+        total += len(records)
         for rec in records:
             chosen[(rec.get("repo"), rec.get("pr_number"))] = (d, rec)
-    dupes = sum(len(cap.read_jsonl(os.path.join(d, cap.CAPTURE_FILE))) for d in folders) - len(chosen)
+    dupes = total - len(chosen)
     if dupes:
         print(f"[snapshots] {dupes} duplicate PR captures across folders; kept one per PR",
               file=sys.stderr)
@@ -490,8 +549,12 @@ def assemble_files(dataset: str, raw_root: str, out: str, commits_out: str,
     runs it when a batch with --snapshots finishes."""
     t0 = time.monotonic()
     snaps, commits = assemble(_read_rows(dataset), raw_root, st or config.Settings())
-    _write_rows(snaps, out)
-    _write_rows(commits, commits_out)
+    # both tables are written beside their targets first and renamed together, so they
+    # are never one run apart (commit rows carry no mined_at to tell them by)
+    tmp_s = _write_rows(snaps, out, _contract_columns("mined_snapshot.schema.json"))
+    tmp_c = _write_rows(commits, commits_out, _contract_columns("mined_commit_features.schema.json"))
+    os.replace(tmp_s, out)
+    os.replace(tmp_c, commits_out)
     return {"snapshots": len(snaps), "prs": len({(r["repo"], r["pr_number"]) for r in snaps}),
             "commits": len(commits), "secs": round(time.monotonic() - t0, 1),
             "out": out, "commits_out": commits_out}

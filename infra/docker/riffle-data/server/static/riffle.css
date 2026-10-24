@@ -394,3 +394,72 @@ pre.log .target{outline:2px solid var(--accent);outline-offset:1px;border-radius
 .g4{grid-template-columns:repeat(4,1fr)}@media (max-width:64rem){.g4{grid-template-columns:1fr 1fr}}
 #bigview .bkpis .stat .v{font-size:30px}
 @media (max-width:48rem){#bigview .bkpis>:last-child:nth-child(odd){grid-column:1/-1}}
+
+/* ---- phones and tablets: a list table is one card per row (app.js grid: "cards"); every cell carries its column's name ----
+   Facts flow into as many columns as fit, the state tag sits beside the title, and an empty fact ("–") is left out.
+   Data grids (the mined tables, the column list, the big picture) keep their columns and scroll sideways. */
+@media (max-width:56rem){
+  .tablewrap:has(>table.cards){overflow:visible;max-height:none}
+  table.t.cards,table.t.cards tbody{display:block}
+  table.t.cards thead{display:none}
+  table.t.cards tr{position:relative;display:grid;grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr));gap:12px 16px;padding:16px;border-bottom:1px solid var(--stroke)}
+  table.t.cards tr:last-child{border-bottom:0}
+  table.t.cards td{display:block;padding:0!important;border:0;background:none!important;white-space:normal;text-align:left!important;
+    min-width:0!important;max-width:none!important;overflow-wrap:anywhere;font-size:14px}
+  table.t.cards td::before{content:attr(data-label);display:block;margin-bottom:3px;font:400 11px/1.4 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--grey)}
+  table.t.cards td:first-child{grid-column:1/-1;font:500 15px/1.35 var(--sans)}
+  table.t.cards tr:has(>td>.tag:only-child)>td:first-child{padding-right:7rem!important}
+  table.t.cards td:first-child::before,table.t.cards td[data-label=""]::before{display:none}
+  table.t.cards td:has(>.tag:only-child){position:absolute;top:16px;right:16px}
+  table.t.cards td:has(>.tag:only-child)::before{display:none}
+  table.t.cards td.wide,table.t.cards td[data-label=""]{grid-column:1/-1}
+  table.t.cards td.hsm,table.t.cards .hsm{display:block}
+  table.t.cards td.nullc,table.t.cards td.nullc.hsm{display:none}
+  table.t.cards .cap .hsm{display:inline}
+  table.t.cards td .btn{margin-left:0!important}
+  table.t.cards .actions{justify-content:flex-start}
+  table.t.cards tr.go{cursor:pointer}table.t.cards tr.go:active{background:var(--wash)}
+  table.t.cards tr.sel{background:var(--wash);box-shadow:inset 3px 0 0 var(--accent)}
+  table.t.cards td.prog .bar{max-width:12rem}
+  table.t.cards details.flags{min-width:0}
+}
+@media (min-width:48rem) and (max-width:56rem){
+  table.t.cards tr{padding:18px 40px}
+  table.t.cards td:has(>.tag:only-child){top:18px;right:40px}
+}
+/* touch: every control is a full thumb's height (44px), and typing never zooms the page (16px fields) */
+@media (pointer:coarse){
+  nav.main a,.btn,.tabs button,.seg button,.selbtn,.toolbar select,.toolbar .tabs button,.toolbar>.grp>.btn,.toolbar .btn,.strip .btn{min-height:44px;height:auto;display:inline-flex;align-items:center;justify-content:center}
+  .btn.link{min-height:44px;padding:0 2px}
+  .opt{min-height:44px}
+  .check{min-height:44px;height:auto}
+  details.flags>summary{min-height:44px;display:flex;align-items:center}
+  input[type=text],input[type=search],input[type=password],select,.field input{font-size:16px}
+  input[type=text],input[type=search],input[type=password]{min-height:44px}
+  .field .btn{min-height:40px}
+}
+@media (hover:none){.btn kbd{display:none}}
+/* phones: the status strip is one row (status left, buttons right); long file names in a title stay readable */
+@media (max-width:40rem){
+  .strip{flex-wrap:nowrap;gap:8px}
+  .strip .livechip{margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .strip .btn{padding:0 12px;flex:none}
+  #v-title,#r-title{font-size:1.55rem;line-height:1.15}
+  #rform input{flex:1 1 12rem}
+  .actpad .toolbar .grp{width:auto}
+}
+/* a search hit as a card: the PC, the file and line as one quiet line, then the matching text */
+@media (max-width:56rem){
+  #hits table.cards tr{grid-template-columns:minmax(0,1fr) auto;gap:4px 12px}
+  #hits table.cards td::before{display:none}
+  #hits table.cards td[data-label=File]{grid-column:1;color:var(--grey)}
+  #hits table.cards td[data-label=Line]{grid-column:2;grid-row:2;font:12px var(--mono);color:var(--grey)}
+  #hits table.cards td[data-label=Line]::before{display:inline;content:"line ";font:inherit;letter-spacing:0;text-transform:none}
+  #hits table.cards td[data-label=Level]:not(:has(.tag)){display:none}
+  #hits table.cards td[data-label=Text]{grid-column:1/-1;margin-top:4px}
+}
+/* alignment: a row's buttons sit on the text line of its other cells; empty notes start where their heading does */
+table.t td:has(>.btn),table.t td:has(>.actions){padding-top:5px;padding-bottom:5px}
+.actions .btn{white-space:nowrap}
+.panel .empty{padding:12px 0 0}
+#repos>.panel{padding-top:4px}

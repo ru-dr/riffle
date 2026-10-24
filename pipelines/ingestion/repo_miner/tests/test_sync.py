@@ -225,3 +225,27 @@ def test_the_status_reports_the_default_model_when_none_is_given(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "opus-test")
     st = bd._run_settings(bd.build_parser().parse_args([]))
     assert st["llm"] is True and st["llm_model"] == config.Settings().llm_model == "opus-test"
+
+
+def test_status_counts_each_repo_only_its_own_checkpointed_rows(tmp_path, monkeypatch):
+    # pc1of6 on 6.13.1: 4,499 nuxt rows left in the shared checkpoint by an earlier run were
+    # reported as vite's, because the repo being mined got every line of the file
+    import types
+    import build_dataset as bd
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "ci_cache").mkdir()
+    (tmp_path / "ci_cache" / "o_vite.selection.json").write_text(json.dumps({"merged": [1] * 50}))
+    out = tmp_path / "d_pc1of2.jsonl"
+    (tmp_path / "d_pc1of2.jsonl.partial.jsonl").write_text(
+        '{"repo": "o/nuxt"}\n' * 30 + '{"repo": "O/Vite"}\n' * 4 + '{"repo": "o/vi')   # the last line was cut by a crash
+    monkeypatch.setattr(bd, "_SYNC", {"args": types.SimpleNamespace(out=str(out), shard="1/2"),
+                                      "counts": {}, "repos": {}})
+    monkeypatch.setattr(bd.sync, "whoami", lambda *a, **k: {"ok": True, "name": "pc1", "split": None})
+    bd._sync_begin([("o", "nuxt", ""), ("o", "vite", ""), ("o", "later", "")], {})
+    bd._sync_mark("o/nuxt", "failed")
+    bd._sync_mark("o/vite", "mining")
+    st = bd._sync_status("heartbeat")
+    assert st["repos"]["o/vite"]["rows"] == 4 and st["prs_remaining"] == 46
+    assert st["repos"]["o/nuxt"] == {"state": "failed", "rows": 30}      # kept for the rerun, still counted
+    assert "rows" not in st["repos"]["o/later"]
+    assert st["prs_done"] == 34

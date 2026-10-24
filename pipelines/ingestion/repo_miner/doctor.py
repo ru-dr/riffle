@@ -888,13 +888,16 @@ _VERSION_RE = re.compile(r'__version__\s*=\s*"([^"]+)"')
 
 
 def auto_update(root: str | None = None, version_file: str | None = None, reexec: bool = True, say=print) -> str:
-    """Keep this checkout on the latest `main`, so every PC mines with the same miner version.
+    """Tell the user when `main` has a newer miner, and with RIFFLE_AUTO_UPDATE=1 keep the checkout on it.
+
+    Pulling and restarting runs new code the user has not reviewed, so it is opt-in: by default this only fetches
+    origin/main and reports (return "available"). With RIFFLE_AUTO_UPDATE=1 every PC mines with the same miner version.
 
     Runs once per launch (the TUI, `doctor.py` and `build_dataset.py` all call it; RIFFLE_UPDATE_CHECKED stops a child
     process from checking again). It fetches origin/main and fast-forwards, and only when that is safe: on `main`, no
     uncommitted changes to tracked files, and the checkout is simply behind. Anything else is reported, never forced, so
     nobody's work is touched. After an update it restarts the program once (RIFFLE_NO_AUTO_UPDATE=1 turns all of this off).
-    Returns off, no-git, offline, current, updated or blocked."""
+    Returns off, no-git, offline, current, available, updated or blocked."""
     if os.environ.get("RIFFLE_NO_AUTO_UPDATE") or os.environ.get("RIFFLE_UPDATE_CHECKED"):
         return "off"
     os.environ["RIFFLE_UPDATE_CHECKED"] = "1"
@@ -922,6 +925,10 @@ def auto_update(root: str | None = None, version_file: str | None = None, reexec
             m = _VERSION_RE.search(g("show", f"{ref}:{rel}").stdout)
             return m.group(1) if m else "?"
         old, new = version_at("HEAD"), version_at("origin/main")
+        if os.environ.get("RIFFLE_AUTO_UPDATE") != "1":
+            say(f"[update] main has a newer miner ({new}, you have {old}). Run `git checkout main && git pull`, "
+                f"or set RIFFLE_AUTO_UPDATE=1 to update on launch.")
+            return "available"
         branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
         dirty = g("status", "--porcelain", "--untracked-files=no").stdout.strip()
         if branch != "main" or dirty:

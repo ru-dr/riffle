@@ -21,6 +21,7 @@ def repos(tmp_path, monkeypatch):
     """origin (bare) + a clone on main at version 1.0.0; origin/main then moves to 1.1.0 from a second clone."""
     monkeypatch.delenv("RIFFLE_NO_AUTO_UPDATE", raising=False)
     monkeypatch.delenv("RIFFLE_UPDATE_CHECKED", raising=False)
+    monkeypatch.setenv("RIFFLE_AUTO_UPDATE", "1")                 # updating is opt-in
     origin, mine, other = tmp_path / "origin.git", tmp_path / "mine", tmp_path / "other"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     subprocess.run(["git", "clone", "-q", str(origin), str(mine)], check=True, capture_output=True)
@@ -77,3 +78,9 @@ def test_it_can_be_switched_off_and_a_missing_origin_is_not_an_error(repos, monk
     monkeypatch.delenv("RIFFLE_NO_AUTO_UPDATE")
     git(repos.mine, "remote", "set-url", "origin", "/nonexistent/path.git")
     assert run(repos)[0] == "offline"                                                 # offline or unreachable: carry on with what is here
+
+
+def test_without_opt_in_it_only_reports(repos, monkeypatch):
+    monkeypatch.delenv("RIFFLE_AUTO_UPDATE")
+    status, out = run(repos)
+    assert status == "available" and "RIFFLE_AUTO_UPDATE=1" in out[0] and '"1.0.0"' in repos.ver.read_text()

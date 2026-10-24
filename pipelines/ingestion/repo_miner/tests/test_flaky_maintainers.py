@@ -132,6 +132,34 @@ def test_unreadable_workflow_runs_fall_back_to_counting_everything():
     assert Fake("o", "r", config.Settings()).check_conclusion("abc", events=("push",))["required"] == "failure"
 
 
+def test_unreadable_workflow_runs_never_claim_a_pass():
+    # with the event filter skipped, automation check runs may be mixed in: a pass is unproven (null)
+    class Fake(GitHubAPI):
+        def _get(self, path, params=None, body=None):
+            if path.endswith("/actions/runs"):
+                return 500, None, {}
+            if path.endswith("/check-runs"):
+                return 200, {"check_runs": [{"id": 1, "name": "build", "conclusion": "success",
+                                              "check_suite": {"id": 5}, "app": {"slug": "github-actions"}}]}, {}
+            return 200, {"statuses": []}, {}
+
+    c = Fake("o", "r", config.Settings()).check_conclusion("abc", events=("push",))
+    assert c["required"] is None and c["optional"] is None
+
+
+def test_a_cut_check_run_page_is_still_unobserved():
+    class Fake(GitHubAPI):
+        def _get(self, path, params=None, body=None):
+            if path.endswith("/actions/runs"):
+                return 200, {"workflow_runs": []}, {}
+            if path.endswith("/check-runs"):
+                return (200, {"check_runs": [{"id": 1, "name": "b", "conclusion": "failure"}] * 100}, {}) \
+                    if params["page"] == 1 else (502, None, {})
+            return 200, {"statuses": []}, {}
+
+    assert Fake("o", "r", config.Settings()).check_conclusion("abc", events=("push",))["required"] is None
+
+
 # ---- maintainers from history ------------------------------------------------------
 
 def _pr(author, events):

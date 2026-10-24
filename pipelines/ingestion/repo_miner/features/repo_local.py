@@ -72,6 +72,15 @@ def sidecar(pr: dict, numstat: list[tuple[int, int, str]], reviews: dict | None,
     }
 
 
+def _path_weights(numstat: list[tuple[int, int, str]]) -> dict[str, int]:
+    weights: dict[str, int] = {}
+    for a, d, p in numstat:
+        weights[p] = weights.get(p, 0) + a + d
+    if weights and not any(weights.values()):
+        weights = {p: 1 for p in weights}
+    return weights
+
+
 def path_size_pctile(repo: str, base: str, numstat: list[tuple[int, int, str]],
                      st: config.Settings) -> float | None:
     """
@@ -79,15 +88,57 @@ def path_size_pctile(repo: str, base: str, numstat: list[tuple[int, int, str]],
     within the lookback) that touched the same files. Each past commit counts
     once per touched file it shares, weighted by this PR's lines in that file.
     Ties count half. null with fewer than min_prior_changes distinct commits.
+
+    Answered from the repo-wide history (history.RepoHistory): only the commits
+    that touch these files are read, not every commit in the lookback.
+    path_size_pctile_scan is the plain scan it must equal.
     """
-    size = sum(a + d for a, d, _ in numstat)
-    weights: dict[str, int] = {}
-    for a, d, p in numstat:
-        weights[p] = weights.get(p, 0) + a + d
+    from features import history
+    weights = _path_weights(numstat)
     if not weights:
         return None
-    if not any(weights.values()):
-        weights = {p: 1 for p in weights}
+    try:
+        reach = history.repo_history(repo).reach(base)
+    except history._NotInUniverse:
+        reach = None
+    if reach is None:
+        return path_size_pctile_scan(repo, base, numstat, st)
+    h = history.repo_history(repo)
+    _full, i0, base_time, excluded = reach
+    start_ts = int((base_time - timedelta(days=st.path_size_lookback_days)).timestamp())
+    i0 = bisect.bisect_left(h.neg_ts, -int(base_time.timestamp()))
+    hi = max(i0, bisect.bisect_right(h.neg_ts, -start_ts))     # positions < hi are at or after start
+    shared: dict[int, set[str]] = {}
+    for p in weights:
+        plist = h.path_pos.get(p)
+        if not plist:
+            continue
+        for pos in plist[bisect.bisect_left(plist, i0):bisect.bisect_left(plist, hi)]:
+            if pos not in excluded:
+                shared.setdefault(pos, set()).add(p)
+    size = sum(a + d for a, d, _ in numstat)
+    below = ties = total = 0.0
+    for pos, ps in shared.items():
+        csize = sum(a + d for a, d, _ in h.rows[pos])
+        w = sum(weights[p] for p in ps)
+        total += w
+        if csize < size:
+            below += w
+        elif csize == size:
+            ties += w
+    if len(shared) < st.path_size_min_prior_changes or total <= 0:
+        return None
+    return round((below + 0.5 * ties) / total, 4)
+
+
+def path_size_pctile_scan(repo: str, base: str, numstat: list[tuple[int, int, str]],
+                          st: config.Settings) -> float | None:
+    """path_size_pctile by walking every commit reachable from base (the
+    reference, and the fallback when base is not in the repo-wide cache)."""
+    size = sum(a + d for a, d, _ in numstat)
+    weights = _path_weights(numstat)
+    if not weights:
+        return None
     base_time = gitio.commit_time(repo, base)
     start = base_time - timedelta(days=st.path_size_lookback_days)
     entries = gitio.iter_commits_with_files(repo, base, before=base_time)
@@ -198,6 +249,14 @@ def compute_repo(rows: list[dict], releases: list[datetime], st: config.Settings
             pool.append(q)
     pool.sort(key=lambda q: q["merged"])
     merged_times = [q["merged"] for q in pool]
+    # how often a past PR was bad within maturity_days of merging, as a prefix
+    # count over merge order: the prior for similar_pr_bad_rate, in the same
+    # unit (bad PRs per PR), and observable by the time each PR is "mature"
+    bad_prefix = [0]
+    for q in pool:
+        bad_prefix.append(bad_prefix[-1] + (
+            1 if _outcome_at(q["row"], q["merged"], q["merged"] + timedelta(days=st.maturity_days))
+            else 0))
     by_file: dict[str, list[int]] = {}
     for i, q in enumerate(pool):
         for f in q["files"]:
@@ -228,7 +287,10 @@ def compute_repo(rows: list[dict], releases: list[datetime], st: config.Settings
         row["similar_pr_count"] = n
         if n >= st.similar_prs_min_neighbours:
             bad = sum(1 for _, _, q in neigh if _outcome_at(q["row"], q["merged"], t))
-            prior = row.get("repo_revert_base_rate") or 0.0
+            # the repo's own bad-PR rate among past PRs mature at T (not the
+            # per-commit revert rate, which is a different and much smaller unit)
+            n_mature = min(n_before, bisect.bisect_right(merged_times, mature_cut))
+            prior = bad_prefix[n_mature] / n_mature if n_mature else 0.0
             # missing neighbours (k - n) are filled with the repo base rate
             k = st.similar_prs_k
             row["similar_pr_bad_rate"] = round((bad + (k - n) * prior) / k, 4)

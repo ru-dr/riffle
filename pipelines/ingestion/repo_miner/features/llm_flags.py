@@ -6,20 +6,24 @@ returns a fixed JSON schema of enums/bools at temperature 0, and every
 line-anchored claim is verified to exist in the diff before we keep it. These
 are features for the model, never the verdict.
 
-Off by default (Settings.enable_llm). Two backends (Settings.llm_backend):
+On by default (Settings.enable_llm; `--llm` is on unless turned off, and the
+diff leaves the machine for the LLM backend when it is). Two backends (Settings.llm_backend):
   - "claude_cli" (default): headless `claude -p` with a JSON schema, using the
     local Claude Code login — no API key needed.
   - "api": any OpenAI-compatible endpoint, needs LLM_API_KEY.
 When disabled, all flags come back None (treated as missing).
 
-Circuit breaker: after Settings.llm_breaker_threshold consecutive failed calls,
-compute() raises LLMUnavailable so the run stops instead of silently writing a
-dataset with half-populated Source-6 columns.
+Failures: a call that gives no usable answer (no reply, or a reply with no
+valid flag in it) is a "fail" fetch. The miner retries that PR in place and, if
+it still fails, stops the repo (LLMUnavailable) so no row is written with
+half-populated Source-6 columns. There is no separate consecutive-failure
+breaker in this module: the per-PR retry in mine_repo is the breaker.
 """
 from __future__ import annotations
 
 import atexit
 import json
+import math
 import os
 import re
 import shutil
@@ -35,16 +39,7 @@ import runlog
 
 
 class LLMUnavailable(RuntimeError):
-    """Raised when the circuit breaker trips (too many consecutive failures)."""
-
-
-_consecutive_failures = 0
-
-
-def last_call_failed() -> bool:
-    """True if the most recent compute() call's LLM request failed (its flags
-    are None because of an error, not because the LLM is disabled)."""
-    return _consecutive_failures > 0
+    """Raised by the miner when a PR's LLM answer cannot be had after its retries."""
 
 # fixed schema — enums keep the model honest and the columns stable
 FLAG_SCHEMA = {
@@ -73,7 +68,10 @@ FLAG_SCHEMA = {
     "semantic_risk_1to5": "ordinal_1_5",
 }
 
-_NULL_RESULT = {k: None for k in FLAG_SCHEMA}
+# llm_diff_truncated rides along with the flags: True when the size cap cut code
+# out of what the model read, None when no call was made (or the answer was reused)
+DIFF_TRUNCATED_COLUMN = "llm_diff_truncated"
+_NULL_RESULT = {**{k: None for k in FLAG_SCHEMA}, DIFF_TRUNCATED_COLUMN: None}
 
 
 def compute(repo: str, base: str, head: str, st: config.Settings) -> dict:
@@ -87,16 +85,25 @@ def compute(repo: str, base: str, head: str, st: config.Settings) -> dict:
 _REUSE: dict[tuple[str, str], dict] = {}
 
 
-def load_reuse(path: str) -> int:
-    """Load answers saved by build_dataset --remine-repo. Returns how many."""
+def load_reuse(path: str, st: config.Settings | None = None) -> int:
+    """Load answers saved by build_dataset --remine-repo. Returns how many.
+    Every answer passes _validate. A record that names the prompt version or
+    model it was made with is reused only when both match this run's (a record
+    without them is an older file and is reused as before)."""
     _REUSE.clear()
+    want_prompt = prompt_version(st) if st is not None else None
     try:
         with open(path, encoding="utf-8") as fh:
             for rec in json.load(fh):
-                flags = {k: rec["flags"].get(k) for k in FLAG_SCHEMA}
-                if any(v is not None for v in flags.values()):
-                    _REUSE[(rec["base_sha"], rec["head_sha"])] = flags
-    except (OSError, ValueError, KeyError, TypeError):
+                if want_prompt is not None:
+                    if rec.get("prompt_version") not in (None, want_prompt):
+                        continue
+                    if rec.get("model") not in (None, st.llm_model):
+                        continue
+                flags = _validate(rec["flags"], "")
+                if any(flags[k] is not None for k in FLAG_SCHEMA):
+                    _REUSE[(rec["base_sha"], rec["head_sha"])] = {k: flags[k] for k in FLAG_SCHEMA}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         _REUSE.clear()
     return len(_REUSE)
 
@@ -115,21 +122,31 @@ def fetch(repo: str, base: str, head: str, st: config.Settings,
     if skip:
         return {"status": "skipped", "raw": None, "secs": 0.0, "reason": skip}
     if (base, head) in _REUSE:
-        return {"status": "ok", "raw": dict(_REUSE[(base, head)]), "secs": 0.0, "reused": True}
-    diff = llm_diff(repo, base, head, st)
-    if not diff.strip():
-        return {"status": "empty", "raw": None, "secs": 0.0}  # nothing to judge, not a failure
+        kept = _validate(_REUSE[(base, head)], "")
+        if any(v is not None for v in kept.values()):
+            return {"status": "ok", "raw": kept, "secs": 0.0, "reused": True,
+                    "model": st.llm_model, "diff_truncated": None}
+    diff, truncated, has_code = llm_diff_info(repo, base, head, st)
+    if not diff.strip() or not has_code:
+        # nothing to judge (no diff, or only lockfiles / generated / .svg files
+        # left after slimming), not a failure: the flags stay null, not neutral
+        return {"status": "empty", "raw": None, "secs": 0.0}
     t0, w0 = time.monotonic(), quota_wait_s()
+    _CALL.model = None
     raw = _call_with_quota(lambda: _call_claude_cli(diff, st) if st.llm_backend == "claude_cli"
                            else _call_llm(diff, st), st)
     secs = time.monotonic() - t0 - (quota_wait_s() - w0)
     runlog._acc("llm", secs)
-    runlog.debug("llm", "call", ok=raw is not None, secs=round(secs, 2), diff_chars=len(diff),
-                 backend=st.llm_backend, model=st.llm_model)
-    if raw is None:
+    model = getattr(_CALL, "model", None) or st.llm_model
+    flags = _validate(raw, diff) if isinstance(raw, dict) else None
+    runlog.debug("llm", "call", ok=flags is not None, secs=round(secs, 2), diff_chars=len(diff),
+                 backend=st.llm_backend, model=model)
+    if flags is None or all(v is None for v in flags.values()):
+        # no reply, or one with no valid flag in it: a failure, never an observed answer
         runlog.warn("llm", "no usable answer", secs=round(secs, 1), diff_chars=len(diff))
         return {"status": "fail", "raw": None, "secs": secs}
-    return {"status": "ok", "raw": _validate(raw, diff), "secs": secs}
+    return {"status": "ok", "raw": flags, "secs": secs, "model": model,
+            "diff_truncated": truncated}
 
 
 # ---- the diff the LLM reads ------------------------------------------------
@@ -154,6 +171,13 @@ def slim_diff(diff: str, max_chars: int) -> str:
     """Cut lockfiles and generated / vendored / minified / snapshot files down
     to one line each, then cap the size. The cap keeps whole files where it
     can and says what it dropped."""
+    return slim_diff_info(diff, max_chars)[0]
+
+
+def slim_diff_info(diff: str, max_chars: int) -> tuple[str, bool, bool]:
+    """slim_diff plus (truncated, has_code): whether the size cap cut code the
+    model would otherwise have read, and whether any file with a hunk is left
+    (a diff of only omitted files or binary changes has nothing to judge)."""
     kept, notes = [], []
     for part in _FILE_SPLIT_RE.split(diff):
         if not part:
@@ -168,6 +192,8 @@ def slim_diff(diff: str, max_chars: int) -> str:
         else:
             kept.append(part)
     head = ("\n".join(notes) + "\n\n") if notes else ""
+    has_code = any(re.search(r"(?m)^@@ ", part) for part in kept)
+    truncated = False
     out, size, dropped = [], len(head), []
     for part in kept:
         if size + len(part) <= max_chars:
@@ -176,21 +202,28 @@ def slim_diff(diff: str, max_chars: int) -> str:
         elif not out and not dropped:
             out.append(part[: max(0, max_chars - size)] + "\n# (file truncated)\n")
             size = max_chars
+            truncated = True
         else:
             m = _FILE_PATH_RE.match(part)
             dropped.append(m.group(2) if m else "?")
+            truncated = True
     tail = (f"\n# {len(dropped)} more changed file(s) not shown (size cap): "
             + ", ".join(dropped[:20]) + ("" if len(dropped) <= 20 else ", ...") + "\n") if dropped else ""
-    return head + "".join(out) + tail
+    return head + "".join(out) + tail, truncated, has_code
+
+
+def llm_diff_info(repo: str, base: str, head: str, st: config.Settings) -> tuple[str, bool, bool]:
+    """(text, truncated, has_code) of the redacted, slimmed diff for base...head."""
+    diff = gitio._run(repo, "diff", "-M", f"-U{max(0, st.llm_diff_context)}",
+                      f"{base}...{head}", check=False)
+    if not diff.strip():
+        return "", False, False
+    return slim_diff_info(_redact_secrets(diff), st.llm_max_diff_chars)
 
 
 def llm_diff(repo: str, base: str, head: str, st: config.Settings) -> str:
     """The redacted, slimmed diff the LLM reads for base...head."""
-    diff = gitio._run(repo, "diff", "-M", f"-U{max(0, st.llm_diff_context)}",
-                      f"{base}...{head}", check=False)
-    if not diff.strip():
-        return ""
-    return slim_diff(_redact_secrets(diff), st.llm_max_diff_chars)
+    return llm_diff_info(repo, base, head, st)[0]
 
 
 # ---- plan quota (headless Claude Code) --------------------------------------
@@ -280,8 +313,10 @@ def _quota_gate(st: config.Settings) -> None:
 
 def _call_with_quota(call, st: config.Settings):
     """Run one LLM call under the concurrency limiter, waiting out plan limits:
-    a call refused for a limit is retried after the reset instead of failing
-    into the circuit breaker."""
+    a call refused for a limit is retried after the reset instead of failing.
+    One call gives up (None) once it has been held by limits for more than
+    llm_quota_max_wait_h in total, so repeated short resets cannot hold it forever."""
+    started = time.monotonic()
     while True:
         try:
             _quota_gate(st)
@@ -290,6 +325,10 @@ def _call_with_quota(call, st: config.Settings):
                     return call()
             except QuotaHit as e:
                 if not st.llm_quota_wait:
+                    return None
+                if time.monotonic() - started > st.llm_quota_max_wait_h * 3600:
+                    print(f"[llm-quota] still limited after {st.llm_quota_max_wait_h} h of waiting "
+                          f"({e}); giving up on this call", file=sys.stderr, flush=True)
                     return None
                 resets = e.resets_at
                 if resets is None:
@@ -305,23 +344,37 @@ def _call_with_quota(call, st: config.Settings):
 
 def resolve(fetched: dict, st: config.Settings) -> dict:
     """
-    Main-thread half: turn a fetch() result into the 23 flag columns and drive
-    the circuit breaker. Must be called in PR order so "consecutive" means
-    consecutive PRs, not whichever worker finished first.
+    Main-thread half: turn a fetch() result into the 23 flag columns plus
+    llm_diff_truncated. A "fail" result never gets here: the miner retries it
+    and stops the repo if it still fails. Anything that is not an answer
+    ("off", "skipped", "empty") is all null.
     """
-    global _consecutive_failures
-    status = fetched.get("status")
-    if status == "fail":
-        _consecutive_failures += 1
-        if _consecutive_failures >= st.llm_breaker_threshold:
-            raise LLMUnavailable(
-                f"{_consecutive_failures} consecutive LLM failures "
-                f"(backend={st.llm_backend}, model={st.llm_model})")
-        return dict(_NULL_RESULT)
-    if status == "ok":
-        _consecutive_failures = 0
-        return dict(fetched["raw"])
+    if fetched.get("status") == "ok":
+        out = {k: fetched["raw"].get(k) for k in FLAG_SCHEMA}
+        out[DIFF_TRUNCATED_COLUMN] = fetched.get("diff_truncated")
+        return out
     return dict(_NULL_RESULT)
+
+
+# the model id the last call on this thread reported (set by the backends)
+_CALL = threading.local()
+_MODELS_SEEN: dict[str, str] = {}      # configured name -> id the backend reported
+_MODELS_LOCK = threading.Lock()
+
+
+def _note_model(asked: str, got: str | None) -> None:
+    if got:
+        _CALL.model = got
+        with _MODELS_LOCK:
+            _MODELS_SEEN[asked] = got
+
+
+def resolved_model(st: config.Settings) -> str:
+    """The model id the backend reported for st.llm_model ("claude-sonnet-..."
+    for the alias "sonnet"), or the configured name when none was reported yet.
+    Used for the llm_model column, so a row never claims a model that was not seen."""
+    with _MODELS_LOCK:
+        return _MODELS_SEEN.get(st.llm_model, st.llm_model)
 
 
 _LIMITER = None
@@ -433,49 +486,100 @@ def _limiter(st: config.Settings) -> threading.Semaphore:
     return _LIMITER
 
 
+_REDACT_PATTERNS = (
+    (r"(?i)\b(authorization\s*[:=]\s*\"?(?:bearer|basic|token)\s+)[^\s\"']+", r"\1<redacted>"),
+    (r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}", "bearer <redacted>"),
+    # key/value assignments: quoted (incl. JSON "key": "value") or bare values
+    (r"""(?i)(\b[\w.-]*(?:secret|passw(?:or)?d|token|api[_-]?key|auth|credential|private[_-]?key)[\w.-]*["']?\s*[:=]\s*)"""
+     r"""(?:"[^"\n]*"|'[^'\n]*'|[^\s,;'"]{6,})""", r"\1<redacted>"),
+    (r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", "<redacted private key>"),
+    (r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}"
+     r"|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})", "<redacted>"),
+    (r"(?i)\b([a-z][a-z0-9+.-]*://[^\s/:@]+:)[^\s/@]+@", r"\1<redacted>@"),
+)
+_REDACT_RES = tuple((re.compile(p, re.S if "PRIVATE" in p else 0), r) for p, r in _REDACT_PATTERNS)
+_DIFF_PREFIX = "Git diff:\n\n"
+
+
 def _redact_secrets(diff: str) -> str:
-    import re
-    return re.sub(
-        r"(?i)(secret|password|token|api[_-]?key)\s*[:=]\s*['\"][^'\"]+['\"]",
-        r"\1=<redacted>", diff,
-    )
+    for rx, repl in _REDACT_RES:
+        diff = rx.sub(repl, diff)
+    return diff
 
 
-_PROMPT_VERSION: str | None = None
+_PROMPT_VERSIONS: dict[tuple, str] = {}
 
 
-def prompt_version() -> str:
-    """Short hash of everything the LLM is asked (the flags' and the close
-    classifier's prompts and schemas), written on every row as
-    llm_prompt_version so rows from different prompts can be told apart."""
-    global _PROMPT_VERSION
-    if _PROMPT_VERSION is None:
+def prompt_parts(st: config.Settings | None = None) -> dict:
+    """Everything besides the prompt text that shapes what the LLM reads: the
+    slimming rules, redaction, size caps, diff prefix, transcript format and
+    backend. Folded into prompt_version(); also the list of Settings the
+    caller should treat as shaping (llm_max_diff_chars, llm_diff_context,
+    llm_backend)."""
+    import merge_labels
+    st = st or config.Settings()
+    return {
+        "omit_extra": _OMIT_EXTRA_RE.pattern,
+        "lockfile_rules": config.PATH_RULES["touches_lockfile"],
+        "generated_rules": config.GENERATED_PATTERNS,
+        "redaction": [p for p, _ in _REDACT_PATTERNS],
+        "diff_prefix": _DIFF_PREFIX,
+        "max_diff_chars": st.llm_max_diff_chars,
+        "diff_context": st.llm_diff_context,
+        "backend": st.llm_backend,
+        "transcript": merge_labels.TRANSCRIPT_FORMAT,
+    }
+
+
+def prompt_version(st: config.Settings | None = None) -> str:
+    """Short hash of everything the LLM is asked and shown (the flags' and the
+    close classifier's prompts and schemas, plus prompt_parts), written on
+    every row as llm_prompt_version so rows from different prompts can be told
+    apart. Pass the run's Settings: the caps and backend are part of it."""
+    st = st or config.Settings()
+    key = (st.llm_max_diff_chars, st.llm_diff_context, st.llm_backend)
+    if key not in _PROMPT_VERSIONS:
         import hashlib
         import merge_labels
         text = "\n".join([_SYSTEM, _schema_prompt(), json.dumps(_json_schema(), sort_keys=True),
                            merge_labels._CLASSIFIER_SYSTEM,
-                           json.dumps(merge_labels._CLASSIFIER_SCHEMA, sort_keys=True)])
-        _PROMPT_VERSION = hashlib.sha1(text.encode()).hexdigest()[:12]
-    return _PROMPT_VERSION
+                           json.dumps(merge_labels._CLASSIFIER_SCHEMA, sort_keys=True),
+                           json.dumps(prompt_parts(st), sort_keys=True)])
+        _PROMPT_VERSIONS[key] = hashlib.sha1(text.encode()).hexdigest()[:12]
+    return _PROMPT_VERSIONS[key]
+
+
+def _as_int(val) -> int | None:
+    """An integer from a JSON number: not a bool, not NaN/inf, 3.0 counts as 3."""
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float) and math.isfinite(val) and val.is_integer():
+        return int(val)
+    return None
 
 
 def _validate(raw: dict, diff: str) -> dict:
     """Keep only schema-conformant values; coerce the rest to None."""
-    out = dict(_NULL_RESULT)
+    out = {k: None for k in FLAG_SCHEMA}
     for key, spec in FLAG_SCHEMA.items():
         if key not in raw:
             continue
         val = raw[key]
         if spec == "bool":
-            out[key] = bool(val) if isinstance(val, bool) else None
+            out[key] = val if isinstance(val, bool) else None
         elif spec == "int":
-            out[key] = int(val) if isinstance(val, (int, float)) else None
+            n = _as_int(val)
+            out[key] = n if n is not None and n >= 0 else None
         elif spec == "ordinal_1_5":
-            out[key] = val if isinstance(val, int) and 1 <= val <= 5 else None
+            n = _as_int(val)
+            out[key] = n if n is not None and 1 <= n <= 5 else None
         elif spec == "ordinal_0_3":
-            out[key] = val if isinstance(val, int) and 0 <= val <= 3 else None
+            n = _as_int(val)
+            out[key] = n if n is not None and 0 <= n <= 3 else None
         elif isinstance(spec, list):
-            out[key] = val if val in spec else None
+            out[key] = val if isinstance(val, str) and val in spec else None
     return out
 
 
@@ -528,9 +632,9 @@ _SYSTEM = (
 
 
 # transient HTTP statuses / error kinds worth retrying; everything else
-# (400/401/403/404/422 — bad key, bad request, unknown model) is PERMANENT and
+# (400/401/403/404/422 - bad key, bad request, unknown model) is PERMANENT and
 # must fail fast to None rather than loop forever and hang the whole run.
-_LLM_RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+_LLM_RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
 _LLM_MAX_ATTEMPTS = 6
 
 
@@ -555,7 +659,7 @@ def _err_retry_after(e) -> int | None:
 
 
 def _call_llm(diff: str, st: config.Settings, system: str | None = None,
-              prefix: str = "Git diff:\n\n"):
+              prefix: str = _DIFF_PREFIX):
     """
     Call the configured chat model (default: Claude via Anthropic's
     OpenAI-compatible endpoint) to extract the Source-6 semantic flags from the
@@ -585,6 +689,7 @@ def _call_llm(diff: str, st: config.Settings, system: str | None = None,
             u = getattr(resp, "usage", None)
             if u is not None:
                 _add_usage(getattr(u, "prompt_tokens", 0), getattr(u, "completion_tokens", 0))
+            _note_model(st.llm_model, getattr(resp, "model", None))
             text = (resp.choices[0].message.content or "") if resp.choices else ""
             return _extract_json(text)
         except Exception as e:                           # noqa: BLE001
@@ -631,7 +736,7 @@ _CLI_WORKDIR: str | None = None
 
 def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
                      system: str | None = None, schema: dict | None = None,
-                     prefix: str = "Git diff:\n\n"):
+                     prefix: str = _DIFF_PREFIX):
     """
     Run headless Claude Code (`claude -p`) on the diff with a JSON schema.
     Uses the local Claude Code login (no API key). Runs from an empty temp dir
@@ -662,14 +767,23 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
                                text=True, encoding="utf-8", errors="replace",
                                timeout=st.llm_timeout, cwd=_CLI_WORKDIR,
                                env=os.environ.copy())
-            out = json.loads(p.stdout) if p.stdout.strip() else {}
+            try:
+                out = json.loads(p.stdout) if p.stdout.strip() else {}
+                if not isinstance(out, dict):
+                    out = {}
+                unparsed = ""
+            except json.JSONDecodeError:
+                out, unparsed = {}, p.stdout[:2000]      # plain-text output can carry the limit message too
             u = out.get("usage") or {}
             if u or out.get("total_cost_usd") is not None:
                 _add_usage(u.get("input_tokens"), u.get("output_tokens"),
                            u.get("cache_creation_input_tokens"), u.get("cache_read_input_tokens"),
                            out.get("total_cost_usd"))
-            if p.returncode != 0 or out.get("is_error"):
-                said = f"{out.get('result') or ''} {p.stderr or ''}"
+            used = [m for m in (out.get("modelUsage") or {}) if isinstance(m, str)]
+            if len(used) == 1:
+                _note_model(st.llm_model, used[0])
+            if p.returncode != 0 or out.get("is_error") or unparsed:
+                said = f"{out.get('result') or ''} {unparsed} {p.stderr or ''}"
                 if _QUOTA_RE.search(said):
                     m = re.search(r"resets?\s+(?:at\s+|on\s+)?([^\n.]+)", said, re.I)
                     raise QuotaHit(" ".join(said.split())[:160], _parse_reset(m.group(1)) if m else None)
@@ -681,7 +795,7 @@ def _call_claude_cli(diff: str, st: config.Settings, retries: int = 2,
                     obj = _extract_json(out.get("result") or "")
                     if obj is not None:
                         return obj
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as e:
+        except (subprocess.TimeoutExpired, OSError) as e:
             runlog.warn("llm", "claude call failed", exc=type(e).__name__, attempt=attempt + 1,
                         of=retries + 1, will_retry=attempt < retries)
         if attempt < retries:

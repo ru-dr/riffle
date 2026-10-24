@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -176,12 +177,37 @@ def _issue_split_locked(path, split, n, days, flags, version, repos_name, repos_
     return out
 
 
+def settings_version(flags: list[str] | None) -> str:
+    """A short id of a split's shared settings. It changes when the lead changes the flags and
+    never when tokens are re-issued, so a PC can tell whether its finished repos used the current settings."""
+    return hashlib.sha256(json.dumps([str(f) for f in (flags or [])]).encode()).hexdigest()[:12]
+
+
+def set_split_settings(path: str, split: str, flags: list[str]) -> str:
+    """Replace a split's shared flags in place. The PC tokens and join codes are left alone, so nothing has to be
+    handed out again. Returns the new settings version. LookupError when the split is unknown."""
+    if not SPLIT.match(split or ""):
+        raise ValueError("a split ID")
+    if not isinstance(flags, list) or len(flags) > 200 or not all(isinstance(f, str) and len(f) <= 500 for f in flags):
+        raise ValueError("flags must be a list of at most 200 short strings")
+    with locked(path):
+        data = load(path, strict=True)
+        rec = data["splits"].get(split)
+        if rec is None:
+            raise LookupError(f"no split {split}")
+        rec["flags"] = list(flags)
+        save(path, data)
+    return settings_version(flags)
+
+
 def revoke_kind(path: str, kind: str, name: str) -> bool:
     """Revoke one name of one kind (revoke() removes the name from every kind)."""
     with locked(path):
         if kind not in KINDS:
             return False
         data = load(path, strict=True)
+        if kind == "admins" and name in data["admins"] and len(data["admins"]) <= 1:
+            raise ValueError("this is the last admin; add another admin first")     # checked under the lock: two revokes cannot both pass
         hit = data[kind].pop(name, None) is not None
         if hit:
             save(path, data)
@@ -242,3 +268,33 @@ def who(path: str, token: str | None) -> tuple[str, str] | None:
     """('pcs' | 'readers' | 'admins', name) for a valid token, else None."""
     r = lookup(path, token)
     return (r["kind"], r["name"]) if r else None
+
+
+SESSION_TTL_S = 8 * 3600
+
+
+def _session_sig(rec: dict, name: str, exp: int) -> str:
+    # keyed with the stored hash of the admin's token: revoking or re-issuing that token ends every session made from it
+    return hmac.new(rec["sha256"].encode(), f"{name}|{exp}".encode(), hashlib.sha256).hexdigest()
+
+
+def session_make(path: str, name: str, ttl: int = SESSION_TTL_S) -> str | None:
+    """A signed, expiring value for the admin page's cookie (never the token itself), or None if `name` is no admin."""
+    rec = load(path)["admins"].get(name)
+    if not rec:
+        return None
+    exp = int(time.time()) + ttl
+    return f"{name}.{exp}.{_session_sig(rec, name, exp)}"
+
+
+def session_who(path: str, value: str | None) -> tuple[str, str] | None:
+    """('admins', name) for a valid, unexpired session value made by session_make, else None."""
+    try:
+        name, exp_s, sig = (value or "").split(".")
+        exp = int(exp_s)
+    except ValueError:
+        return None
+    rec = load(path)["admins"].get(name)
+    if not rec or exp < time.time() or (rec.get("expires") and rec["expires"] < time.time()):
+        return None
+    return ("admins", name) if secrets.compare_digest(sig, _session_sig(rec, name, exp)) else None

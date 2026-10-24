@@ -232,7 +232,7 @@ def test_llm_reuse_skips_empty_answers_and_short_circuits_fetch(tmp_path):
         st = config.Settings(); st.enable_llm = True; st.llm_backend = "claude_cli"
         got = llm_flags.fetch("/nonexistent", "b1", "h1", st)     # never touches git or the LLM
         assert got["status"] == "ok" and got["reused"] and got["raw"][cols[0]] is True
-        assert llm_flags.resolve(got, st) == good
+        assert {k: v for k, v in llm_flags.resolve(got, st).items() if k in good} == good
     finally:
         llm_flags._REUSE.clear()
 

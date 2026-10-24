@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import shlex
 import shutil
 import site
 import subprocess
@@ -26,17 +27,19 @@ import sysconfig
 HERE = os.path.dirname(os.path.abspath(__file__))
 VENV_DIR = os.path.join(HERE, ".venv")
 
-# import name -> pip spec (kept in step with requirements.txt)
+# import name -> pip spec (kept in step with requirements.txt). Each is bounded below the next
+# major version, so a fresh install cannot pick up a release with breaking changes (semgrep and
+# lizard change what the findings columns mean). Raise a bound after testing against the new major.
 PY_PACKAGES = {
-    "textual": "textual>=8.0",
-    "pandas": "pandas>=2.0",
-    "pyarrow": "pyarrow>=14.0",
-    "lizard": "lizard>=1.17",
-    "psutil": "psutil>=5.9",            # TUI RAM/CPU readout
-    "segno": "segno>=1.6",              # TUI QR code for the web view (pure Python)
+    "textual": "textual>=8.0,<9",
+    "pandas": "pandas>=2.0,<4",
+    "pyarrow": "pyarrow>=14.0,<26",
+    "lizard": "lizard>=1.17,<2",
+    "psutil": "psutil>=5.9,<8",           # TUI RAM/CPU readout
+    "segno": "segno>=1.6,<2",             # TUI QR code for the web view (pure Python)
 }
 # CLI tools pip can install -> pip spec
-PIP_CLIS = {"semgrep": "semgrep>=1.0"}
+PIP_CLIS = {"semgrep": "semgrep>=1.0,<2"}
 # CLI tools the user must install themselves -> how
 SYSTEM_CLIS = {
     "git": "install git with your package manager",
@@ -197,7 +200,7 @@ def ensure(require_textual: bool = True) -> None:
         print(f"[deps] installing: {' '.join(need)}", flush=True)
         rc = subprocess.run(cmd).returncode
         if rc != 0:
-            print(f"[deps] pip exited {rc}; install manually: {' '.join(cmd)}", file=sys.stderr)
+            print(f"[deps] pip exited {rc}; install manually: {' '.join(shlex.quote(c) for c in cmd)}", file=sys.stderr)
         # make a just-created user site-packages importable in this process
         user_site = site.getusersitepackages()
         if os.path.isdir(user_site) and user_site not in sys.path:

@@ -26,7 +26,7 @@ def emit(ev: str, **fields) -> None:
     with _LOCK:
         try:
             if _FH is None:
-                _FH = open(_PATH, "a", encoding="utf-8", buffering=1)
+                _FH = open(_PATH, "a", encoding="utf-8", buffering=1, newline="\n")   # never CRLF: the TUI tracks a byte offset
             _FH.write(line + "\n")
             _FH.flush()
         except OSError:

@@ -32,26 +32,16 @@ _COMPARE_EDIT = re.compile(r"[<>]=?|==|!=|\+\s*1\b|-\s*1\b|\[\s*i\s*[-+]\s*1\s*\
 
 
 def _added_lines(repo: str, base: str, head: str) -> list[tuple[str, str]]:
-    """Return (path, added_line_text) for every '+' line in the diff."""
-    out = gitio._run(repo, "diff", "-M", f"{base}...{head}", check=False)
-    added, cur_path = [], None
-    for line in out.splitlines():
-        if line.startswith("+++ b/"):
-            cur_path = line[6:]
-        elif line.startswith("+") and not line.startswith("+++"):
-            added.append((cur_path or "", line[1:]))
-    return added
+    """Return (path, added_line_text) for every added line in the diff. Read
+    from the shared parsed patch, whose hunks are walked by their line counts,
+    so an added line that itself starts with `++` is kept."""
+    return [(f.new_path, t) for f in gitio.pr_diff(repo, base, head).patch for t in f.added]
 
 
 def _removed_lines(repo: str, base: str, head: str) -> list[tuple[str, str]]:
-    out = gitio._run(repo, "diff", "-M", f"{base}...{head}", check=False)
-    removed, cur_path = [], None
-    for line in out.splitlines():
-        if line.startswith("--- a/"):
-            cur_path = line[6:]
-        elif line.startswith("-") and not line.startswith("---"):
-            removed.append((cur_path or "", line[1:]))
-    return removed
+    """(path at base, removed_line_text) for every removed line in the diff."""
+    return [(f.old_path or f.new_path, t)
+            for f in gitio.pr_diff(repo, base, head).patch for t in f.removed]
 
 
 def compute(repo: str, base: str, head: str, st: config.Settings) -> dict:
@@ -115,17 +105,46 @@ def _rough_unused_imports(added: list[tuple[str, str]]) -> int:
 
 
 _DEP_VER = re.compile(r'([A-Za-z0-9_.\-/@]+)\D*?(\d+)\.(\d+)\.(\d+)')
+# lines that carry a version but not the package it belongs to: a lockfile entry
+# names the package on a neighbouring line, so these must not be read as one
+# package called "version"
+_NAMELESS_KEYS = {"version", "resolved", "integrity", "checksum", "revision", "rev", "tag"}
+# the line that names the package a following version line belongs to
+_PKG_LINE = (
+    re.compile(r'^\s*name\s*=\s*"([^"]+)"'),                              # Cargo.lock, poetry.lock
+    re.compile(r'^\s*"(?:node_modules/)*(?:[^"]*/node_modules/)?([^"/][^"]*)"\s*:\s*\{\s*$'),  # package-lock
+    re.compile(r'^"?((?:@[^/@"]+/)?[^@"\s]+)@[^"]*"?(?:,\s*"?[^:]*)?:\s*$'),      # yarn.lock
+)
+_VERSION_LINE = re.compile(r'^\s*"?version"?\s*[:=]?\s*"?v?(\d+)\.\d+\.\d+')
 
 
 def _dep_versions(pairs: list[tuple[str, str]]) -> dict[str, int]:
-    """{package-name -> major version} parsed from manifest/lockfile lines."""
+    """{package-name -> major version} parsed from manifest/lockfile lines. A
+    bare `"version": "1.2.3"` line is attributed to the package named on the
+    nearest preceding name line among the lines given, and skipped when there
+    is none (it used to be read as a package called "version", so every
+    lockfile entry collapsed into one)."""
     out: dict[str, int] = {}
+    cur: str | None = None
     for path, t in pairs:
         pf = config.path_flags(path)
         if not (pf["touches_dep_manifest"] or pf["touches_lockfile"]):
             continue
+        named = False
+        for rx in _PKG_LINE:
+            m = rx.match(t)
+            if m:
+                cur, named = m.group(1).lower(), True
+                break
+        if named:
+            continue
+        vm = _VERSION_LINE.match(t)
+        if vm:
+            if cur:
+                out[cur] = int(vm.group(1))
+            continue
         m = _DEP_VER.search(t)
-        if m:
+        if m and m.group(1).lower() not in _NAMELESS_KEYS:
             out[m.group(1).lower()] = int(m.group(2))
     return out
 

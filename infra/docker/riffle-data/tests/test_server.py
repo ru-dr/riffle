@@ -103,9 +103,10 @@ def test_static_files_are_served_and_traversal_is_not(srv):
 
 
 def test_failed_sign_ins_are_throttled(srv):
-    for _ in range(20):
-        call(srv, "GET", "/api/runs", "wrong")
-    assert call(srv, "GET", "/api/runs", srv.rd)[0] == 429          # even the right token waits
+    for i in range(20):                                             # twenty different guesses
+        call(srv, "GET", "/api/runs", f"wrong{i}")
+    assert call(srv, "GET", "/api/runs", "wrong-again")[0] == 429
+    assert call(srv, "GET", "/api/runs", srv.rd)[0] == 200          # the right token still gets in: a NAT neighbour is not locked out
 
 
 def test_put_needs_a_pc_token_and_stores_under_its_name(srv):

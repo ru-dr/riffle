@@ -170,7 +170,7 @@ def test_llm_reason_decides_close_reason_and_unwanted():
     ev = [_comment(MAINT, "out of scope"),
           {"event": "marked_as_duplicate", "actor": MAINT, "created_at": "2026-01-02T00:00:00Z"}]
     out = build_merge_labels(_pr(False), ev, None, ST, llm_reason="other")
-    assert out["label_unwanted"] is False and out["label_duplicate"] is True
+    assert out["label_unwanted"] is True and out["label_duplicate"] is True
     assert out["close_reason"] == "other"
 
 
@@ -184,7 +184,7 @@ def test_transcript_needs_a_human():
     bot = {"login": "ci[bot]", "type": "Bot"}
     assert close_transcript(_pr(False), [_comment(bot, "build failed", assoc="NONE")]) is None
     text = close_transcript(_pr(False, title="Add X"), [_comment(MAINT, "not for us")])
-    assert text.startswith("Title: Add X") and "[maintainer] not for us" in text
+    assert "| Add X" in text and "[maintainer]\n| not for us" in text
 
 
 def test_classifier_off_without_llm():
