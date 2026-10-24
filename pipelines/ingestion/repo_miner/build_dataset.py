@@ -476,6 +476,12 @@ def _major_minor(version) -> tuple | None:
         return None
 
 
+def _has_output(out: str) -> bool:
+    """True when --out (or its .jsonl fallback) exists. Checked before pandas is imported, so a missing output
+    costs nothing and needs no pandas."""
+    return os.path.isfile(out) or (out.endswith(".parquet") and os.path.isfile(out.rsplit(".", 1)[0] + ".jsonl"))
+
+
 def _version_key(version) -> tuple | None:
     """A full version as a tuple of ints (7.0.1 -> (7, 0, 1)); None when it is not a version."""
     try:
@@ -487,6 +493,8 @@ def _version_key(version) -> tuple | None:
 def _mined_by_newer(out: str) -> dict[str, str]:
     """{repo lower-cased: the newer miner version its rows were written by}, for repos whose rows come from a
     miner newer than this one. Automatic re-mining never replaces those: another PC already mined them."""
+    if not _has_output(out):
+        return {}
     path, df = _read_out(out)
     if df is None or df.empty or "repo" not in df.columns or "miner_version" not in df.columns:
         return {}
@@ -503,6 +511,8 @@ def _mined_by_newer(out: str) -> dict[str, str]:
 def _stale_by_version(out: str) -> dict[str, str]:
     """{repo as stored: why} for every repo in --out whose rows were not mined by this format (a row with no
     miner_version, or one older than COMPAT_MINOR). Empty when --out is missing or has no rows."""
+    if not _has_output(out):
+        return {}
     path, df = _read_out(out)
     if df is None or df.empty or "repo" not in df.columns:
         return {}
