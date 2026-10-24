@@ -34,8 +34,18 @@ yet (the miner picks PRs when it begins a repo), so it counts under "waiting". A
 of PRs is unknown until every repo has started.
 
 The viewer reads parquet with DuckDB, limited to the store's folders, and only uses column
-names from the file's own schema. Big files that live only in the bucket are downloaded to
-`<data>/cache` the first time they are opened.
+names from the file's own schema. LIKE patterns are escaped. A DuckDB error is a 422, an unreadable
+parquet file is skipped in a table that spans PCs, and at most 2 parquet connections run at once (a
+third request gets 503 until one is free). Big files that live only in the bucket are downloaded to
+`<data>/cache` the first time they are opened; the cache is trimmed to `RIFFLE_CACHE_MAX_BYTES`
+(default 20 GiB), keeping every file used in the last 10 minutes. Versions sort numerically
+(`6.10.0` after `6.9.0`).
+
+**A run that did not finish is not shown as done.** The miner sends `batch done` only when every
+file was sent or skipped; otherwise it sends `batch incomplete` with `files_failed` and
+`files_deferred`, and the server rewrites such a run to `batch incomplete`. `batch aborted` shows
+as stopped on the admin and run pages. `duck.py`, `bq_load.py` and the catalogue count a PC as
+finished only by `tables.finished(status)`.
 
 ## Tokens: who can do what
 
@@ -46,23 +56,25 @@ names from the file's own schema. Big files that live only in the bucket are dow
 | **reader** (`rd_…`) | `manage.py add-reader NAME` | read the pages and the APIs |
 
 The normal flow: the lead plans the split with `--shard-plan N --issue-tokens`, which calls
-`POST /v1/admin/splits`, and sends each PC its join code privately. A PC runs `python join.py CODE`
+`POST /v1/admin/splits`, and sends each PC its join code privately. The PUT of a `run.json` runs under a lock, and a PUT is refused with 409 when a file and a directory would share one path. A PC runs `python join.py CODE`
 (see the miner's README). Planning the same split again rotates its tokens; `POST /v1/admin/revoke`
 with a `split_id` or a `name` (or `manage.py revoke-split ID`) cuts access at once, and
 `GET /v1/admin/pcs` shows each token's split, expiry and last upload. Only hashes are stored.
 
 ## The admin page (`/admin`)
 
-A second sign-in, with an **admin** token only (a read token is refused, and an admin token reads no data). It shows every PC token with its state (mining, done, stopped, silent, never uploaded, expired), progress, expiry and last upload, and the splits that were planned. From it the lead can:
+A second sign-in, with an **admin** token only (a read token is refused; an admin token reads no data itself, but it can add readers, who can). It shows every PC token with its state (mining, done, stopped, silent, never uploaded, expired), progress, expiry and last upload, and the splits that were planned. From it the lead can:
 
 - **Revoke** one PC, or **Revoke all** of a split (press twice to confirm).
 - **Rotate** a split: new tokens for every PC, the old ones stop at once, and the new join codes are shown once with Copy buttons. The page rebuilds the codes from the split's saved flags, so it does not need the repos file.
 - **Add or revoke a reader** (the token is shown once).
 - See which admin tokens exist (they are made on the VM with `manage.py add-admin`).
 
-A new split is still planned from the miner (TUI Lead tools, F3), because the plan needs the repos file. The admin session is its own cookie (8 hours), calls from it must carry `X-Requested-With`, and the page has no way to read data.
+A new split is still planned from the miner (TUI Lead tools, F3), because the plan needs the repos file. The admin session is its own cookie: a signed 8-hour session (`tokens.session_make` and `session_who`) keyed on the admin's stored hash, so revoking that admin ends it. Calls from it must carry `X-Requested-With`, and the page has no way to read data. The last admin cannot be revoked (the check runs under the token lock and answers 409).
 
 ## Backup and restore
+
+`manage.py reindex` rebuilds the index from file times (it makes no activity points) and indexes files that exist only in the bucket, using the bucket listing. Pulling a JSON file from the bucket checks that it parses before it replaces the local copy, and `restore` downloads to a `.part` file and renames it.
 
 The only state that lives just on the VM disk is `tokens.json` (hashes and each split's saved flags). Every change to it is copied to the bucket as `_system/tokens.json`. Everything else is already in the bucket. To rebuild after losing the disk: create the VM again with `gcp/up.sh` (a new empty disk restores the tokens by itself when the service starts), then
 
@@ -130,7 +142,7 @@ docker compose --profile public up -d --build
 Open ports 80 and 443 to the internet (for the certificate and the pages) and nothing else.
 PCs set `RIFFLE_SYNC_URL=https://YOUR_DOMAIN`. Protection comes from the tokens (43 random
 characters, hashes only on disk), HTTPS, a strict Content-Security-Policy, and a throttle of
-20 failed sign-ins per address per five minutes. Anyone who learns a read token can read
+20 failed sign-ins per address per five minutes. The throttle counts distinct failing tokens, so a valid token still passes while an address is blocked, and `whoami` and `/v1/split` are throttled too. Anyone who learns a read token can read
 everything, so give it to as few people as possible and `manage.py revoke` it if it leaks.
 Prefer an IAP tunnel or Tailscale if only your own team needs access.
 
@@ -149,7 +161,7 @@ makes three views named after the contracts: `mined_dataset`, `mined_snapshot` a
 `mined_commit_features`. They stay three, with different grains: join them in SQL or with
 `pipelines/training/frames.py`. Each view has a `filename` column naming the PC's file.
 By default only PCs that finished (`run.json` says "batch done") are included, so a
-half-mined PC does not skew a result; add `--include-unfinished` to see them. On the
+half-mined PC does not skew a result; add `--include-unfinished` to see them. The split's PC count is part of the plan: `--n N` keeps only the PC directories of an N-PC split, and without it a directory of another N is left out (old data stays on disk). An unsharded `dataset.parquet` is recognised too. On the
 store's own volume use `--local` instead of `--bucket`.
 
 ## Load into BigQuery (optional)
@@ -165,7 +177,7 @@ docker compose exec riffle-data python bq_load.py --dataset riffle_mined --versi
 ```
 
 It writes `mined_dataset`, `mined_snapshot` and `mined_commit_features` (the contract
-names) from every PC's parquet files, replacing each table, so rerun it as PCs finish.
+names) from every PC's parquet files, replacing each table, so rerun it as PCs finish. Each table is first loaded into a staging table (`<name>__loading`) and replaces the live one only after every load succeeded; a table that now has no files is deleted. `--n` works as for DuckDB.
 The three tables stay separate. They have different grains and are joined in SQL or by
 `pipelines/training/frames.py`. A PC without pandas and pyarrow writes JSONL, which is
 reported and skipped.

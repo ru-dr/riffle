@@ -10,7 +10,9 @@ build_dataset.py). This reads the manifests, refuses to merge unless:
   - every PC 1..N is present (none missing, one split),
   - all PCs used the same split ID (same repos file and PC count),
   - all PCs ran the same miner version (--allow-version-mix to override),
-  - no repo appears on two PCs, and no PR, snapshot or commit row repeats,
+  - no manifest lists a failed repo, and each PC's dataset holds exactly the repos its
+    manifest lists (--allow-incomplete to merge a shard that is missing repos anyway),
+  - no repo (compared in lower case) appears on two PCs, and no PR, snapshot or commit row repeats,
   - the merged snapshots still match the merged dataset (consistency.py),
 then writes <stem>_merged<ext>, <stem>_merged_snapshots<ext>,
 <stem>_merged_commit_features<ext> and <stem>_merged.merge.json (sources, counts).
@@ -37,7 +39,11 @@ KEYS = {"dataset": ["repo", "pr_number"], "snapshots": ["snapshot_id"],
 
 def _read(path: str):
     import pandas as pd
-    return pd.read_parquet(path) if path.endswith(".parquet") else pd.read_json(path, lines=True)
+    if path.endswith(".parquet"):
+        return pd.read_parquet(path)
+    if os.path.getsize(path) == 0:                 # an empty table written without rows
+        return pd.DataFrame()
+    return pd.read_json(path, lines=True)
 
 
 def _write(df, path: str) -> None:
@@ -60,7 +66,8 @@ def find_shards(out: str, directory: str) -> list[dict]:
     return found
 
 
-def check_manifests(shards: list[dict], allow_version_mix: bool = False) -> list[str]:
+def check_manifests(shards: list[dict], allow_version_mix: bool = False,
+                    allow_incomplete: bool = False) -> list[str]:
     """Why these manifests can't be merged; an empty list means they can."""
     if not shards:
         return ["no shard manifests found (looking for <stem>_pcKofN.shard.json)"]
@@ -81,17 +88,30 @@ def check_manifests(shards: list[dict], allow_version_mix: bool = False) -> list
     seen: dict = {}
     for s in shards:
         for r in s.get("repos", []):
-            if r in seen:
+            r = str(r).lower()                     # GitHub names are case-insensitive
+            if r in seen and seen[r] != s["pc"]:
                 problems.append(f"repo {r} is on PC {seen[r]} and PC {s['pc']}")
             seen[r] = s["pc"]
+    if not allow_incomplete:
+        for s in shards:
+            if s.get("failed"):
+                problems.append(f"PC {s['pc']} failed on {len(s['failed'])} repo(s): "
+                                f"{', '.join(map(str, s['failed'][:5]))}"
+                                f"{' ...' if len(s['failed']) > 5 else ''} "
+                                f"(re-run them, or --allow-incomplete to merge anyway)")
     if len({bool(s["files"].get("snapshots")) for s in shards}) > 1:
         problems.append("some PCs have a snapshots table and some don't")
     return problems
 
 
-def merge(out: str, directory: str = ".", allow_version_mix: bool = False) -> dict:
+def _repos(df) -> set[str]:
+    return {str(r).lower() for r in df["repo"].dropna()} if "repo" in df.columns else set()
+
+
+def merge(out: str, directory: str = ".", allow_version_mix: bool = False,
+          allow_incomplete: bool = False) -> dict:
     shards = find_shards(out, directory)
-    problems = check_manifests(shards, allow_version_mix)
+    problems = check_manifests(shards, allow_version_mix, allow_incomplete)
     if problems:
         raise SystemExit("cannot merge:\n  - " + "\n  - ".join(problems))
     import pandas as pd
@@ -108,13 +128,28 @@ def merge(out: str, directory: str = ".", allow_version_mix: bool = False) -> di
                    if not nm or not os.path.isfile(os.path.join(s["_dir"], nm))]
         if missing:
             raise SystemExit(f"cannot merge: missing {kind} file(s): {', '.join(missing)}")
-        df = pd.concat([_read(os.path.join(s["_dir"], nm)) for s, nm in
-                        sorted(zip(shards, names), key=lambda p: p[0]["pc"])], ignore_index=True)
+        parts = [(s, _read(os.path.join(s["_dir"], nm))) for s, nm in
+                 sorted(zip(shards, names), key=lambda p: p[0]["pc"])]
+        if kind == "dataset":
+            for s, part in parts:
+                have, listed = _repos(part), {str(r).lower() for r in s.get("repos", [])}
+                absent, extra = sorted(listed - have), sorted(have - listed)
+                if extra:
+                    raise SystemExit(f"cannot merge: PC {s['pc']}'s dataset has rows of repos its manifest "
+                                     f"does not list: {', '.join(extra[:5])}")
+                if absent and not allow_incomplete:
+                    raise SystemExit(f"cannot merge: PC {s['pc']}'s dataset has no rows for {len(absent)} "
+                                     f"repo(s) its manifest lists: {', '.join(absent[:5])} "
+                                     f"(--allow-incomplete if they truly had no PRs)")
+        df = pd.concat([part for _s, part in parts], ignore_index=True)
+        if df.empty and not all(c in df.columns for c in KEYS[kind]):
+            frames[kind] = df                      # every part was an empty table without columns
+            continue
         dup = df.duplicated(KEYS[kind]).sum()
         if dup:
             raise SystemExit(f"cannot merge: {dup} repeated {kind} rows on {KEYS[kind]}")
         frames[kind] = df
-    if "snapshots" in frames:
+    if "snapshots" in frames and not frames["snapshots"].empty and not frames["dataset"].empty:
         stale = consistency.stale_prs(frames["dataset"], frames["snapshots"])
         if stale["missing"] or stale["changed"]:
             raise SystemExit(f"cannot merge: the snapshots no longer match the dataset "
@@ -136,8 +171,10 @@ def main():
     ap.add_argument("--out", required=True, help="the dataset name the PCs used with --out, e.g. dataset.parquet")
     ap.add_argument("--dir", default=".", help="where the PCs' files were gathered (default: here)")
     ap.add_argument("--allow-version-mix", action="store_true")
+    ap.add_argument("--allow-incomplete", action="store_true",
+                    help="merge shards whose manifest lists failed repos or whose dataset lacks listed repos")
     a = ap.parse_args()
-    r = merge(a.out, a.dir, a.allow_version_mix)
+    r = merge(a.out, a.dir, a.allow_version_mix, a.allow_incomplete)
     for kind, n in r["rows"].items():
         print(f"[merge] {kind}: {n:,} rows -> {r['outputs'][kind]}", file=sys.stderr)
 

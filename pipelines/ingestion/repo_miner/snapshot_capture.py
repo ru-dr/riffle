@@ -17,6 +17,7 @@ contributors plus a sample) gets one capture record:
   events      the issue timeline, trimmed
   pushes      [(pushed_at, before_sha)] force-pushes, or None if unreadable
   head_line   [(time, sha)] each moment the PR's head changed while open
+  merge_outcome  optional: whether merge-outcome mining was on (--no-merge-outcome)
   heads       up to snapshot_max_heads of those heads, each with the code
               features (diff sizes, path flags, deterministic checks,
               scanners, dependencies, API contract) of fork-point...head
@@ -72,6 +73,11 @@ def slim_event(ev: dict) -> dict:
     for k in ("actor", "user"):
         if ev.get(k):
             out[k] = _user(ev[k])
+    if ev.get("event") == "reviewed" and ev.get("id") is not None:
+        out["id"] = ev["id"]                  # lets a later review_dismissed event point at it
+    if isinstance(ev.get("dismissed_review"), dict):
+        d = ev["dismissed_review"]            # the review's state before it was dismissed
+        out["dismissed_review"] = {"review_id": d.get("review_id"), "state": d.get("state")}
     if ev.get("label"):
         out["label"] = {"name": (ev["label"] or {}).get("name")}
     for k in ("committer", "author"):
@@ -163,15 +169,18 @@ def pick_heads(line: list[tuple[datetime, str]], cap: int) -> list[tuple[datetim
     return [(distinct[i][1], distinct[i][0]) for i in sorted(keep)][:cap]
 
 
-def code_features(repo: str, base: str, head: str, st: config.Settings) -> dict:
-    """The per-diff features of base...head, the same functions mine_pr uses."""
+def code_features(repo: str, base: str, head: str, st: config.Settings, as_of=None) -> dict:
+    """The per-diff features of base...head, the same functions mine_pr uses.
+    as_of is the moment the head was the PR's head: advisories published after
+    it are not counted (deps_cve), so a snapshot does not see the future."""
     changed = [p for _, _, p in gitio.diff_numstat(repo, base, head)]
+    renames = gitio.rename_map(repo, base, head)
     out: dict = {}
     out.update(diff_stats.compute(repo, base, head, st))
     out.update(deterministic.compute(repo, base, head, st))
-    out.update(scanners.compute(repo, base, head, changed, st))
-    out.update(deps_cve.compute(repo, base, head, changed, st))
-    out.update(api_contract.compute(repo, base, head, changed, st))
+    out.update(scanners.compute(repo, base, head, changed, st, renames=renames))
+    out.update(deps_cve.compute(repo, base, head, changed, st, as_of=as_of, renames=renames))
+    out.update(api_contract.compute(repo, base, head, changed, st, renames=renames))
     return out
 
 
@@ -207,7 +216,7 @@ def capture_pr(repo: str, pr: dict, row: dict, events: list[dict] | None,
             try:
                 base = gitio.merge_base(repo, api_base, sha)
                 rec["base_sha"] = base
-                rec["features"] = code_features(repo, base, sha, st)
+                rec["features"] = code_features(repo, base, sha, st, as_of=when)
             except gitio.GitError as e:
                 rec["error"] = str(e)[:200]
         heads.append(rec)
@@ -217,6 +226,9 @@ def capture_pr(repo: str, pr: dict, row: dict, events: list[dict] | None,
         "pushes": None if pushes is None else [list(p) for p in pushes],
         "head_line": [[_iso(w), s] for w, s in line], "heads": heads,
         "open_head": row.get("head_sha"), "open_snapshot": row.get("open_snapshot"),
+        # optional: older captures lack it and assemble as merge outcomes on. With
+        # --no-merge-outcome every mined PR merged, so merge rates stay null in snapshots too
+        "merge_outcome": bool(st.enable_merge_outcome),
     }
 
 
@@ -248,25 +260,102 @@ CAPTURE_FILE = "capture.jsonl"     # one record per in-scope PR
 INDEX_FILE = "pr_index.jsonl"      # one merge-signal sidecar per mined PR
 
 
+def heal_tail(path: str) -> None:
+    """Make an append-only jsonl file safe to append to. A run killed mid-write
+    leaves a last line without its newline; the next record would be glued onto
+    it. A complete record that only lacks the newline gets one; a fragment that
+    does not parse is cut off (its row is re-mined on resume)."""
+    try:
+        size = os.path.getsize(path)
+        if not size:
+            return
+        with open(path, "rb+") as fh:
+            fh.seek(max(0, size - 1))
+            if fh.read(1) == b"\n":
+                return
+            fh.seek(0)
+            data = fh.read()
+            cut = data.rfind(b"\n") + 1
+            try:
+                json.loads(data[cut:].decode("utf-8"))
+                fh.seek(0, os.SEEK_END)
+                fh.write(b"\n")
+            except ValueError:
+                fh.truncate(cut)
+    except OSError:
+        pass
+
+
+def trim_jsonl(path: str, keep: set, key: str) -> set:
+    """Rewrite a jsonl file (atomically) with only the records whose `key` is in
+    `keep`, the last record per key winning, and no torn lines. Returns the keys
+    kept. A missing file is nothing to trim."""
+    if not os.path.isfile(path):
+        return set()
+    last: dict = {}
+    order: list = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            k = rec.get(key) if isinstance(rec, dict) else None
+            if k in keep:
+                if k in last:
+                    order.remove(k)
+                last[k] = line if line.endswith("\n") else line + "\n"
+                order.append(k)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.writelines(last[k] for k in order)
+    os.replace(tmp, path)
+    return set(last)
+
+
 class Writer:
     """Appends capture records and the repo's PR index under one directory per
     repo. Rows are committed in PR order with the miner's checkpoint, so a
-    resumed run continues the same files; a fresh run starts them over."""
+    resumed run continues the same files; a fresh run starts them over.
 
-    def __init__(self, directory: str, resume: bool):
+    On resume, `keep` (the PR numbers the checkpoint holds, plus the lead-in
+    PRs) trims both files to those PRs first: a capture written just before a
+    crash, whose row never reached the checkpoint, is dropped and then written
+    again when the PR is re-mined, so no PR appears twice. have_index and
+    have_capture say which PRs the files then hold."""
+
+    def __init__(self, directory: str, resume: bool, keep: set | None = None):
         self.dir = directory
         os.makedirs(directory, exist_ok=True)
+        cap_path = os.path.join(directory, CAPTURE_FILE)
+        idx_path = os.path.join(directory, INDEX_FILE)
+        self.have_capture: set = set()
+        self.have_index: set = set()
+        if resume:
+            if keep is not None:
+                self.have_capture = trim_jsonl(cap_path, keep, "pr_number")
+                self.have_index = trim_jsonl(idx_path, keep, "number")
+            else:
+                heal_tail(cap_path)
+                heal_tail(idx_path)
         mode = "a" if resume else "w"
-        self._cap = open(os.path.join(directory, CAPTURE_FILE), mode, encoding="utf-8")
-        self._idx = open(os.path.join(directory, INDEX_FILE), mode, encoding="utf-8")
+        self._cap = open(cap_path, mode, encoding="utf-8")
+        self._idx = open(idx_path, mode, encoding="utf-8")
 
     def write(self, capture: dict | None, sidecar: dict | None) -> None:
-        if capture:
+        # idempotent per PR: a PR already in a file is not written to it twice
+        if capture and (capture.get("pr_number") is None
+                        or capture["pr_number"] not in self.have_capture):
             self._cap.write(json.dumps(capture, default=str) + "\n")
             self._cap.flush()
-        if sidecar:
+            self.have_capture.add(capture.get("pr_number"))
+        if sidecar and (sidecar.get("number") is None
+                        or sidecar["number"] not in self.have_index):
             self._idx.write(json.dumps(sidecar, default=str) + "\n")
             self._idx.flush()
+            self.have_index.add(sidecar.get("number"))
 
     def close(self) -> None:
         self._cap.close()
@@ -274,7 +363,17 @@ class Writer:
 
 
 def read_jsonl(path: str) -> list[dict]:
+    """The records of a jsonl file. A line that does not parse is skipped: a run killed
+    mid-write leaves a torn last line, and the PR it belonged to is re-mined on resume."""
     if not os.path.isfile(path):
         return []
+    out = []
     with open(path, encoding="utf-8") as fh:
-        return [json.loads(line) for line in fh if line.strip()]
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                continue
+    return out

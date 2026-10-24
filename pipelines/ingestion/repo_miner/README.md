@@ -21,7 +21,7 @@ v2.0.0 closed-unmerged too; see *Merge-outcome labels*), with:
 | 4d — scanners | `features/scanners.py` | lizard `ccn_delta`, semgrep new findings |
 | 4e — deps/CVE | `features/deps_cve.py` | OSV + GHSA introduced vulns, major bumps (npm, PyPI, Go, Maven, Ruby, Rust, PHP, NuGet, Dart, Elixir) |
 | 5 — deterministic | `features/deterministic.py` | secrets, env keys, off-by-one edits, migration reversibility |
-| 6 — LLM flags | `features/llm_flags.py` | authz change, error-handling removed, semantic risk (opt-in) |
+| 6 — LLM flags | `features/llm_flags.py` | authz change, error-handling removed, semantic risk (on by default; `--no-llm` turns it off) |
 | Labels | `labels.py` | `label_revert`, `label_ci_fail`, `label_ci_fail_optional`, `label_hotfix`, `label_szz_bug`, `label_bad` (+ `mined_at`) |
 | Merge-outcome labels | `merge_labels.py` | `label_merged`, `label_rework`, `close_reason` and its flags (default on; `--no-merge-outcome` drops them) |
 
@@ -49,6 +49,28 @@ it touches.
   miner didn't write, a row that doesn't validate, or a row that doesn't
   round-trip through the flat form (ADR 0012). Adding a column means adding
   it to the contract in the same PR.
+
+## Upgrading to 7.0.0 (re-mine needed)
+
+7.0.0 is the audit-fix release. It changes the meaning of columns that already exist, so a dataset mined with 6.x
+should be mined again before it is used to retrain (`merge_shards.py` refuses a mix of versions unless told otherwise).
+What changed, in short; section 21 of [`ARCHITECTURE.md`](ARCHITECTURE.md) has the detail:
+
+- **Labels.** `label_revert` and `label_hotfix` no longer match the PR's own merge commit or commits. A revert must
+  carry `#N` in its subject or `Reverts owner/repo#N` in its body, and is searched from the default-branch tip.
+  `label_szz_bug` and `days_to_szz_fix` are `null` when SZZ did not run, not `false`. SZZ follows renames (`SZZ_VERSION`
+  3, so cached SZZ indexes rebuild).
+- **Git and history features.** Paths with non-ASCII, quoted or backslash characters now get their lines of code, blame
+  and SZZ. Renamed files are looked up under their old name at the base. Merge commits and bots no longer count as
+  authors or owners.
+- **Dependencies, CVEs and scanners.** CVE columns are as of the PR's open time (records published later or since
+  withdrawn are dropped). A scan, a parse or a lookup that did not run or failed is `null`, never `0`.
+- **LLM columns.** `llm_prompt_version` now covers the diff rules, so it changes for every dataset. A diff with no code
+  left after slimming is status `empty`, with null flags and no call.
+- **Snapshots** can be re-assembled from `snapshots_raw/` with `python snapshots.py --dataset <dataset>
+  --raw-root snapshots_raw`; the dismissed-review fix needs the PR captured again.
+- **Training** (`pipelines/training/frames.py`) masks all 125 diff-derived columns on `open_snapshot == final` rows and
+  groups the split by repo, PR and shared head commit, so splits for mixed-case repo names change.
 
 ## Install
 
@@ -104,6 +126,10 @@ flags (the best setup is the default; each stage has a --no- form):
   --no-network       git-only: no PR list, no labels, no OSV (features only)
   --no-scanners      skip lizard + semgrep
   --no-api-contract  skip oasdiff / buf / graphql-inspector spec diffing
+  --llm-model M      model for the LLM flags (default LLM_MODEL, else sonnet)
+  --llm-test         one call on a sample diff, report, exit
+  --pr-discovery {api,git}   how merged PRs are enumerated (default api)
+  --domain NAME      dataset domain written on every row (ADR 0011)
 ```
 
 Output is one row per closed PR (merged only with `--no-merge-outcome`). Each row records `mined_at`; PRs merged too
@@ -251,7 +277,7 @@ health flags. Scale the estimates for the full run from those.
   again for the same split issues new tokens and revokes the old ones.
 - Managing who may upload (lead only, needs `RIFFLE_ADMIN_TOKEN`): `python admin.py list` shows every PC token with its
   split, expiry and last upload; `python admin.py revoke NAME` and `revoke-split ID` cut access at once;
-  `python admin.py whoami` checks the admin token. The admin token reads no data. The store also has an admin web page (`/admin`) with the same powers plus rotating a split and adding readers; sign in there with the admin token.
+  `python admin.py whoami` checks the admin token. The admin token reads no data itself, but it can add readers, and a reader's token reads. The store also has an admin web page (`/admin`) with the same powers plus rotating a split and adding readers; sign in there with the admin token.
 - Central sync (ADR 0015): with `RIFFLE_SYNC_URL` and `RIFFLE_SYNC_TOKEN` in
   `.env`, the miner sends its logs, traces, `health/*.json`, dataset, snapshot and
   commit-feature tables, `.partial.jsonl` checkpoint and shard manifest to the
@@ -273,8 +299,8 @@ health flags. Scale the estimates for the full run from those.
   are mature. Busy repos merge 100 PRs in days, so without it most rows would
   be too young to train on. 90 covers the 30-day maturity and 90-day SZZ
   windows. Costs extra PR-list pages on busy repos.
-- Rate limits: GitHub calls sleep until the quota resets (or `Retry-After`)
-  and retry; 5xx/network errors back off and retry, then count as unobserved.
+- Rate limits: GitHub calls sleep until the quota resets (`Retry-After` as seconds or a date, capped; one gate
+  pauses every thread) and retry; 5xx/network errors back off and retry, then count as unobserved.
 - Stop any time (ctrl+c / TUI Stop). Finished PRs are in `<out>.partial.jsonl`
   and finished repos are in `--out`; rerunning the same command (keep
   `--skip-existing`) skips both and continues. `--remine` redoes every repo.
@@ -322,12 +348,14 @@ With a join code, paste it into the **Join code** box and press Join (F2): the T
 python tui.py
 ```
 
-Every launch first runs the environment doctor (`doctor.py`). Before anything else it keeps the checkout on the latest
-`main`: it fetches `origin/main`, and when this checkout is on `main`, has no uncommitted changes to tracked files and is
-simply behind, it fast-forwards and restarts once (`[update] miner 6.11.5 -> 6.12.0`). Anything else (another branch, local
-edits, no network, not a git checkout) is only reported or skipped, never forced. A plain `python build_dataset.py` from a
-terminal checks the same way; a run started by the TUI, a run with no terminal (automation), `--test`, `--shard-plan` and
-`--audit` do not. `RIFFLE_NO_AUTO_UPDATE=1` turns it off. It detects the
+Every launch first runs the environment doctor (`doctor.py`). Before anything else it checks whether `main` has a newer
+miner: it fetches `origin/main` and, by default, only **reports** it (`[update] main has a newer miner (X, you have Y)`,
+with the command to run). Updating is opt-in: with `RIFFLE_AUTO_UPDATE=1`, when this checkout is on `main`, has no
+uncommitted changes to tracked files and is simply behind, it fast-forwards and restarts once (`[update] miner 6.11.5 ->
+6.12.0`) so every PC mines with the same version. Anything else (another branch, local edits, no network, not a git
+checkout) is only reported or skipped, never forced. A plain `python build_dataset.py` from a terminal checks the same
+way; a run started by the TUI, a run with no terminal (automation), `--test`, `--shard-plan` and `--audit` do not.
+`RIFFLE_NO_AUTO_UPDATE=1` turns the check and the update off. It detects the
 OS and distro (Ubuntu/Debian and derivatives, Fedora/RHEL, Arch, openSUSE,
 Alpine, macOS, Windows, WSL) and its package manager (`apt`, `dnf`, `pacman`,
 `zypper`, `apk`, `brew`, `winget`, `scoop`, `choco`). It then checks Python,
@@ -377,7 +405,7 @@ the link with `#big`. A full-screen dark page readable from across a room:
 the run state as a word (MINING, LLM PAUSED, STOPPED: ERROR, FINISHED,
 OFFLINE), the percent done, the time, CPU and memory used, PRs mined, time
 left, elapsed, PRs per minute, the repo being mined and repositories done,
-any alert (breaker, plan pause, low memory, health flag) and the last log
+any alert (an LLM stop, plan pause, low memory, health flag) and the last log
 lines. Work runs down the left edge, time and system down the right. It keeps the screen awake while open;
 `d` dims it, `b`, Esc or a click leaves it.
 
@@ -412,7 +440,8 @@ mines them as usual.
 
 Configure the batch on the left (repos file, output, PR cap, workers, LLM /
 SZZ / CI toggles), press **ctrl+r** to start. The right side shows per-repo
-progress, PR/min, ETA, LLM ok/fail + latency, circuit-breaker state, and the
+progress, PR/min, ETA (shown once there are at least 3 points over at least 10
+seconds, and it grows during a stall), LLM ok/fail + latency, LLM stop state, and the
 log. **ctrl+x** stops (SIGINT); the checkpoint keeps finished PRs, so starting
 again with "Reuse clones" on resumes.
 
@@ -435,7 +464,8 @@ again with "Reuse clones" on resumes.
   the reset and then continue; PRs wait for their answers, so the miner
   pauses with them. A limit that
   resets more than 12 h away (a weekly cap) is not waited for: calls fail and
-  the breaker stops the run. `--no-llm-quota-wait` turns this off.
+  the run stops. The total wait is capped by `llm_quota_max_wait_h`, and a limit message in
+  non-JSON CLI output is recognised too. `--no-llm-quota-wait` turns this off.
 - **Fewer, smaller calls (v3.0.0).** The flags are features, so only the rows
   the model trains on need them:
   - `--llm-scope training` (default): outside contributors (`CONTRIBUTOR`,
@@ -461,6 +491,28 @@ again with "Reuse clones" on resumes.
   workers ignore the signal, so they no longer print tracebacks.
 - The repo's `git log --numstat` is parsed once and reused per PR, hotspot
   complexity is cached per blob, and path classification is memoized.
+
+## Limits, timeouts and data that leaves the machine
+
+- **Git timeouts.** `RIFFLE_GIT_TIMEOUT_S` (300) for an ordinary git call, `RIFFLE_GIT_BLAME_TIMEOUT_S` (120) for a
+  blame, `RIFFLE_GIT_LONG_TIMEOUT_S` (3600) for the whole-history log, and `RIFFLE_MAX_BLOB_BYTES` (4 MiB) for a file
+  read at a commit. A call that times out is **unobserved** (`null`), never `0`. A clone that prints nothing for
+  `--clone-stall-s` (600; `RIFFLE_CLONE_STALL_S`) is killed and retried.
+- **Big PRs.** `--max-files-deep N` (default 300; 0 = off): beyond N files only the N with the largest churn get
+  per-file features. The rest are `null`, and so are `LT`, `la_norm`, `ld_norm` and every `sum_*` column on that PR;
+  `max_`, `min_` and `mean_` cover the measured files only.
+- **Semgrep.** `RIFFLE_SEMGREP_RULES` (a file or directory) pins local rules; otherwise `--config auto` is used, which
+  fetches rules from semgrep.dev, so that fetch leaves the machine. `RIFFLE_SEMGREP_PARALLEL` (default 2) limits
+  concurrent semgrep runs. Metrics and the version check are always off.
+- **LLM.** The LLM is on by default, and **the diff of each PR in scope is sent to the backend** (Anthropic through
+  Claude Code, or the `api` endpoint), with obvious secrets redacted. Use `--no-llm` to send nothing.
+- **Caches.** The historical CI map expires after 7 days (`CI_MAP_TTL_S`) and is rebuilt when it was built before the
+  newest PR. An open PR's timeline is cached for 1 hour, a closed one for 14 days. `RIFFLE_NO_API_CACHE=1` turns the
+  API cache off.
+- **Reused rows.** Each line of the checkpoint carries a stamp of the settings that shape the data (miner major.minor,
+  LLM on or off and model, CI history, SZZ, the observation cutoff day, and the stage and scope flags). On resume, a
+  row with a different stamp is mined again and the log names the keys that differ. Rows from older versions with no
+  stamp are accepted.
 
 ## Build a dataset (many repos)
 
@@ -491,6 +543,37 @@ flags (passed through to the miner):
   --snapshots / --no-snapshots     PR snapshots, assembled when the batch ends (default on)
   --skip-existing    reuse an already-cloned repo instead of re-cloning
 ```
+
+Other `build_dataset.py` flags (the full table is in `ARCHITECTURE.md` section 16.2):
+
+```text
+  --keep-clones          keep each clone after mining (default: delete it, one clone on disk at a time)
+  --repo-retries N       extra clone/mine attempts per repo (default 2, so 3 in all)
+  --clone-stall-s S      kill a git clone that prints nothing for S seconds and retry it
+                         (default 600, or RIFFLE_CLONE_STALL_S; 0 = never)
+  --sync / --no-sync     send logs, health, tables and the manifest to the team store (default on,
+                         but only when RIFFLE_SYNC_URL and RIFFLE_SYNC_TOKEN are set)
+  --llm-model M          e.g. sonnet, opus, haiku
+  --llm-backend B        claude_cli or api (default LLM_BACKEND, else claude_cli)
+  --llm-diff-context N   context lines around each change in the diff sent to the LLM (default 1;
+                         reaches the miner as LLM_DIFF_CONTEXT)
+  --llm-quota-wait / --no-llm-quota-wait   wait for the Claude plan to reset (default on)
+  --max-files-deep N     a PR touching more than N files gets per-file deep features (blame, line
+                         history, scanners) for the N files with the most churn only (default 300;
+                         0 = never cap; reaches the miner as RIFFLE_MAX_FILES_DEEP)
+  --assemble-snapshots / --no-assemble-snapshots   build the snapshot tables when the batch ends (default on)
+  --only-domain NAME     mine only repos tagged `[domain: NAME]` (tags are case-insensitive)
+  --issue-tokens, --token-days D, --tokens-out FILE   with --shard-plan: one write token and join code
+                         per PC; the tokens stop after D days; the codes are also saved to FILE
+  --test, --test-prs N, --test-repo URL   smoke test: one repo (default pallets/flask), N PRs (10),
+                         a fixed window, so every PC picks the same PRs
+```
+
+`--llm-diff-context`, `--llm-backend` and `--max-files-deep` are `build_dataset.py` flags that set an
+environment variable for the miner, so a batch and its children agree. `mine_repo.py` reads the same
+variables. A value that cannot be right (a negative number, `--window-from` without `--window-to`, a
+malformed `--shard`, a bad `--remine-repo` name) is refused once, before anything is cloned. `--max-prs 0`
+means no cap.
 
 Notes: repos are **full clones** (the extractor needs complete history). A small
 `--max-prs` selects the newest — and therefore most *immature* — PRs; use a large
@@ -751,7 +834,7 @@ features/
   scanners.py      Source 4d (lizard, semgrep)
   deps_cve.py      Source 4e (OSV, GHSA)
   deterministic.py Source 5 (regex/parser checks)
-  llm_flags.py     Source 6 (schema-constrained LLM, opt-in)
+  llm_flags.py     Source 6 (schema-constrained LLM, on by default)
 mine_repo.py     orchestrator + CLI (one repo)
 build_dataset.py batch driver: clone repos.txt + mine all into one dataset
 snapshot_capture.py / snapshots.py   PR snapshots: capture while mining, assemble at batch end

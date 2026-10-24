@@ -32,16 +32,28 @@ from snapshots import _read_rows
 OUTSIDE = {"CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE"}
 
 
+def _repo_key(repo) -> str:
+    """owner/name however the dataset spelled the repo (URL, .git, trailing slash)."""
+    r = str(repo or "").strip().rstrip("/")
+    if r.endswith(".git"):
+        r = r[:-4]
+    parts = [x for x in r.replace("\\", "/").split("/") if x]
+    return "/".join(parts[-2:]) if len(parts) >= 2 else r
+
+
 def sample(rows: list[dict], clone_dir: str, n: int, seed: int) -> list[dict]:
     """In-scope rows whose repo is cloned, a fixed random sample of n."""
     ok = []
     for r in rows:
-        clone = os.path.join(clone_dir, str(r.get("repo", "")).replace("/", "_"))
-        if (r.get("author_association") in OUTSIDE and not r.get("author_is_bot")
+        key = _repo_key(r.get("repo"))
+        clone = os.path.join(clone_dir, key.replace("/", "_"))
+        # an unknown association (no API) counts as outside, as in the miner's scope rule
+        if ((r.get("author_association") is None or r.get("author_association") in OUTSIDE)
+                and not r.get("author_is_bot")
                 and not r.get("author_confirmed_maintainer")
                 and not r.get("docs_only") and not r.get("test_only")
                 and r.get("base_sha") and r.get("head_sha") and os.path.isdir(clone)):
-            ok.append(dict(r, _clone=clone))
+            ok.append(dict(r, repo=key, _clone=clone))
     ok.sort(key=lambda r: (r["repo"], r["pr_number"]))
     random.Random(seed).shuffle(ok)
     return ok[:n]
@@ -49,7 +61,8 @@ def sample(rows: list[dict], clone_dir: str, n: int, seed: int) -> list[dict]:
 
 def agreement(answers: dict[str, dict[str, dict]], a: str, b: str) -> dict:
     """{flag: share of PRs where both models gave the same non-null value},
-    plus "overall" (all flags pooled) and "pairs" (PRs answered by both)."""
+    plus "overall" (all flags pooled, so flags answered more often weigh more),
+    "macro" (the mean of the per-flag shares) and "pairs" (PRs answered by both)."""
     keys = [k for k in answers.get(a, {}) if k in answers.get(b, {})]
     out, total, same_total = {}, 0, 0
     for flag in llm_flags.FLAG_SCHEMA:
@@ -60,6 +73,8 @@ def agreement(answers: dict[str, dict[str, dict]], a: str, b: str) -> dict:
         total += len(pairs)
         same_total += same
     out["overall"] = round(same_total / total, 3) if total else None
+    shares = [out[f] for f in llm_flags.FLAG_SCHEMA if out[f] is not None]
+    out["macro"] = round(sum(shares) / len(shares), 3) if shares else None
     out["pairs"] = len(keys)
     return out
 
@@ -76,7 +91,8 @@ def main():
     args = ap.parse_args()
 
     rows = sample(_read_rows(args.dataset), args.clone_dir, args.n, args.seed)
-    done = {(r["model"], r["key"]): r["flags"] for r in cap.read_jsonl(args.answers)}
+    # an answer of null (the call failed earlier) is asked again on a rerun
+    done = {(r["model"], r["key"]): r["flags"] for r in cap.read_jsonl(args.answers) if r.get("flags")}
     todo = [(m, r) for m in args.models for r in rows
             if (m, f"{r['repo']}#{r['pr_number']}") not in done]
     print(f"[compare] {len(rows)} PRs sampled; {len(todo)} calls to make "
@@ -88,11 +104,20 @@ def main():
     with open(args.answers, "a", encoding="utf-8") as fh:
         for i, (model, r) in enumerate(todo, 1):
             st.llm_model = model
-            diff = llm_flags.llm_diff(r["_clone"], r["base_sha"], r["head_sha"], st)
-            if not diff.strip():
+            diff, _truncated, has_code = llm_flags.llm_diff_info(r["_clone"], r["base_sha"], r["head_sha"], st)
+            if not diff.strip() or not has_code:
                 continue
-            raw = llm_flags._call_with_quota(lambda: llm_flags._call_claude_cli(diff, st), st)
-            flags = llm_flags._validate(raw, diff) if raw else None
+            flags = None
+            for _ in range(3):                  # a failed call is retried, not recorded as an answer
+                raw = llm_flags._call_with_quota(lambda: llm_flags._call_claude_cli(diff, st), st)
+                got = llm_flags._validate(raw, diff) if isinstance(raw, dict) else None
+                if got and any(v is not None for v in got.values()):
+                    flags = got
+                    break
+            if flags is None:
+                print(f"[compare] {model} gave no usable answer for {r['repo']}#{r['pr_number']}; "
+                      "it is asked again on the next run", file=sys.stderr)
+                continue
             key = f"{r['repo']}#{r['pr_number']}"
             done[(model, key)] = flags
             fh.write(json.dumps({"model": model, "key": key, "flags": flags}) + "\n")
@@ -105,7 +130,8 @@ def main():
             answers.setdefault(model, {})[key] = flags
     a, b = args.models
     rep = agreement(answers, a, b)
-    print(f"\n{a} vs {b}: {rep['pairs']} PRs answered by both; overall agreement {rep['overall']}")
+    print(f"\n{a} vs {b}: {rep['pairs']} PRs answered by both; overall agreement {rep['overall']} "
+          f"(macro mean over flags {rep['macro']})")
     for flag in sorted(llm_flags.FLAG_SCHEMA, key=lambda f: (rep[f] is None, rep[f] or 0)):
         print(f"  {flag:36} {rep[flag]}")
     print("\nFlags below ~0.8 disagree often; check them before switching models.")

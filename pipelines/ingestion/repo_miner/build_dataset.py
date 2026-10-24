@@ -53,13 +53,30 @@ TEST_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 _WEIGHT_RE = re.compile(r"\[~?([\d,]+) commits\]")
 _PRS_RE = re.compile(r"\[~?([\d,]+) PRs\]")
-_DOMAIN_RE = re.compile(r"\[domain:\s*([a-z0-9][a-z0-9-]*)\]")
+_DOMAIN_RE = re.compile(r"\[\s*domain\s*:([^\]]*)\]", re.IGNORECASE)
+_DOMAIN_OK = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_WARNED: set[str] = set()                                   # one warning per distinct problem, however often a line is parsed
+
+
+def _warn_once(msg: str) -> None:
+    if msg not in _WARNED:
+        _WARNED.add(msg)
+        print(f"[repos] WARNING: {msg}", flush=True)
 
 
 def _parse_domain(line: str) -> str | None:
-    """Dataset domain from a repos.txt line's "[domain: web-ts]" tag (ADR 0011)."""
+    """Dataset domain from a repos.txt line's "[domain: web-ts]" tag (ADR 0011), lower-cased
+    ("[Domain: Web-TS]" is the same tag). A tag that is not a valid name is warned about and
+    read as no tag, so a typo does not drop a repo from --only-domain unnoticed."""
     m = _DOMAIN_RE.search(line)
-    return m.group(1) if m else None
+    if not m:
+        return None
+    val = m.group(1).strip().lower()
+    if not _DOMAIN_OK.match(val):
+        _warn_once(f"malformed domain tag {m.group(0)!r} in {line.split('#', 1)[0].strip() or line.strip()!r}; "
+                   f"read as untagged (a name is letters, digits and hyphens)")
+        return None
+    return val
 
 
 def _parse_weight(line: str) -> int | None:
@@ -210,9 +227,9 @@ def plan_shares(repos_file: str, only_domain: str | None, n: int, by: str = "com
     """Who mines what: the repos file split over n PCs the way a run splits it, as [(owner/name, commits tag)] per PC
     (index 0 is PC 1). Used to show a volunteer which repos are theirs."""
     with open(repos_file, encoding="utf-8") as fh:
-        lines = [line for line in fh if _parse_url(line)]
+        lines = _dedupe_lines([line for line in fh if _parse_url(line)])
     if only_domain:
-        lines = [ln for ln in lines if _parse_domain(ln) == only_domain]
+        lines = [ln for ln in lines if _parse_domain(ln) == only_domain.strip().lower()]
     entries = [_parse_url(ln) for ln in lines]
     weights = [_parse_weight(ln) for ln in lines]
     basis = [_parse_prs(ln) for ln in lines] if by == "prs" else weights
@@ -267,15 +284,61 @@ def _write_test_parquet(jsonl_path: str) -> None:
         print(f"[test] parquet FAILED: {type(e).__name__}: {e}", flush=True)
 
 
+_NAME_OK = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _valid_name(part: str) -> bool:
+    """An owner or repo name that is safe as a path component and in a clone URL: GitHub's own
+    alphabet, and never "." or ".." (they would walk out of the clone directory) or a leading "-" (an option to git)."""
+    return bool(_NAME_OK.match(part)) and part not in (".", "..") and not part.startswith("-")
+
+
 def _parse_url(line: str):
-    """(owner, name, url) from a GitHub URL line, or None for blanks/comments/bad."""
+    """(owner, name, url) from a GitHub URL line, or None for blanks/comments/bad. Only the first two
+    path segments count, so a pasted browser URL (.../tree/main, ?tab=readme) names its repo; owner and
+    name must be GitHub-legal (_valid_name), anything else is not a repo line."""
     url = line.split("#", 1)[0].strip()       # drop inline "# Train" style comments
     if not url:
         return None
-    m = re.search(r"github\.com[:/]+([^/]+)/(.+?)(?:\.git)?/?$", url)
+    m = re.search(r"github\.com[:/]+([^/\s?#]+)/([^/\s?#]+)(?:[/?#]\S*)?$", url)
     if not m:
         return None
-    return m.group(1), m.group(2), url
+    owner, name = m.group(1), m.group(2)
+    if name.endswith(".git"):
+        name = name[:-4]
+    if not (_valid_name(owner) and _valid_name(name)):
+        return None
+    return owner, name, url
+
+
+def _canonical_url(owner: str, name: str) -> str:
+    """What git clones from: the anchored https URL of the validated owner/name, not the line as written
+    (which may carry a scheme or helper git would honour, or trailing text)."""
+    return f"https://github.com/{owner}/{name}"
+
+
+def _safe_path(base: str, *parts: str) -> str | None:
+    """base/parts joined, or None unless its real path stays inside base (a name such as ".." or a
+    symlink planted in the directory must not make a clone, rmtree or cache write land elsewhere)."""
+    root = os.path.realpath(base)
+    path = os.path.realpath(os.path.join(root, *parts))
+    return path if path != root and path.startswith(root + os.sep) else None
+
+
+def _dedupe_lines(lines: list[str]) -> list[str]:
+    """Drop a repo listed twice (owner/name compared case-insensitively, the way GitHub names them),
+    keeping the first and saying so: a duplicate would be cloned into the same directory twice."""
+    seen: dict[str, str] = {}
+    out = []
+    for ln in lines:
+        o, n, _ = _parse_url(ln)
+        key = f"{o}/{n}".lower()
+        if key in seen:
+            _warn_once(f"{o}/{n} is listed twice (first as {seen[key]}); keeping the first")
+            continue
+        seen[key] = f"{o}/{n}"
+        out.append(ln)
+    return out
 
 
 def _rmtree(path: str) -> None:
@@ -362,7 +425,12 @@ def _save_llm_reuse(rows, path: str, repo: str) -> None:
     for r in rows.to_dict("records"):
         flags = {c: (None if r.get(c) is None or r.get(c) != r.get(c) else r.get(c)) for c in cols}
         if r.get("base_sha") and r.get("head_sha") and any(v is not None for v in flags.values()):
-            recs.append({"base_sha": r["base_sha"], "head_sha": r["head_sha"],
+            rec = {"base_sha": r["base_sha"], "head_sha": r["head_sha"]}
+            for key, col in (("prompt_version", "llm_prompt_version"), ("model", "llm_model")):
+                v = r.get(col)                              # what made the answer: load_reuse reuses it only for the same prompt and model
+                if isinstance(v, str) and v:
+                    rec[key] = v
+            recs.append({**rec,
                          "flags": {k: (v.item() if hasattr(v, "item") else v) for k, v in flags.items()}})
     if recs:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -376,6 +444,8 @@ def _drop_repo(out: str, repo: str, cache_dir: str = "ci_cache") -> None:
     cache and checkpoint lines, so the next run mines it from scratch."""
     key = repo.lower()
     owner, _, name = repo.partition("/")
+    if not (_valid_name(owner) and _valid_name(name)):
+        raise ValueError(f"not a repo name: {repo!r}")
     path, df = _read_out(out)
     if df is not None and "repo" in df.columns:
         mine = df[df["repo"].str.lower() == key]
@@ -399,12 +469,15 @@ def _drop_repo(out: str, repo: str, cache_dir: str = "ci_cache") -> None:
             print(f"[remine] {repo}: removed {f}", flush=True)
     ckpt = out + ".partial.jsonl"
     if os.path.isfile(ckpt):
-        with open(ckpt, encoding="utf-8") as fh:
+        with open(ckpt, "rb") as fh:
             lines = fh.readlines()
-        kept = [l for l in lines if not l.strip() or (json.loads(l).get("repo") or "").lower() != key]
+        # a line of another repo, and a damaged one that names no repo, stay: only this repo's rows go
+        kept = [l for l in lines if _line_repo(l) != key]
         if len(kept) != len(lines):
-            with open(ckpt, "w", encoding="utf-8") as fh:
+            tmp = ckpt + ".tmp"
+            with open(tmp, "wb") as fh:
                 fh.writelines(kept)
+            os.replace(tmp, ckpt)
             print(f"[remine] {repo}: removed {len(lines) - len(kept)} checkpointed rows", flush=True)
 
 
@@ -418,35 +491,100 @@ _CONTROL = os.getenv("RIFFLE_CONTROL")
 
 
 def _skip_requested(repo: str) -> bool:
+    """Is `repo` named in the skip-control file? The TUI rewrites that file (truncate, then write), so a
+    read can land on an empty file between the two: an empty read is tried once more before it counts."""
     if not _CONTROL:
         return False
+    for attempt in (0, 1):
+        try:
+            with open(_CONTROL, encoding="utf-8") as fh:
+                names = {l.strip().lower() for l in fh if l.strip()}
+        except OSError:
+            return False
+        if names or attempt:
+            return repo.lower() in names
+        time.sleep(0.05)
+    return False
+
+
+def _own_group(proc) -> bool:
+    """True when `proc` leads a process group of its own (started with start_new_session), so a signal to the
+    group reaches its git and semgrep children too and never us."""
     try:
-        with open(_CONTROL, encoding="utf-8") as fh:
-            return repo.lower() in {l.strip().lower() for l in fh if l.strip()}
+        return os.name != "nt" and os.getpgid(proc.pid) == proc.pid != os.getpgrp()
     except OSError:
         return False
 
 
+def _signal_child(proc, sig: int) -> None:
+    try:
+        if _own_group(proc):
+            os.killpg(proc.pid, sig)
+        else:
+            proc.send_signal(sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 def _stop_child(proc, signal) -> None:
-    """SIGINT the miner so it keeps its checkpoint; kill it after 30 s."""
+    """SIGINT the miner (its whole process group, so git and semgrep grandchildren go too) so it keeps its
+    checkpoint; kill the group after 30 s. A second Stop while waiting kills it at once and is passed on:
+    the batch must stop, not carry on to the next repo."""
     if proc.poll() is not None:
         return
     try:
-        proc.send_signal(signal.SIGINT if os.name != "nt" else signal.CTRL_BREAK_EVENT)
+        if os.name == "nt":
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            _signal_child(proc, signal.SIGINT)
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
+        if os.name != "nt":
+            _signal_child(proc, signal.SIGKILL)
         proc.kill()
         proc.wait()
-    except KeyboardInterrupt:          # a second Stop: don't wait
+    except KeyboardInterrupt:          # a second Stop: don't wait, and don't swallow it
+        if os.name != "nt":
+            _signal_child(proc, signal.SIGKILL)
         proc.kill()
+        proc.wait()
+        raise
 
 
-def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
+def _clone_stall_s() -> float | None:
+    """Seconds of silence after which a clone is killed (--clone-stall-s / RIFFLE_CLONE_STALL_S, default 600; 0 = never)."""
+    import gitio
+    return gitio._env_seconds("RIFFLE_CLONE_STALL_S", gitio.CLONE_STALL_S)
+
+
+def _run_watched(cmd: list[str], repo: str, stall_s: float | None = None) -> tuple[int, bool]:
     """Run cmd, stopping it if a skip is requested for repo meanwhile.
     Returns (exit code, skipped). The miner gets SIGINT first so it stops
-    cleanly with its checkpoint, then is killed if it doesn't exit."""
+    cleanly with its checkpoint, then is killed if it doesn't exit. With `stall_s` (a clone, which
+    prints progress on stderr) the process is also killed after that long without any output; a
+    stalled one returns exit code -9. The miner runs in its own process group, so a Stop reaches its children."""
     import signal
-    proc = subprocess.Popen(cmd, **({"creationflags": 0x00000200} if os.name == "nt" else {}))   # Windows: its own group, so CTRL_BREAK reaches it alone
+    import threading
+    kw: dict = {"creationflags": 0x00000200} if os.name == "nt" else {"start_new_session": True}   # Windows: its own group, so CTRL_BREAK reaches it alone
+    last = [time.monotonic()]
+    if stall_s:
+        kw.update(stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    proc = subprocess.Popen(cmd, **kw)
+    if stall_s:
+        def _pump():
+            out = getattr(sys.stderr, "buffer", None)
+            while True:
+                chunk = proc.stderr.read1(4096) if hasattr(proc.stderr, "read1") else proc.stderr.read(4096)
+                if not chunk:
+                    return
+                last[0] = time.monotonic()
+                try:
+                    if out is not None:
+                        out.write(chunk)
+                        out.flush()
+                except (OSError, ValueError):
+                    pass
+        threading.Thread(target=_pump, daemon=True).start()
     while True:
         try:
             return proc.wait(timeout=1), False
@@ -462,6 +600,12 @@ def _run_watched(cmd: list[str], repo: str) -> tuple[int, bool]:
         except KeyboardInterrupt:                           # a Stop during the heartbeat stops the miner too
             _stop_child(proc, signal)
             raise
+        if stall_s and time.monotonic() - last[0] > stall_s:
+            print(f"[clone] no output for {stall_s:.0f}s; killing the stalled clone", flush=True)
+            _signal_child(proc, signal.SIGKILL if os.name != "nt" else signal.SIGTERM)
+            proc.kill()
+            proc.wait()
+            return -9, False
         if _skip_requested(repo):
             print(f"[skip] {repo}: skip requested; stopping it", flush=True)
             _stop_child(proc, signal)
@@ -524,11 +668,18 @@ def _sync_mark(repo: str, state: str, args=None) -> None:
         _sync_beat(True, "repo started")
 
 
+def _ci_cache_dir(args=None) -> str:
+    """Where the miner keeps its per-repo caches: the run's --ci-cache-dir if it has one, else the
+    miner's own default (Settings.ci_cache_dir), the same directory the child writes to."""
+    import config
+    return getattr(args, "ci_cache_dir", None) or config.DEFAULT.ci_cache_dir
+
+
 def _selected_count(repo: str) -> int | None:
     """PRs a started repo selected, from its pinned selection (None: not yet)."""
     owner, _, name = repo.partition("/")
     try:
-        with open(os.path.join("ci_cache", f"{owner}_{name}.selection.json"), encoding="utf-8") as fh:
+        with open(os.path.join(_ci_cache_dir(), f"{owner}_{name}.selection.json"), encoding="utf-8") as fh:
             sel = json.load(fh)
         return sum(len(sel.get(k) or []) for k in ("merged", "unmerged", "stale"))
     except (OSError, json.JSONDecodeError, AttributeError, TypeError):
@@ -553,24 +704,89 @@ def _run_settings(args) -> dict:
             "repos_file": os.path.basename(g("repos_file") or "") or None, "shard": g("shard")}
 
 
+_REPO_FIELD = re.compile(rb'\{\s*"repo"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _line_repo(line: bytes) -> str | None:
+    """Lower-cased repo of one checkpoint line, or None for a blank or damaged line. Rows are wide (a
+    hundred columns, some with long text), so the leading "repo" field is read with a regex and the
+    whole line is parsed as JSON only when it is not there (another field first)."""
+    line = line.strip()
+    if not line:
+        return None
+    m = _REPO_FIELD.match(line)
+    try:
+        if m:
+            raw = m.group(1)
+            val = json.loads(b'"' + raw + b'"') if b"\\" in raw else raw.decode("utf-8")
+        else:
+            val = json.loads(line).get("repo")
+    except (ValueError, AttributeError, UnicodeDecodeError):
+        return None                                         # a line cut by a crash
+    return str(val).lower() if val else None
+
+
+# per checkpoint path: what has been counted, up to which byte, and a fingerprint of the file's start and of
+# the bytes just before that point, so an append is read from where it left off and a rewrite is read afresh
+_CKPT_CACHE: dict[str, dict] = {}
+_FP = 256
+
+
+def _fingerprint(fh, pos: int) -> bytes:
+    fh.seek(0)
+    head = fh.read(_FP)
+    fh.seek(max(0, pos - _FP))
+    return head + b"|" + fh.read(min(_FP, pos))
+
+
 def _checkpointed(path: str) -> dict[str, int]:
     """Rows per lower-cased repo in the shared checkpoint. One file holds every unfinished repo's rows
-    (a failed or stopped repo keeps its rows there for the rerun), so a line counts only for its own repo."""
-    found: dict[str, int] = {}
+    (a failed or stopped repo keeps its rows there for the rerun), so a line counts only for its own repo.
+    The status heartbeat calls this every few minutes on a file that can reach gigabytes, so it keeps what it
+    counted per (size, mtime) and, when the file only grew, reads just the new lines."""
     try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                if not line.strip():
-                    continue
-                try:
-                    repo = str(json.loads(line).get("repo") or "").lower()
-                except (ValueError, AttributeError):
-                    continue                                # a line cut by a crash
-                if repo:
-                    found[repo] = found.get(repo, 0) + 1
+        st = os.stat(path)
     except OSError:
-        pass
-    return found
+        _CKPT_CACHE.pop(path, None)
+        return {}
+    c = _CKPT_CACHE.get(path)
+    if c and c["size"] == st.st_size and c["mtime"] == st.st_mtime_ns:
+        # (size, mtime) can survive a rewrite (a coarse clock, a restored mtime): the
+        # fingerprint of the first and last bytes read so far tells, for 512 bytes of reading
+        try:
+            with open(path, "rb") as fh:
+                same = c["pos"] <= st.st_size and _fingerprint(fh, c["pos"]) == c["fp"]
+        except OSError:
+            same = True
+        if same:
+            return dict(c["counts"])
+        _CKPT_CACHE.pop(path, None)
+        c = None
+    try:
+        with open(path, "rb") as fh:
+            if c and c["pos"] <= st.st_size and c["pos"] > 0 and _fingerprint(fh, c["pos"]) == c["fp"]:
+                counts, pos = dict(c["counts"]), c["pos"]    # only appended to since the last look
+            else:
+                counts, pos = {}, 0
+            fh.seek(pos)
+            tail = b""
+            for line in fh:
+                if not line.endswith(b"\n"):
+                    tail = line                              # not finished (or a crash cut it): looked at, not remembered
+                    break
+                repo = _line_repo(line)
+                if repo:
+                    counts[repo] = counts.get(repo, 0) + 1
+                pos += len(line)
+            fp = _fingerprint(fh, pos)
+    except OSError:
+        return dict(c["counts"]) if c else {}
+    _CKPT_CACHE[path] = {"size": st.st_size, "mtime": st.st_mtime_ns, "pos": pos, "fp": fp, "counts": counts}
+    out = dict(counts)
+    repo = _line_repo(tail) if tail else None
+    if repo:
+        out[repo] = out.get(repo, 0) + 1
+    return out
 
 
 def _sync_status(why: str) -> dict:
@@ -599,7 +815,7 @@ def _sync_status(why: str) -> dict:
     remaining = (max(0, (mining[1].get("selected") or 0) - mining[1].get("rows", 0)) if mining else 0)
     wait_until = None                                       # the child's GitHub quota wait, if it is in one
     try:
-        with open(os.path.join("ci_cache", ".rate_wait"), encoding="utf-8") as fh:
+        with open(os.path.join(_ci_cache_dir(args), ".rate_wait"), encoding="utf-8") as fh:
             until = int(fh.read().strip())
         if until > time.time():
             wait_until = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until))
@@ -712,6 +928,76 @@ def _assemble_snapshots(args) -> None:
     progress.emit("assemble", state="done", **r)
 
 
+def validate_options(args) -> list[str]:
+    """Every problem with this combination of options, found before anything is cloned or called, so a bad
+    flag costs a second and not a night. `--max-prs 0` means no cap (what the miner does with it): it is
+    normalised to None here so both sides read it the same way."""
+    import datetime as _dt
+    bad: list[str] = []
+    g = lambda n: getattr(args, n, None)                    # noqa: E731
+    if g("max_prs") is not None:
+        if args.max_prs < 0:
+            bad.append("--max-prs can't be negative (0 or leaving it out means no cap)")
+        elif args.max_prs == 0:
+            args.max_prs = None
+    if g("shard_plan") is not None and args.shard_plan < 1:
+        bad.append(f"--shard-plan wants at least 1 PC, got {args.shard_plan}")
+    full = g("full_repo")
+    if full:
+        clash = [f for f, v in (("--window-from", g("window_from")), ("--window-to", g("window_to")),
+                                ("--max-prs", g("max_prs")), ("--cap-on", g("cap_on")),
+                                ("--lead-in-days", g("lead_in_days")), ("--test", g("test"))) if v not in (None, False, "")]
+        if clash:
+            bad.append("--full-repo mines everything; it can't be combined with " + ", ".join(clash))
+    wf, wt = g("window_from"), g("window_to")
+    if bool(wf) != bool(wt):
+        bad.append("--window-from and --window-to go together (give both)")
+    dates = {}
+    for flag, val in (("--window-from", wf), ("--window-to", wt)):
+        if val:
+            try:
+                dates[flag] = _dt.datetime.strptime(val, "%Y-%m-%d").date()
+            except ValueError:
+                bad.append(f"{flag} wants a real date as YYYY-MM-DD, got {val!r}")
+    if len(dates) == 2 and dates["--window-from"] > dates["--window-to"]:
+        bad.append(f"--window-from {wf} is after --window-to {wt}")
+    for flag, name, low in (("--min-age-days", "min_age_days", 0), ("--lead-in-days", "lead_in_days", 0),
+                            ("--max-unmerged", "max_unmerged", 0), ("--skip-big", "skip_big", 0),
+                            ("--repo-retries", "repo_retries", 0), ("--max-files-deep", "max_files_deep", 0),
+                            ("--workers", "workers", 1), ("--llm-concurrency", "llm_concurrency", 1),
+                            ("--test-prs", "test_prs", 1), ("--llm-max-diff-chars", "llm_max_diff_chars", 1),
+                            ("--llm-diff-context", "llm_diff_context", 0)):
+        v = g(name)
+        if v is not None and v < low:
+            bad.append(f"{flag} must be {low} or more, got {v}")
+    pct = g("llm_sample_pct")
+    if pct is not None and not 0 <= pct <= 100:
+        bad.append(f"--llm-sample-pct is a percentage from 0 to 100, got {pct}")
+    stall = g("clone_stall_s")
+    if stall is not None and stall < 0:
+        bad.append(f"--clone-stall-s can't be negative, got {stall:g}")
+    if g("shard"):
+        try:
+            k, n = (int(x) for x in args.shard.split("/"))
+            assert 1 <= k <= n
+        except (ValueError, AssertionError):
+            bad.append(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
+    for repo in g("remine_repo") or []:
+        o, _, n = repo.partition("/")
+        if repo.count("/") != 1 or not (_valid_name(o) and _valid_name(n)):
+            bad.append(f"--remine-repo wants OWNER/NAME, got {repo!r}")
+    return bad
+
+
+def _export_child_settings(args) -> None:
+    """Flags that shape what the miner computes but that it reads from its environment (Settings defaults)
+    go into ours, which every miner and clone process inherits."""
+    for val, var in ((args.llm_backend, "LLM_BACKEND"), (args.llm_diff_context, "LLM_DIFF_CONTEXT"),
+                     (args.max_files_deep, "RIFFLE_MAX_FILES_DEEP"), (args.clone_stall_s, "RIFFLE_CLONE_STALL_S")):
+        if val is not None:
+            os.environ[var] = f"{val:g}" if isinstance(val, float) else str(val)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """The command line, on its own so join.py and the TUI can parse a command the way the miner will."""
     ap = argparse.ArgumentParser(
@@ -771,6 +1057,19 @@ def build_parser() -> argparse.ArgumentParser:
                          "files are cut (default 25000) (passed through)")
     ap.add_argument("--llm-quota-wait", action=argparse.BooleanOptionalAction, default=None,
                     help="wait for the Claude plan to reset instead of failing calls (default on) (passed through)")
+    ap.add_argument("--llm-diff-context", type=int, default=None,
+                    help="context lines around each change in the diff sent to the LLM (default 1); "
+                         "reaches the miner as LLM_DIFF_CONTEXT")
+    ap.add_argument("--llm-backend", choices=["claude_cli", "api"], default=None,
+                    help="LLM backend for the flags (default: LLM_BACKEND, else claude_cli); reaches the "
+                         "miner as LLM_BACKEND")
+    ap.add_argument("--max-files-deep", type=int, default=None, metavar="N",
+                    help="a PR touching more than N files skips the per-file deep features (blame, line "
+                         "history, scanners) instead of stalling the repo (default 300; 0 = never skip); "
+                         "reaches the miner as RIFFLE_MAX_FILES_DEEP")
+    ap.add_argument("--clone-stall-s", type=float, default=None, metavar="S",
+                    help="kill a git clone that prints nothing for S seconds and retry it (default 600, "
+                         "or RIFFLE_CLONE_STALL_S; 0 = never)")
     ap.add_argument("--window-from", default=None, help="date window start YYYY-MM-DD (passed through)")
     ap.add_argument("--window-to", default=None, help="date window end YYYY-MM-DD (passed through)")
     ap.add_argument("--lead-in-days", type=int, default=None, help="history lead-in days (passed through)")
@@ -847,6 +1146,10 @@ def main():
     config.stop_on_break()
     ap = build_parser()
     args = ap.parse_args()
+    problems = validate_options(args)
+    if problems:
+        sys.exit("[options] " + "\n[options] ".join(problems) + "\nNothing was cloned or changed.")
+    _export_child_settings(args)
     if sys.stdin.isatty() and not (args.test or args.shard_plan or args.audit):
         import doctor                                       # a run started from a terminal starts on the newest main (not under the TUI,
         doctor.auto_update()                                # which already checked, and not in automation: no TTY)
@@ -858,10 +1161,6 @@ def main():
             sys.exit(f"[llm] unavailable: {why}. The LLM flags are part of the default dataset; "
                      f"fix the backend (python doctor.py), or pass --no-llm to mine without them "
                      f"on purpose.")
-    if args.full_repo and (args.window_from or args.window_to or args.max_prs is not None
-                           or args.cap_on or args.test):
-        sys.exit("--full-repo mines everything; it can't be combined with --window-from/--window-to, "
-                 "--max-prs, --cap-on or --test")
 
     # a sharded run tags its dataset (dataset_pc1of3.parquet) so PCs' files can't be mixed up
     plain_out = args.out
@@ -888,10 +1187,6 @@ def main():
     if args.audit:
         _audit(args.out)
         return
-    for repo in args.remine_repo:
-        if repo.count("/") != 1:
-            sys.exit(f"--remine-repo wants OWNER/NAME, got {repo!r}")
-
     size_of: dict = {}
     domain_of: dict = {}
     if args.test:
@@ -900,14 +1195,19 @@ def main():
         if not os.path.isfile(args.repos_file):
             sys.exit(f"repos file not found: {args.repos_file}")
         with open(args.repos_file, encoding="utf-8") as fh:
-            lines = [line for line in fh if _parse_url(line)]
+            lines = _dedupe_lines([line for line in fh if _parse_url(line)])
         entries = [_parse_url(line) for line in lines]
         domains = [_parse_domain(line) for line in lines]
+        n_listed = len(entries)
         if args.only_domain:
-            keep = [i for i, d in enumerate(domains) if d == args.only_domain]
+            want = args.only_domain.strip().lower()
+            keep = [i for i, d in enumerate(domains) if d == want]
             lines = [lines[i] for i in keep]
             entries, domains = [entries[i] for i in keep], [domains[i] for i in keep]
-            print(f"[domain] {len(entries)} repos tagged [domain: {args.only_domain}]", flush=True)
+            print(f"[domain] {len(entries)} repos tagged [domain: {want}]", flush=True)
+            if not entries and n_listed:
+                print(f"[domain] WARNING: 0 repos tagged {args.only_domain!r} in {args.repos_file} "
+                      f"(tags are case-insensitive, e.g. [domain: web-ts])", flush=True)
         weights = [_parse_weight(line) for line in lines]
         pr_counts = [_parse_prs(line) for line in lines]
         size_of = {f"{o}/{n}".lower(): w for (o, n, _), w in zip(entries, weights)}
@@ -918,11 +1218,7 @@ def main():
                 _issue_tokens(args, sid, args.shard_plan)
             return
         if args.shard:
-            try:
-                k, n = (int(x) for x in args.shard.split("/"))
-                assert 1 <= k <= n
-            except (ValueError, AssertionError):
-                sys.exit(f"--shard must look like K/N with 1 <= K <= N, got {args.shard!r}")
+            k, n = (int(x) for x in args.shard.split("/"))        # validated by validate_options
             basis = pr_counts if args.split_by == "prs" else weights      # what the split balances
             _warn_untagged(entries, basis, args.split_by)
             sid = split_id(entries, basis, n, args.split_by)
@@ -936,6 +1232,9 @@ def main():
                   f"commits" + (f", {prs_total:,} PRs" if prs_total else "") + f" (balanced by {args.split_by}). Every PC must show the same split ID "
                   f"(same repos.txt, PC count and --split-by) or shares may overlap.", flush=True)
     if not entries:
+        if args.only_domain and not args.test and n_listed:
+            sys.exit(f"0 repos tagged {args.only_domain!r} in {args.repos_file}; nothing to mine "
+                     f"({n_listed} repos are listed, none with that tag)")
         sys.exit("no valid GitHub URLs found in the repos file")
     if args.test:
         import config
@@ -1000,8 +1299,16 @@ def main():
                   + ", ".join(big), flush=True)
     aborted = False
     for i, (owner, name, url) in enumerate(entries, 1):
-        target = os.path.join(args.clone_dir, f"{owner}_{name}")
         print(f"=== [{i}/{len(entries)}] {owner}/{name} ===", flush=True)
+        target = _safe_path(args.clone_dir, f"{owner}_{name}")
+        if target is None:
+            print(f"[clone] REFUSED: {owner}/{name} would be cloned outside {args.clone_dir} "
+                  f"(a link in the clone directory, or a bad name); skipping this repo\n", flush=True)
+            failed.append(f"{owner}/{name} (unsafe path)")
+            progress.emit("repo_failed", repo=f"{owner}/{name}", stage="clone", rc=None)
+            _sync_mark(f"{owner}/{name}", "failed")
+            continue
+        url = _canonical_url(owner, name)
         if f"{owner}/{name}".lower() in done_repos:
             print("[resume] already mined; skipping\n", flush=True)
             ok += 1
@@ -1035,7 +1342,8 @@ def main():
             if cloned:
                 break
             print(f"[clone] git clone {url} (attempt {c_attempt}/{attempts})", flush=True)
-            rc, was_skipped = _run_watched(["git", "clone", url, target], f"{owner}/{name}")
+            rc, was_skipped = _run_watched(["git", "clone", "--progress", "--", url, target], f"{owner}/{name}",
+                                           stall_s=_clone_stall_s())
             if was_skipped:
                 break
             if rc == 0:

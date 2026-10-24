@@ -16,12 +16,23 @@ import config
 import gitio
 
 
+def _age_days(base_time: datetime, t: datetime) -> int:
+    """Days from a line's author time to the base commit's time. Never negative:
+    an author time can be later than the base's committer time (a rebased or
+    clock-skewed commit), and a line cannot be younger than its base."""
+    return max(0, (base_time - t).days)
+
+
 def per_file_line_features(repo: str, base: str, head: str, path: str,
                            author_email: str, idx: dict,
-                           st: config.Settings) -> dict:
+                           st: config.Settings, old_path: str | None = None) -> dict:
+    """Line-level history of one changed file. `old_path` is its name at base
+    when the PR renames it (gitio.rename_map): the modified lines and the blame
+    are both of the base-side file, which only has that name."""
+    lp = old_path or path
     base_time = idx["base_time"]
-    mod_lines = gitio.deleted_or_modified_lines(repo, base, head, path)
-    blame = gitio.blame_file(repo, base, path)
+    mod_lines = gitio.deleted_or_modified_lines(repo, base, head, path, old_path)
+    blame = gitio.blame_file(repo, base, lp)
     if not mod_lines or not blame:
         return {
             "mod_line_age_days_min": None, "mod_line_age_days_median": None,
@@ -33,13 +44,13 @@ def per_file_line_features(repo: str, base: str, head: str, path: str,
     a = author_email.lower()
 
     # build a set of line numbers that a past fix touched, per file
-    fix_lines = _fix_touched_lines(repo, base, path, idx, st)
+    fix_lines = _fix_touched_lines(repo, base, lp, idx, st)
 
     for ln in mod_lines:
         bl = blame.get(ln)
         if bl is None:
             continue
-        ages.append((base_time - bl.author_time).days)
+        ages.append(_age_days(base_time, bl.author_time))
         authors.add(bl.author_email)
         if bl.author_email == a:
             self_hits += 1
@@ -93,6 +104,6 @@ def _fix_touched_lines(repo: str, base: str, path: str, idx: dict,
     out: dict[int, float] = {}
     for ln, bl in blame.items():
         if _commit_is_fix(repo, bl.orig_commit, st):
-            age = (base_time - bl.author_time).days
+            age = _age_days(base_time, bl.author_time)
             out[ln] = 0.5 ** (age / st.decay_half_life_days)
     return out

@@ -130,7 +130,7 @@ def test_a_pcs_run_json_cannot_break_the_admin_or_overview_pages(store):
 def test_the_client_address_behind_a_proxy_is_the_one_the_proxy_added(store, monkeypatch):
     monkeypatch.setattr(store_app, "TRUST_PROXY", True)
     for i in range(25):                                    # one real client, a new fake address in front each time
-        req(store, "GET", "/api/runs", "wrong", headers={"X-Forwarded-For": f"10.9.9.{i}, 203.0.113.7"})
+        req(store, "GET", "/api/runs", f"wrong{i}", headers={"X-Forwarded-For": f"10.9.9.{i}, 203.0.113.7"})
     code, _ = req(store, "GET", "/api/runs", "wrong2", headers={"X-Forwarded-For": "10.1.1.1, 203.0.113.7"})
     assert code == 429, "spoofed leading addresses let one client dodge the throttle"
 

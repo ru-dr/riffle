@@ -25,6 +25,11 @@ CREATE INDEX IF NOT EXISTS activity_ts ON activity (ts);
 ACTIVITY_KEEP_S = 35 * 86400                                 # the activity graph looks back at most 30 days
 
 
+def like_escape(text: str) -> str:
+    """`text` as a literal in a LIKE pattern used with ESCAPE '\\' (names contain `_`, a wildcard)."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class Index:
     def __init__(self, path: str):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -34,17 +39,21 @@ class Index:
         with self.lock:
             self.db.executescript(SCHEMA)
 
-    def put_file(self, key: str, pc: str, size: int, sha256: str | None) -> None:
+    def put_file(self, key: str, pc: str, size: int, sha256: str | None, updated: float | None = None) -> None:
         with self.lock, self.db:
             self.db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?)",
-                            (key, pc, size, sha256, time.time()))
+                            (key, pc, size, sha256, time.time() if updated is None else updated))
 
-    def put_run(self, pc: str, prefix: str, status: dict) -> None:
-        now = time.time()
+    def put_run(self, pc: str, prefix: str, status: dict, updated: float | None = None) -> None:
+        """`updated` is when the status was really written; a rebuild passes the file's own time, so a PC that crashed
+        long ago is not shown as live, and no activity point is made for it (nothing happened now)."""
+        now = time.time() if updated is None else updated
         num = lambda v: v if isinstance(v, int) and not isinstance(v, bool) else None   # noqa: E731
         cur = status.get("current")
         with self.lock, self.db:
             self.db.execute("INSERT OR REPLACE INTO runs VALUES (?,?,?,?)", (pc, prefix, json.dumps(status), now))
+            if updated is not None:
+                return
             # every status push is one point on the activity timeline (a heartbeat while mining, a push per repo)
             self.db.execute("INSERT INTO activity VALUES (?,?,?,?,?,?,?)",
                             (pc, prefix, now, str(status.get("reason"))[:40] if status.get("reason") is not None else None,
@@ -87,32 +96,42 @@ class Index:
             r = self.db.execute("SELECT * FROM files WHERE key=?", (key,)).fetchone()
         return dict(r) if r else None
 
-    def files(self, pc: str | None = None, like: str | None = None) -> list[dict]:
+    def files(self, pc: str | None = None, like: str | None = None, limit: int | None = None) -> list[dict]:
         sql, args = "SELECT * FROM files WHERE 1=1", []
         if pc:
             sql += " AND pc=?"
             args.append(pc)
         if like:
-            sql += " AND key LIKE ?"
+            sql += " AND key LIKE ? ESCAPE '\\'"
             args.append(like)
+        sql += " ORDER BY key" + (f" LIMIT {int(limit)}" if limit else "")
         with self.lock:
-            return [dict(r) for r in self.db.execute(sql + " ORDER BY key", args).fetchall()]
+            return [dict(r) for r in self.db.execute(sql, args).fetchall()]
 
-    def rebuild(self, store_root: str) -> int:
-        """Recreate the index from the local copies (run.json files and sizes)."""
+    def rebuild(self, store_root: str, bucket_files=()) -> int:
+        """Recreate the index from the local copies (run.json files and sizes). `bucket_files` is
+        (key, size, updated) for what the bucket holds: the big files that have no local copy are indexed too."""
         n = 0
+        seen = set()
         for dirpath, _dirs, names in os.walk(store_root):
             for name in names:
                 path = os.path.join(dirpath, name)
                 key = os.path.relpath(path, store_root).replace(os.sep, "/")
-                self.put_file(key, key.split("/", 1)[0], os.path.getsize(path), None)
+                mtime = os.path.getmtime(path)
+                self.put_file(key, key.split("/", 1)[0], os.path.getsize(path), None, mtime)
+                seen.add(key)
                 n += 1
                 if name == "run.json":
                     try:
                         with open(path, encoding="utf-8") as fh:
                             status = json.load(fh)
                         parts = key.split("/")
-                        self.put_run(parts[0], "/".join(parts[1:-1]), status)
+                        if isinstance(status, dict):
+                            self.put_run(parts[0], "/".join(parts[1:-1]), status, mtime)
                     except (OSError, json.JSONDecodeError):
                         pass
+        for key, size, updated in bucket_files:
+            if key not in seen and not key.startswith("_system/") and key.count("/") >= 2:
+                self.put_file(key, key.split("/", 1)[0], size or 0, None, updated)
+                n += 1
         return n
