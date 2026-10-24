@@ -553,6 +553,26 @@ def _run_settings(args) -> dict:
             "repos_file": os.path.basename(g("repos_file") or "") or None, "shard": g("shard")}
 
 
+def _checkpointed(path: str) -> dict[str, int]:
+    """Rows per lower-cased repo in the shared checkpoint. One file holds every unfinished repo's rows
+    (a failed or stopped repo keeps its rows there for the rerun), so a line counts only for its own repo."""
+    found: dict[str, int] = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    repo = str(json.loads(line).get("repo") or "").lower()
+                except (ValueError, AttributeError):
+                    continue                                # a line cut by a crash
+                if repo:
+                    found[repo] = found.get(repo, 0) + 1
+    except OSError:
+        pass
+    return found
+
+
 def _sync_status(why: str) -> dict:
     """The run.json body: counts per repo and totals. PRs of repos not yet
     started are unknown (their selection does not exist yet), so `prs_remaining`
@@ -561,15 +581,16 @@ def _sync_status(why: str) -> dict:
     PRs already counted), or None when there is no plan."""
     args = _SYNC["args"]
     repos = _SYNC.get("repos", {})
-    out_partial = args.out + ".partial.jsonl"
+    ckpt = _checkpointed(args.out + ".partial.jsonl")
     for repo, rec in repos.items():
         if rec["state"] == "mining":
             rec["selected"] = _selected_count(repo)
-            try:
-                with open(out_partial, "rb") as fh:
-                    rec["rows"] = sum(1 for line in fh if line.strip())
-            except OSError:
-                rec["rows"] = 0
+        if rec["state"] != "done":
+            n = ckpt.get(repo.lower(), 0)
+            if n or rec["state"] == "mining":
+                rec["rows"] = n
+            else:
+                rec.pop("rows", None)
     if why == "stopped":                                    # a Stop leaves nothing mining: the store must not say so
         repos = {k: (dict(r, state="stopped") if r["state"] == "mining" else r) for k, r in repos.items()}
     states = [r["state"] for r in repos.values()]
