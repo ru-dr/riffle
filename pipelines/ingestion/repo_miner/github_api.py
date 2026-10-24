@@ -140,9 +140,8 @@ class GitHubAPI:
         try:
             with urllib.request.urlopen(req, timeout=self.st.request_timeout) as r:
                 data = json.loads(r.read() or "null")
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError,
-                json.JSONDecodeError, ValueError):
-            self.required_contexts = None      # 403/404/etc -> fall back to denylist
+        except (OSError, http.client.HTTPException, json.JSONDecodeError, ValueError):
+            self.required_contexts = None      # 403/404, cut body, etc -> fall back to denylist
             return None
         contexts = set((data or {}).get("contexts") or [])
         for c in ((data or {}).get("checks") or []):     # newer API shape
@@ -1066,7 +1065,9 @@ class GitHubAPI:
         Like _get, but on a rate-limit (403/429) it waits ~60s and retries
         indefinitely instead of giving up — for the historical CI pre-pass,
         which is long-running and must survive rate-limit windows. Transient
-        network errors get a short bounded backoff.
+        network errors and 5xx get a bounded backoff, then (code, None): the
+        caller keeps its checkpoint and a rerun resumes. A body cut mid-read
+        (IncompleteRead on a ~1 MB runs page) is a network error, not a crash.
         """
         url = f"{API}{path}"
         if params:
@@ -1087,11 +1088,19 @@ class GitHubAPI:
                 if e.code == 404:
                     return 404, None
                 if e.code >= 500:
-                    time.sleep(5)
+                    net_fails += 1
+                    runlog.warn("api", "server error; backing off", path=path, code=e.code,
+                                retry=net_fails, wait_s=min(60, 2 ** net_fails))
+                    if net_fails > 10:
+                        return e.code, None
+                    time.sleep(min(60, 2 ** net_fails))
                     continue
                 raise
-            except (urllib.error.URLError, TimeoutError):
+            except (urllib.error.URLError, OSError, http.client.HTTPException,
+                    json.JSONDecodeError) as e:      # incl. IncompleteRead, resets, cut bodies
                 net_fails += 1
+                runlog.warn("api", "network error; backing off", path=path, exc=type(e).__name__,
+                            retry=net_fails, wait_s=min(60, 2 ** net_fails))
                 if net_fails > 10:
                     return 0, None
                 time.sleep(min(60, 2 ** net_fails))
