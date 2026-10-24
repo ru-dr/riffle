@@ -87,7 +87,7 @@ def write_env(path: str, values: dict[str, str]) -> None:
 SHAPING = ("repos_file", "only_domain", "max_prs", "min_age_days", "window_from", "window_to", "cap_on",
            "lead_in_days", "full_repo", "llm", "llm_scope", "close_reason_llm", "llm_model", "llm_sample_pct",
            "max_unmerged", "merge_outcome", "llm_max_diff_chars", "llm_diff_context", "llm_backend", "max_files_deep",
-           "declared_labels", "szz", "ci_history", "snapshots",
+           "declared_labels", "szz", "ci_history", "snapshots", "auto_remine",
            "no_api_contract", "no_scanners", "no_review_history", "pr_discovery", "split_by", "shard")
 
 
@@ -111,6 +111,30 @@ def shared_argv(argv: list[str]) -> list[str]:
             out += argv[i:i + step]
         i += step
     return out
+
+
+def machine_argv(argv: list[str]) -> list[str]:
+    """The part of a command line that stays this PC's own (its shard, workers, clone dir, resume switches):
+    the complement of shared_argv."""
+    import build_dataset
+    actions = build_dataset.build_parser()._option_string_actions
+    out, i = [], 0
+    while i < len(argv):
+        tok = argv[i]
+        name = tok.split("=", 1)[0]
+        action = actions.get(name)
+        takes_value = bool(action and action.nargs != 0)
+        step = 1 + (1 if takes_value and "=" not in tok else 0)
+        if action is None or action.dest not in SHARED_DESTS:
+            out += argv[i:i + step]
+        i += step
+    return out
+
+
+def adopted_argv(argv: list[str], lead_shared: list[str]) -> list[str]:
+    """This PC's command line with the lead's shared settings in place of its own: the lead's flags, then this PC's
+    machine flags. Only the lead's flags change, so a PC's shard and machine settings survive."""
+    return list(lead_shared) + machine_argv(argv)
 
 
 def shaping(argv: list[str]) -> dict:
