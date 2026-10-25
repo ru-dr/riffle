@@ -139,6 +139,7 @@ flowchart TD
 | `labels.py` | Breakage labels (`label_revert`, `label_ci_fail`, `label_hotfix`, `label_szz_bug`, `label_bad`, observability columns) and the SZZ index builder. |
 | `merge_labels.py` | Merge-outcome labels (ADR 0009), close-reason rules and LLM classifier prompt, at-open metadata rebuilt from the timeline, `outcome_3class`/`nowhere_reason`. |
 | `flaky.py` | Flaky-check detection; corrects `label_ci_fail`/`label_bad` after a repo is mined. |
+| `settings_schema.py` | The lead's shared settings as data (`riffle-data/server/static/settings-schema.json`), built from the parser and `join.SHAPING`, for the admin form; a test keeps the committed copy equal. |
 | `maintainers.py` | "Who is a maintainer" evidence from the repo's own timelines (point-in-time). |
 | `scope.py` | Which PRs are "training PRs" (outside non-bot contributors plus a stable 5% sample). |
 | `features/diff_stats.py` | Kamei size/diffusion metrics, diff shape, path flags. |

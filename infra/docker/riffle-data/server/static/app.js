@@ -921,17 +921,42 @@
     });
     return out;
   }
-  /* on/off settings the lead changes most; "miner default" leaves both flags out */
-  var SWITCHES = [["auto-remine", "Auto re-mine stale repos"], ["llm", "LLM flags"], ["szz", "SZZ bug tracing"], ["ci-history", "CI history"],
-                  ["snapshots", "PR snapshots"], ["merge-outcome", "Merge outcome labels"], ["declared-labels", "Declared labels"]];
-  function switchState(flags, name) {
-    var on = flags.indexOf("--" + name) >= 0, off = flags.indexOf("--no-" + name) >= 0;
-    return on && !off ? "on" : off && !on ? "off" : "default";
+  /* the shared settings as a form. The schema (static/settings-schema.json) is made from the miner's own parser,
+     so the form offers exactly what the miner shares. The model is {dest: value}; flags it does not know are kept. */
+  var SCHEMA = null;
+  function loadSchema() {
+    if (SCHEMA) return Promise.resolve(SCHEMA);
+    return fetch("/static/settings-schema.json", { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (j) { SCHEMA = j; return j; });
   }
-  function setSwitch(flags, name, state) {
-    var out = flags.filter(function (f) { return f !== "--" + name && f !== "--no-" + name; });
-    if (state === "on") out.push("--" + name); else if (state === "off") out.push("--no-" + name);
-    return out;
+  function parseModel(flags, schema) {
+    var by = {}, model = {}, extra = [], i = 0;
+    schema.settings.forEach(function (st) { by[st.flag] = st; if (st.off_flag) by[st.off_flag] = st; });
+    while (i < flags.length) {
+      var tok = String(flags[i]), eq = tok.indexOf("="), name = eq < 0 ? tok : tok.slice(0, eq), st = by[name];
+      i++;
+      var takesNext = eq < 0 && i < flags.length && String(flags[i]).slice(0, 2) !== "--";
+      if (!st) { extra.push(tok); if (takesNext) extra.push(String(flags[i++])); continue; }
+      if (st.kind === "bool") model[st.dest] = name === st.flag;
+      else if (st.kind === "flag") model[st.dest] = true;
+      else if (eq >= 0) model[st.dest] = tok.slice(eq + 1);
+      else if (takesNext) model[st.dest] = String(flags[i++]);
+    }
+    return { model: model, extra: extra };
+  }
+  function modelToFlags(model, extra, schema) {
+    var out = [];
+    schema.settings.forEach(function (st) {
+      var v = model[st.dest];
+      if (st.kind === "bool") { if (v === true) out.push(st.flag); else if (v === false) out.push(st.off_flag); }
+      else if (st.kind === "flag") { if (v) out.push(st.flag); }
+      else if (v !== undefined && v !== "") out.push(st.flag, String(v));
+    });
+    return out.concat(extra);
+  }
+  function showValue(st, v) {
+    if (st.kind === "bool") return v === undefined ? "miner default (" + (st.default ? "on" : "off") + ")" : v ? "on" : "off";
+    if (st.kind === "flag") return (st.invert ? !v : !!v) ? "on" : "off";
+    return v === undefined || v === "" ? (st.empty || "miner default") : String(v);
   }
   function admin() {
     var pending = null, editing = null;
@@ -985,51 +1010,107 @@
       }));
       $("#newcodes").scrollIntoView({ block: "start" });
     }
-    /* the lead's shared settings for a split, edited here instead of the TUI. PCs read them when a batch starts */
-    function settingsEditor(x) {
-      var wrap = el("div", "editor"), open = el("button", "btn", "Edit settings");
-      open.onclick = function () {
-        editing = x.split_id; wrap.replaceChildren();
-        var ta = h("textarea"), before = flagsToText(x.flags || []), msg = el("div", "cap", ""), diff = el("div", "cap", "");
-        ta.value = before; ta.rows = Math.max(6, before.split("\n").length + 2); ta.spellcheck = false; ta.setAttribute("aria-label", "Settings of split " + x.split_id);
-        function changed() {
+    /* the lead's shared settings for a split, edited in a panel under the table (not inside its narrow cell).
+       PCs read them when a batch starts */
+    function closeEditor() { editing = null; $("#splitedit").hidden = true; $("#se-body").replaceChildren(); draw(); }
+    function segmented(options, current, label, onPick) {
+      var box = el("div", "se-seg"), btns = [];
+      box.setAttribute("role", "group"); box.setAttribute("aria-label", label);
+      options.forEach(function (o) {
+        var b = el("button", "", o[1]); b.type = "button"; b.dataset.v = o[0];
+        b.onclick = function () { btns.forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); }); onPick(o[0]); };
+        btns.push(b); box.append(b);
+      });
+      box.set = function (v) { btns.forEach(function (x) { x.setAttribute("aria-pressed", String(x.dataset.v === String(v))); }); };
+      box.set(current); return box;
+    }
+    function openEditor(x) {
+      editing = x.split_id;
+      loadSchema().then(function (schema) {
+        var sec = $("#splitedit"), body = $("#se-body"), startFlags = (x.flags || []).map(String);
+        var start = parseModel(startFlags, schema), model = JSON.parse(JSON.stringify(start.model)), extra = start.extra.slice();
+        $("#se-title").textContent = "Settings of split " + x.split_id;
+        say($("#se-note"), "Every PC of this split takes these the next time it starts a batch. Each PC keeps its own machine settings (shard, workers, clone folder). Settings are stored in the open: never put a token or password in a field.");
+        var controls = {}, ta = h("textarea"), changes = el("div", "se-changes"), msg = el("div", "alert", ""), save = el("button", "btn solid", "Save settings");
+        msg.hidden = true;
+        ta.value = flagsToText(modelToFlags(model, extra, schema)); ta.spellcheck = false; ta.rows = 8; ta.setAttribute("aria-label", "Settings of split " + x.split_id + " as flags");
+        function fail(text) { msg.hidden = !text; msg.textContent = text || ""; }
+        function refresh(fromText) {
+          var flags = modelToFlags(model, extra, schema);
+          if (!fromText) ta.value = flagsToText(flags);
+          var rows = [], shapes = false;
+          schema.settings.forEach(function (st) {
+            if (JSON.stringify(model[st.dest]) === JSON.stringify(start.model[st.dest])) return;
+            rows.push(el("li", "", [el("b", "", st.label + ": "), showValue(st, start.model[st.dest]) + " → " + showValue(st, model[st.dest])]));
+            if (st.group === "mining" || st.group === "llm" || st.group === "features") shapes = true;
+          });
+          if (JSON.stringify(extra) !== JSON.stringify(start.extra)) rows.push(el("li", "", "Other flags changed"));
+          var ul = el("ul", "se-ul", rows);
+          changes.replaceChildren(rows.length ? ul : el("span", "se-diff", "No changes yet."));
+          if (shapes && rows.length) changes.append(el("div", "se-warn", "This changes the mined rows. Repos a PC already finished keep their old rows until they are re-mined, and PCs must run the same settings or the merge refuses their files."));
+          save.disabled = !rows.length; return rows.length > 0;
+        }
+        function group(g) {
+          var list = schema.settings.filter(function (st) { return st.group === g.id; });
+          if (!list.length) return null;
+          var wrap = el("div", "se-group");
+          wrap.append(el("div", "cap", g.title), el("p", "se-gnote", g.note));
+          list.forEach(function (st) {
+            var row = el("div", "se-row"), left = el("div", "se-left", [el("div", "se-label", st.label), el("div", "se-help", st.help || "")]), ctl;
+            var cur = model[st.dest];
+            if (st.locked) {
+              ctl = el("span", "se-locked", [showValue(st, cur)]); ctl.title = "Fixed for this split";
+            } else if (st.kind === "bool") {
+              ctl = segmented([["default", "Default " + (st.default ? "on" : "off")], ["on", "On"], ["off", "Off"]], cur === undefined ? "default" : cur ? "on" : "off", st.label,
+                function (v) { if (v === "default") delete model[st.dest]; else model[st.dest] = v === "on"; refresh(); });
+            } else if (st.kind === "flag") {
+              var on = st.invert ? !cur : !!cur;
+              ctl = segmented([["on", "On"], ["off", "Off"]], on ? "on" : "off", st.label,
+                function (v) { var present = st.invert ? v === "off" : v === "on"; if (present) model[st.dest] = true; else delete model[st.dest]; refresh(); });
+            } else if (st.kind === "choice") {
+              ctl = segmented([["", "Default"]].concat(st.choices.map(function (c) { return [c, c]; })), cur === undefined ? "" : cur, st.label,
+                function (v) { if (v === "") delete model[st.dest]; else model[st.dest] = v; refresh(); });
+            } else {
+              var inp = h("input"); inp.type = "text"; inp.className = "se-in"; inp.value = cur === undefined ? "" : String(cur);
+              inp.placeholder = st.kind === "date" ? "YYYY-MM-DD" : st.default != null && st.default !== "" ? "default " + st.default : st.empty || st.example || "default";
+              if (st.kind === "int") inp.inputMode = "numeric";
+              inp.setAttribute("aria-label", st.label);
+              inp.oninput = function () {
+                var v = inp.value.trim(), bad = (st.kind === "int" && v !== "" && !/^\d{1,9}$/.test(v)) || (st.kind === "date" && v !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(v)) || /^--/.test(v) || /\s/.test(v);
+                inp.classList.toggle("bad", bad); inp.title = bad ? (st.kind === "int" ? "A whole number" : st.kind === "date" ? "A date like 2026-01-31" : "No spaces, and not starting with --") : "";
+                if (v === "") delete model[st.dest]; else model[st.dest] = v; refresh();
+              };
+              ctl = inp;
+            }
+            controls[st.dest] = ctl; row.append(left, el("div", "se-ctl", ctl)); wrap.append(row);
+          });
+          return wrap;
+        }
+        ta.oninput = function () {
           try {
-            var a = textToFlags(before), b = textToFlags(ta.value), A = a.join("\u0000"), B = b.join("\u0000");
-            var ga = flagsToText(a).split("\n").filter(Boolean), gb = flagsToText(b).split("\n").filter(Boolean);
-            var added = gb.filter(function (l) { return ga.indexOf(l) < 0; }).length, removed = ga.filter(function (l) { return gb.indexOf(l) < 0; }).length;
-            say(diff, A === B ? "No change." : added + " added or changed, " + removed + " removed or changed."); say(msg, ""); return A !== B;
-          } catch (e) { say(diff, ""); say(msg, e.message); return false; }
-        }
-        ta.oninput = function () { changed(); syncSwitches(); };
-        var sw = el("div", "switches"), sels = {};
-        function syncSwitches() {
-          try { var cur = textToFlags(ta.value); SWITCHES.forEach(function (w) { sels[w[0]].value = switchState(cur, w[0]); }); } catch (e) { /* the text is mid-edit */ }
-        }
-        SWITCHES.forEach(function (w) {
-          var lab = el("label", "sw"), sel = h("select");
-          [["default", "miner default"], ["on", "on"], ["off", "off"]].forEach(function (o) { var op = h("option"); op.value = o[0]; op.textContent = o[1]; sel.append(op); });
-          sels[w[0]] = sel; lab.append(el("span", "", w[1]), sel); sw.append(lab);
-          sel.onchange = function () {
-            try { ta.value = flagsToText(setSwitch(textToFlags(ta.value), w[0], sel.value)); changed(); } catch (e) { say(msg, e.message); }
-          };
-        });
-        syncSwitches();
-        var save = el("button", "btn", "Save settings"), cancel = el("button", "btn", "Cancel");
-        cancel.onclick = function () { editing = null; draw(); };
+            var flags = textToFlags(ta.value), p = parseModel(flags, schema); model = p.model; extra = p.extra; fail("");
+            fill(); refresh(true);
+          } catch (e) { fail(e.message); }
+        };
+        /* the groups are rebuilt when the raw text is edited; the text box itself is never moved, so it keeps focus */
+        var host = el("div", "se-groups"), raw = h("details", "se-raw"), foot = el("div", "se-foot"), acts = el("div", "actions"), cancel = el("button", "btn", "Cancel");
+        function fill() { host.replaceChildren.apply(host, schema.groups.map(group).filter(Boolean)); }
+        raw.append(h("summary", "", "All settings as flags (advanced)"), ta);
+        cancel.onclick = closeEditor; acts.append(cancel, save); foot.append(changes, acts);
         save.onclick = function () {
-          var flags;
-          try { flags = textToFlags(ta.value); } catch (e) { say(msg, e.message); return; }
-          if (!changed()) { if (!msg.textContent) say(msg, "Nothing to save."); return; }
+          var flags = modelToFlags(model, extra, schema);
+          if (!refresh(true)) { fail("Nothing to save."); return; }
           save.disabled = true;
           call("POST", "split-settings", { split_id: x.split_id, flags: flags }).then(function (r) {
-            editing = null; window.riffleToast("Saved. Settings version " + r.settings_version + ". PCs use it when they next start a batch."); draw();
-          }).catch(function (e) { save.disabled = false; say(msg, e.message); });
+            window.riffleToast("Saved. Settings version " + r.settings_version + ". PCs use it when they next start a batch.", "ok"); closeEditor();
+          }).catch(function (e) { save.disabled = false; fail(e.message); });
         };
-        var note = el("div", "cap", "One setting per line: `--max-prs 8000`, or a bare switch such as `--no-llm`. Each PC keeps its own machine settings (--shard, --workers, --clone-dir) and takes the rest from here the next time it starts a batch. Never put a token or password here: these settings are stored in the open.");
-        var acts = el("div", "actions"); acts.append(cancel, save);
-        wrap.append(note, sw, ta, diff, msg, acts); ta.focus(); changed();
-      };
-      wrap.append(open); return wrap;
+        fill(); body.replaceChildren(host, raw, msg, foot); refresh(true);
+        sec.hidden = false; sec.scrollIntoView({ block: "start", behavior: "smooth" });
+      }).catch(function (e) { window.riffleToast("Could not load the settings list: " + e.message); editing = null; });
+    }
+    function settingsEditor(x) {
+      var b = el("button", "btn link", "Edit settings"); b.onclick = function () { openEditor(x); }; return b;
     }
     var lastActive = false;
     function draw() {

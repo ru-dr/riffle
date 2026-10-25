@@ -1,0 +1,369 @@
+{
+ "version": 1,
+ "groups": [
+  {
+   "id": "mining",
+   "title": "What is mined",
+   "note": "Which PRs, and which parts of each. Changing these changes the rows, so repos mined before the change differ from the rest."
+  },
+  {
+   "id": "llm",
+   "title": "LLM flags",
+   "note": "The optional explainer-side labels. A different model, scope or limit changes llm_* columns."
+  },
+  {
+   "id": "features",
+   "title": "Feature groups",
+   "note": "Switch whole groups of columns off. Off means the columns are null, not zero."
+  },
+  {
+   "id": "remine",
+   "title": "Re-mining",
+   "note": "Off by default. A re-mine drops a repo's finished rows before it mines them again."
+  },
+  {
+   "id": "locked",
+   "title": "Split and files",
+   "note": "Fixed for this split: changing them moves repos between PCs or renames files, and PCs could overlap or lose rows. Plan a new split from the miner's TUI instead."
+  }
+ ],
+ "settings": [
+  {
+   "dest": "min_age_days",
+   "flag": "--min-age-days",
+   "kind": "int",
+   "label": "Skip PRs merged in the last N days",
+   "group": "mining",
+   "help": "skip PRs merged in the last N days (default 90, 0 = off)",
+   "default": 90
+  },
+  {
+   "dest": "max_prs",
+   "flag": "--max-prs",
+   "kind": "int",
+   "label": "Cap on PRs per repo",
+   "group": "mining",
+   "help": "Keep only the newest N PRs of each repo. Empty means no cap.",
+   "default": null,
+   "empty": "no cap"
+  },
+  {
+   "dest": "full_repo",
+   "flag": "--full-repo",
+   "kind": "flag",
+   "label": "Mine each repo's whole history",
+   "group": "mining",
+   "help": "Every closed PR of each repo, not a date window or a cap. Cannot be combined with a window or a cap.",
+   "invert": false
+  },
+  {
+   "dest": "window_from",
+   "flag": "--window-from",
+   "kind": "date",
+   "label": "Window start",
+   "group": "mining",
+   "help": "date window start YYYY-MM-DD",
+   "default": null
+  },
+  {
+   "dest": "window_to",
+   "flag": "--window-to",
+   "kind": "date",
+   "label": "Window end",
+   "group": "mining",
+   "help": "date window end YYYY-MM-DD",
+   "default": null
+  },
+  {
+   "dest": "lead_in_days",
+   "flag": "--lead-in-days",
+   "kind": "int",
+   "label": "History lead-in (days)",
+   "group": "mining",
+   "help": "history lead-in days",
+   "default": null
+  },
+  {
+   "dest": "cap_on",
+   "flag": "--cap-on",
+   "kind": "choice",
+   "label": "What the PR cap counts",
+   "group": "mining",
+   "help": "What the PR cap counts: every PR, or only PRs from outside contributors. Only matters with a window and a cap.",
+   "choices": [
+    "all",
+    "training"
+   ],
+   "default": null
+  },
+  {
+   "dest": "merge_outcome",
+   "flag": "--merge-outcome",
+   "kind": "bool",
+   "label": "Closed-unmerged PRs and merge-outcome labels",
+   "group": "mining",
+   "help": "Also mine closed-unmerged PRs and add the merge-outcome labels. Off gives breakage rows only.",
+   "default": true,
+   "off_flag": "--no-merge-outcome"
+  },
+  {
+   "dest": "max_unmerged",
+   "flag": "--max-unmerged",
+   "kind": "int",
+   "label": "Cap on unmerged rows per repo",
+   "group": "mining",
+   "help": "cap unmerged rows per repo (default: the window's real mix)",
+   "default": null,
+   "empty": "no cap"
+  },
+  {
+   "dest": "declared_labels",
+   "flag": "--declared-labels",
+   "kind": "bool",
+   "label": "Declared labels",
+   "group": "mining",
+   "help": "",
+   "default": true,
+   "off_flag": "--no-declared-labels"
+  },
+  {
+   "dest": "snapshots",
+   "flag": "--snapshots",
+   "kind": "bool",
+   "label": "Capture PR snapshots",
+   "group": "mining",
+   "help": "capture what PR snapshots need (default on)",
+   "default": true,
+   "off_flag": "--no-snapshots"
+  },
+  {
+   "dest": "ci_history",
+   "flag": "--ci-history",
+   "kind": "bool",
+   "label": "Historical CI-fail rate (slow, uses the GitHub quota)",
+   "group": "mining",
+   "help": "Reads every workflow run back to 2019 for the CI-fail rate. Hours on a big repo, and it uses the GitHub quota.",
+   "default": true,
+   "off_flag": "--no-ci-history"
+  },
+  {
+   "dest": "szz",
+   "flag": "--szz",
+   "kind": "bool",
+   "label": "SZZ bug tracing",
+   "group": "mining",
+   "help": "Finds the commits that introduced bugs later fixed. Slow; cached after the first run.",
+   "default": true,
+   "off_flag": "--no-szz"
+  },
+  {
+   "dest": "pr_discovery",
+   "flag": "--pr-discovery",
+   "kind": "choice",
+   "label": "How PRs are found",
+   "group": "mining",
+   "help": "",
+   "choices": [
+    "api",
+    "git"
+   ],
+   "default": "api"
+  },
+  {
+   "dest": "max_files_deep",
+   "flag": "--max-files-deep",
+   "kind": "int",
+   "label": "Skip deep per-file features above N files",
+   "group": "mining",
+   "help": "a PR touching more than N files skips the per-file deep features (blame, line history, scanners) instead of stalling the repo (default 300; 0 = never skip)",
+   "default": null
+  },
+  {
+   "dest": "llm",
+   "flag": "--llm",
+   "kind": "bool",
+   "label": "LLM flags on",
+   "group": "llm",
+   "help": "",
+   "default": true,
+   "off_flag": "--no-llm"
+  },
+  {
+   "dest": "llm_model",
+   "flag": "--llm-model",
+   "kind": "text",
+   "label": "Model",
+   "group": "llm",
+   "help": "e.g. sonnet, opus, haiku",
+   "default": null,
+   "example": "haiku"
+  },
+  {
+   "dest": "llm_backend",
+   "flag": "--llm-backend",
+   "kind": "choice",
+   "label": "Backend",
+   "group": "llm",
+   "help": "LLM backend for the flags (default: LLM_BACKEND, else claude_cli)",
+   "choices": [
+    "claude_cli",
+    "api"
+   ],
+   "default": null
+  },
+  {
+   "dest": "llm_scope",
+   "flag": "--llm-scope",
+   "kind": "choice",
+   "label": "Which rows get LLM calls",
+   "group": "llm",
+   "help": "rows that get LLM calls: training = outside contributors (not bots) plus a 5% sample of the rest (default); all = every row",
+   "choices": [
+    "training",
+    "all"
+   ],
+   "default": null
+  },
+  {
+   "dest": "llm_sample_pct",
+   "flag": "--llm-sample-pct",
+   "kind": "int",
+   "label": "Share of other rows still sent (%)",
+   "group": "llm",
+   "help": "With the scope set to training, the share of other rows still sent to the LLM (default 5).",
+   "default": null
+  },
+  {
+   "dest": "close_reason_llm",
+   "flag": "--close-reason-llm",
+   "kind": "choice",
+   "label": "When the LLM reads a close reason",
+   "group": "llm",
+   "help": "other_only: ask the LLM only when the rules find no close reason (default); always: every unmerged PR with human activity",
+   "choices": [
+    "other_only",
+    "always"
+   ],
+   "default": null
+  },
+  {
+   "dest": "llm_max_diff_chars",
+   "flag": "--llm-max-diff-chars",
+   "kind": "int",
+   "label": "Diff size sent (characters)",
+   "group": "llm",
+   "help": "cap on the diff sent to the LLM after lockfiles and generated files are cut (default 25000)",
+   "default": null
+  },
+  {
+   "dest": "llm_diff_context",
+   "flag": "--llm-diff-context",
+   "kind": "int",
+   "label": "Context lines around each change",
+   "group": "llm",
+   "help": "context lines around each change in the diff sent to the LLM (default 1)",
+   "default": null
+  },
+  {
+   "dest": "no_scanners",
+   "flag": "--no-scanners",
+   "kind": "flag",
+   "label": "Code scanners (semgrep)",
+   "group": "features",
+   "help": "",
+   "invert": true
+  },
+  {
+   "dest": "no_api_contract",
+   "flag": "--no-api-contract",
+   "kind": "flag",
+   "label": "API contract diff",
+   "group": "features",
+   "help": "",
+   "invert": true
+  },
+  {
+   "dest": "no_review_history",
+   "flag": "--no-review-history",
+   "kind": "flag",
+   "label": "Review history",
+   "group": "features",
+   "help": "",
+   "invert": true
+  },
+  {
+   "dest": "auto_remine",
+   "flag": "--auto-remine",
+   "kind": "bool",
+   "label": "Re-mine stale repos at start",
+   "group": "remine",
+   "help": "At start, drop and mine again any repo this PC finished with an older miner or with blame failing. Leave it off to keep finished rows as they are.",
+   "default": false,
+   "off_flag": "--no-auto-remine"
+  },
+  {
+   "dest": "repos_file",
+   "flag": "--repos-file",
+   "kind": "text",
+   "label": "Repos file",
+   "group": "locked",
+   "help": "file with one GitHub URL per line (# comments allowed)",
+   "default": "repos.txt",
+   "locked": true
+  },
+  {
+   "dest": "only_domain",
+   "flag": "--only-domain",
+   "kind": "text",
+   "label": "Only this domain",
+   "group": "locked",
+   "help": "mine only repos tagged [domain: NAME] in the repos file",
+   "default": null,
+   "locked": true
+  },
+  {
+   "dest": "split_by",
+   "flag": "--split-by",
+   "kind": "choice",
+   "label": "Split balances by",
+   "group": "locked",
+   "help": "What the split balances between PCs: repos' commit counts or PR counts. Every PC must use the same value.",
+   "choices": [
+    "commits",
+    "prs"
+   ],
+   "default": "commits",
+   "locked": true
+  },
+  {
+   "dest": "out",
+   "flag": "--out",
+   "kind": "text",
+   "label": "Output file",
+   "group": "locked",
+   "help": "single output dataset (rows appended, deduped)",
+   "default": "dataset.parquet",
+   "locked": true
+  },
+  {
+   "dest": "out_prefix",
+   "flag": "--out-prefix",
+   "kind": "text",
+   "label": "Output name prefix",
+   "group": "locked",
+   "help": "text put before the output file's name; placeholders {pc} {n} {host} {date}",
+   "default": "",
+   "locked": true
+  },
+  {
+   "dest": "out_postfix",
+   "flag": "--out-postfix",
+   "kind": "text",
+   "label": "Output name suffix",
+   "group": "locked",
+   "help": "text put after the output file's name (before the extension), replacing the automatic pc tag; same placeholders",
+   "default": "",
+   "locked": true
+  }
+ ]
+}

@@ -26,7 +26,7 @@ from test_lead_settings import FLAGS, REPOS, issue, post  # noqa: E402,F401  (sa
 from test_lead_settings import store  # noqa: E402,F401
 
 
-NEW = FLAGS + ["--llm"]
+NEW = [f for f in FLAGS if f != "--no-llm"] + ["--llm"]
 
 
 def test_changing_settings_keeps_every_token_and_join_code(store):
@@ -101,6 +101,28 @@ def test_the_admin_page_ships_the_settings_editor(store):
     assert "settingsEditor" in js and '"split-settings"' in js and "textToFlags" in js
 
 
-def test_the_admin_editor_has_switches_for_the_common_settings(store):
+def test_the_admin_form_is_built_from_the_miners_schema(store):
     js = urllib.request.urlopen(store.url + "/static/app.js").read().decode()
-    assert '"auto-remine"' in js and "setSwitch" in js and "miner default" in js
+    assert "loadSchema" in js and "/static/settings-schema.json" in js and "modelToFlags" in js
+    sc = json.loads(urllib.request.urlopen(store.url + "/static/settings-schema.json").read())
+    assert {s["dest"] for s in sc["settings"]} >= {"auto_remine", "llm", "szz", "ci_history", "snapshots", "min_age_days", "split_by"}
+
+
+def test_only_flags_the_miner_shares_are_accepted_with_values_of_the_right_kind(store):
+    issue(store)
+    for bad in (FLAGS + ["--bogus"], FLAGS + ["--min-age-days", "x"], ["--llm-scope", "nope"], FLAGS + ["--llm"],      # --no-llm is already there
+                ["--max-prs", "5", "--max-prs", "6"], ["--window-from", "June"], ["--szz=1"]):
+        with pytest.raises(ValueError):
+            tokens.set_split_settings(store.tp, "706ba187", bad)
+    tokens.set_split_settings(store.tp, "706ba187", FLAGS + ["--min-age-days", "30", "--llm-scope", "all", "--no-ci-history"])
+    assert "--no-ci-history" in tokens.load(store.tp)["splits"]["706ba187"]["flags"]
+
+
+def test_settings_that_fix_the_split_cannot_be_changed(store):
+    issue(store)
+    for bad in ([f if f != "repos_test.txt" else "other.txt" for f in FLAGS],
+                [f if f != "test" else "web" for f in FLAGS],
+                FLAGS + ["--split-by", "prs"], FLAGS + ["--out", "x.parquet"]):
+        with pytest.raises(ValueError, match="fixed for this split"):
+            tokens.set_split_settings(store.tp, "706ba187", bad)
+    tokens.set_split_settings(store.tp, "706ba187", [f if f != "20" else "99" for f in FLAGS])
