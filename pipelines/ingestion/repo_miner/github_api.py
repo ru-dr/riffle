@@ -13,6 +13,7 @@ import email.utils
 import http.client
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import os
 import sys
@@ -125,6 +126,47 @@ def _rate_sleep(seconds: float) -> None:
             _GATE_UNTIL = 0.0
 
 
+class _TokenPool:
+    """The tokens of one owner, with the time each one's quota comes back, per resource ("core" REST or
+    "graphql": GitHub counts them apart). Shared by every thread of the process. Tokens are only ever
+    named by their position in logs."""
+
+    def __init__(self, tokens):
+        self.tokens = list(tokens)
+        self._until: dict[tuple, float] = {}
+        self._lock = threading.Lock()
+
+    def pick(self, res: str) -> str | None:
+        """The first token with quota left for `res`, or None when every one is out."""
+        now = time.time()
+        with self._lock:
+            return next((t for t in self.tokens if self._until.get((t, res), 0.0) <= now), None)
+
+    def block(self, token: str, res: str, seconds: float) -> None:
+        with self._lock:
+            self._until[(token, res)] = max(self._until.get((token, res), 0.0), time.time() + seconds)
+
+    def wait_s(self, res: str) -> float:
+        """Seconds until the first token is usable again."""
+        now = time.time()
+        with self._lock:
+            return max(0.0, min(self._until.get((t, res), 0.0) for t in self.tokens) - now)
+
+    def position(self, token: str) -> int:
+        return self.tokens.index(token) + 1
+
+
+_POOLS: dict[tuple, _TokenPool] = {}
+_POOLS_LOCK = threading.Lock()
+
+
+def _pool_for(tokens) -> _TokenPool:
+    """One pool per set of tokens for the whole process, so every GitHubAPI shares what it learns."""
+    key = tuple(tokens)
+    with _POOLS_LOCK:
+        return _POOLS.setdefault(key, _TokenPool(key))
+
+
 MAX_SECONDARY_WAITS = 10        # Retry-After / secondary-limit waits in a row on one request before it is given up
 MAX_NO_SIGNAL_429 = 5           # a 429 that says nothing about when to come back: this many backoffs
 
@@ -176,7 +218,9 @@ class GitHubAPI:
         self.owner = owner
         self.repo = repo
         self.st = st
-        self.token = st.github_token
+        chain = list(dict.fromkeys(t for t in [st.github_token, *getattr(st, "github_tokens", ())] if t))
+        self.token = chain[0] if chain else None
+        self._pool = _pool_for(chain) if len(chain) > 1 else None      # None: one token, the plain path
         # Set of required-status-check contexts from branch protection, lowercased,
         # or None if not readable (needs admin; public repos you don't own 403).
         # When None, check classification falls back to the name denylist.
@@ -239,13 +283,54 @@ class GitHubAPI:
                 return False
         return True
 
-    def _headers(self) -> dict:
+    def _headers(self, token: str | None = None) -> dict:
         h = {"Accept": "application/vnd.github+json",
              "X-GitHub-Api-Version": "2022-11-28",
              "User-Agent": "riffle-repo-data-extractor"}
-        if self.token:
-            h["Authorization"] = f"Bearer {self.token}"
+        token = token or self.token
+        if token:
+            h["Authorization"] = f"Bearer {token}"
         return h
+
+    def _acquire(self, res: str) -> str | None:
+        """The token for the next request. With several, the first that has quota left; when every one is
+        out, wait for the first to come back (all threads wait together, see _rate_sleep)."""
+        pool = getattr(self, "_pool", None)
+        if pool is None:
+            return self.token
+        while True:
+            tok = pool.pick(res)
+            if tok:
+                return tok
+            wait = pool.wait_s(res) + 1
+            print(f"[api] all {len(pool.tokens)} tokens are out of quota; waiting {int(wait)}s", file=sys.stderr, flush=True)
+            runlog.warn("api", "every token is out of quota; waiting for the first reset", tokens=len(pool.tokens),
+                        resource=res, wait_s=int(wait))
+            progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}", wait=int(wait))
+            _note_rate_wait(wait, self.st.ci_cache_dir)
+            _rate_sleep(wait)
+
+    def _spent(self, tok: str | None, res: str, wait: float, path: str) -> bool:
+        """A token was told its quota is gone. With several tokens: block it, say which, and return True so the
+        caller retries with the next one. With one: False, and the caller waits as before."""
+        pool = getattr(self, "_pool", None)
+        if pool is None or tok is None:
+            return False
+        pool.block(tok, res, wait)
+        runlog.warn("api", "token quota used up; using the next token", path=path, token=pool.position(tok),
+                    of=len(pool.tokens), resource=res, back_in_s=int(wait))
+        return True
+
+    def _note_remaining(self, tok: str | None, res: str, headers) -> None:
+        """Switch before the 403: a response that says 0 requests are left blocks that token until its reset."""
+        pool = getattr(self, "_pool", None)
+        if pool is None or tok is None:
+            return
+        try:
+            if headers.get("X-RateLimit-Remaining") == "0" and headers.get("X-RateLimit-Reset"):
+                pool.block(tok, res, max(1, int(headers.get("X-RateLimit-Reset")) - int(time.time())) + 1)
+        except (ValueError, TypeError, AttributeError):
+            pass
 
     def _get(self, path: str, params: dict | None = None,
              body: dict | None = None) -> tuple[int, object, dict]:
@@ -256,16 +341,19 @@ class GitHubAPI:
             q = "&".join(f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items())
             url = f"{url}?{q}"
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(url, headers=self._headers(), data=data,
-                                     method="POST" if data is not None else "GET")
+        res = "graphql" if path == "/graphql" else "core"
         net_fails = 0
         waits = 0
         while True:
             _gate_wait()
+            tok = self._acquire(res)
+            req = urllib.request.Request(url, headers=self._headers(tok), data=data,
+                                         method="POST" if data is not None else "GET")
             try:
                 with runlog.span("api", "request", path=path, attempt=net_fails + 1,
                                  slow_s=runlog.SLOW_CALL_S, err_level="DEBUG"):
                     with urllib.request.urlopen(req, timeout=self.st.request_timeout) as r:
+                        self._note_remaining(tok, res, r.headers)
                         hdrs = dict(r.headers)
                         runlog.debug("api", "response", path=path, status=r.status,
                                      ratelimit_remaining=hdrs.get("X-RateLimit-Remaining"))
@@ -289,6 +377,8 @@ class GitHubAPI:
                     # (which would mislabel a whole block of PRs). Bounded per
                     # wait so a bad clock can't hang us forever.
                     if kind == "primary":
+                        if self._spent(tok, res, wait, path):
+                            continue
                         print(f"[api] rate limit hit; waiting {int(wait)}s", file=sys.stderr, flush=True)
                         runlog.warn("api", "primary rate limit; waiting for reset", path=path,
                                     code=e.code, wait_s=int(wait))
@@ -960,8 +1050,9 @@ class GitHubAPI:
                     # a PR still open (no close, or reopened since) is not final: a short life, not 14 days
                     last = next((e.get("event") for e in reversed(events)
                                  if e.get("event") in ("closed", "merged", "reopened")), None)
-                    self._disk.put(f"tl:{number}", events,
-                                   ttl=None if last in ("closed", "merged") else self.OPEN_TIMELINE_TTL_S)
+                    final = last in ("closed", "merged")
+                    self._disk.put(f"tl:{number}", events, ttl=None if final else self.OPEN_TIMELINE_TTL_S,
+                                   keep=api_cache.CLOSED_KEEP_S if final else None)
                 return events
         return None
 
@@ -1217,18 +1308,22 @@ class GitHubAPI:
         if params:
             q = "&".join(f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items())
             url = f"{url}?{q}"
-        req = urllib.request.Request(url, headers=self._headers())
         net_fails = 0
         waits = 0
         while True:
             _gate_wait()
+            tok = self._acquire("core")
+            req = urllib.request.Request(url, headers=self._headers(tok))
             try:
                 with urllib.request.urlopen(req, timeout=self.st.request_timeout) as r:
+                    self._note_remaining(tok, "core", r.headers)
                     return r.status, json.loads(r.read() or "null")
             except urllib.error.HTTPError as e:
                 if e.code in (403, 429):
                     kind, wait = _rate_signal(e)
                     if kind == "primary":
+                        if self._spent(tok, "core", wait, path):
+                            continue
                         print(f"[ci-history] rate limit reached; waiting {int(wait)}s and retrying...",
                               file=sys.stderr, flush=True)
                         progress.emit("rate_limit", repo=f"{self.owner}/{self.repo}", wait=int(wait))
@@ -1273,6 +1368,7 @@ class GitHubAPI:
 
     CI_PAGE_CAP = 400           # GitHub lists at most 400 pages of 100 runs (40,000) per query; page 401 is an HTTP 422
     CI_EMPTY_WEEKS = 26         # this many weeks in a row with no runs: there is nothing older
+    CI_WINDOW_WORKERS = 4       # pages of one date window read side by side
     CI_FILTER_CAP = 1000        # a date-filtered list returns 1,000 runs at most, whatever its total_count says
 
     def _ci_page(self, params: dict):
@@ -1311,6 +1407,21 @@ class GitHubAPI:
         runs = data.get("workflow_runs", [])
         take(runs)
         page, seen = 2, len(runs)
+        planned = min(-(-total // 100), self.CI_FILTER_CAP // 100)       # pages the first answer says there are
+        if len(runs) == 100 and planned >= 2:
+            # the other pages of a window are known now: read them side by side (one page took ~5 s, a busy week
+            # is up to 10 of them), then feed them in page order. The runs are the same ones.
+            pages = list(range(2, planned + 1))
+            with ThreadPoolExecutor(max_workers=max(1, min(self.CI_WINDOW_WORKERS, len(pages)))) as pool:
+                got = list(pool.map(lambda pg: self._ci_page(
+                    {"per_page": 100, "page": pg, "created": f"{start}..{end}"}), pages))
+            for status, data in got:
+                if status != 200 or not isinstance(data, dict):
+                    return None
+                runs = data.get("workflow_runs", [])
+                take(runs)
+                seen += len(runs)
+            page = planned + 1
         while len(runs) == 100 and page * 100 <= self.CI_FILTER_CAP:
             status, data = self._ci_page({"per_page": 100, "page": page, "created": f"{start}..{end}"})
             if status != 200 or not isinstance(data, dict):

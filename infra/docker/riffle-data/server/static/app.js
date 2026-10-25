@@ -899,8 +899,42 @@
     }
     return d;
   }
+  /* a split's flags as editable text: one setting per line, `--max-prs 8000`; a value with spaces is quoted */
+  function flagsToText(flags) {
+    var lines = [];
+    flags.forEach(function (f) {
+      f = String(f);
+      var q = !/[\s"']/.test(f) ? f : f.indexOf('"') < 0 ? '"' + f + '"' : "'" + f + "'";      // a value with both kinds of quote is not supported
+      if (f.slice(0, 2) === "--" || !lines.length) lines.push(q); else lines[lines.length - 1] += " " + q;
+    });
+    return lines.join("\n");
+  }
+  function textToFlags(text) {
+    var out = [];
+    text.split("\n").forEach(function (line, n) {
+      line = line.trim();
+      if (!line || line[0] === "#") return;
+      var toks = [], re = /'([^']*)'|"([^"]*)"|(\S+)/g, m;
+      while ((m = re.exec(line))) toks.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+      if (toks[0].slice(0, 2) !== "--") throw new Error("Line " + (n + 1) + " must start with --, e.g. --max-prs 8000");
+      out = out.concat(toks);
+    });
+    return out;
+  }
+  /* on/off settings the lead changes most; "miner default" leaves both flags out */
+  var SWITCHES = [["auto-remine", "Auto re-mine stale repos"], ["llm", "LLM flags"], ["szz", "SZZ bug tracing"], ["ci-history", "CI history"],
+                  ["snapshots", "PR snapshots"], ["merge-outcome", "Merge outcome labels"], ["declared-labels", "Declared labels"]];
+  function switchState(flags, name) {
+    var on = flags.indexOf("--" + name) >= 0, off = flags.indexOf("--no-" + name) >= 0;
+    return on && !off ? "on" : off && !on ? "off" : "default";
+  }
+  function setSwitch(flags, name, state) {
+    var out = flags.filter(function (f) { return f !== "--" + name && f !== "--no-" + name; });
+    if (state === "on") out.push("--" + name); else if (state === "off") out.push("--no-" + name);
+    return out;
+  }
   function admin() {
-    var pending = null;
+    var pending = null, editing = null;
     function call(method, path, body) {
       return fetch("/v1/admin/" + path, { method: method, credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-Requested-With": "riffle" }, body: body ? JSON.stringify(body) : undefined
@@ -951,9 +985,55 @@
       }));
       $("#newcodes").scrollIntoView({ block: "start" });
     }
+    /* the lead's shared settings for a split, edited here instead of the TUI. PCs read them when a batch starts */
+    function settingsEditor(x) {
+      var wrap = el("div", "editor"), open = el("button", "btn", "Edit settings");
+      open.onclick = function () {
+        editing = x.split_id; wrap.replaceChildren();
+        var ta = h("textarea"), before = flagsToText(x.flags || []), msg = el("div", "cap", ""), diff = el("div", "cap", "");
+        ta.value = before; ta.rows = Math.max(6, before.split("\n").length + 2); ta.spellcheck = false; ta.setAttribute("aria-label", "Settings of split " + x.split_id);
+        function changed() {
+          try {
+            var a = textToFlags(before), b = textToFlags(ta.value), A = a.join("\u0000"), B = b.join("\u0000");
+            var ga = flagsToText(a).split("\n").filter(Boolean), gb = flagsToText(b).split("\n").filter(Boolean);
+            var added = gb.filter(function (l) { return ga.indexOf(l) < 0; }).length, removed = ga.filter(function (l) { return gb.indexOf(l) < 0; }).length;
+            say(diff, A === B ? "No change." : added + " added or changed, " + removed + " removed or changed."); say(msg, ""); return A !== B;
+          } catch (e) { say(diff, ""); say(msg, e.message); return false; }
+        }
+        ta.oninput = function () { changed(); syncSwitches(); };
+        var sw = el("div", "switches"), sels = {};
+        function syncSwitches() {
+          try { var cur = textToFlags(ta.value); SWITCHES.forEach(function (w) { sels[w[0]].value = switchState(cur, w[0]); }); } catch (e) { /* the text is mid-edit */ }
+        }
+        SWITCHES.forEach(function (w) {
+          var lab = el("label", "sw"), sel = h("select");
+          [["default", "miner default"], ["on", "on"], ["off", "off"]].forEach(function (o) { var op = h("option"); op.value = o[0]; op.textContent = o[1]; sel.append(op); });
+          sels[w[0]] = sel; lab.append(el("span", "", w[1]), sel); sw.append(lab);
+          sel.onchange = function () {
+            try { ta.value = flagsToText(setSwitch(textToFlags(ta.value), w[0], sel.value)); changed(); } catch (e) { say(msg, e.message); }
+          };
+        });
+        syncSwitches();
+        var save = el("button", "btn", "Save settings"), cancel = el("button", "btn", "Cancel");
+        cancel.onclick = function () { editing = null; draw(); };
+        save.onclick = function () {
+          var flags;
+          try { flags = textToFlags(ta.value); } catch (e) { say(msg, e.message); return; }
+          if (!changed()) { if (!msg.textContent) say(msg, "Nothing to save."); return; }
+          save.disabled = true;
+          call("POST", "split-settings", { split_id: x.split_id, flags: flags }).then(function (r) {
+            editing = null; window.riffleToast("Saved. Settings version " + r.settings_version + ". PCs use it when they next start a batch."); draw();
+          }).catch(function (e) { save.disabled = false; say(msg, e.message); });
+        };
+        var note = el("div", "cap", "One setting per line: `--max-prs 8000`, or a bare switch such as `--no-llm`. Each PC keeps its own machine settings (--shard, --workers, --clone-dir) and takes the rest from here the next time it starts a batch. Never put a token or password here: these settings are stored in the open.");
+        var acts = el("div", "actions"); acts.append(cancel, save);
+        wrap.append(note, sw, ta, diff, msg, acts); ta.focus(); changed();
+      };
+      wrap.append(open); return wrap;
+    }
     var lastActive = false;
     function draw() {
-      if (pending) return Promise.resolve(lastActive);                    // a button is waiting for its second press: a refresh would reset it
+      if (pending || editing) return Promise.resolve(lastActive);         // a button is waiting for its second press, or settings are being edited: a refresh would reset it
       return call("GET", "overview").then(function (d) {
         BV.latest.admin = d; bvFeed("admin");
         call("GET", "storage").then(drawStorage).catch(function () { /* the rest of the page does not depend on it */ });
@@ -975,7 +1055,7 @@
             else if (i === 2) td.textContent = x.uploaded + "/" + x.tokens + " uploaded";
             else if (i === 3) td.textContent = x.version || "–";
             else if (i === 4) td.textContent = (x.created || "").slice(0, 10);
-            else if (i === 5) { td.append(flagList(x.flags || [], x.models || [])); }
+            else if (i === 5) { td.append(flagList(x.flags || [], x.models || []), settingsEditor(x)); }
             else {
               var acts = el("div", "actions");
               acts.append(x.can_rotate ? confirmBtn("Rotate", "rot:" + x.split_id, function () {

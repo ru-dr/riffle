@@ -442,4 +442,4 @@ def test_an_admin_can_remove_a_split_and_the_page_keeps_a_confirm_open_across_re
     again = json.loads(req(store, "POST", "/v1/admin/revoke", store.adm, {"split_id": "abc", "remove": True})[1])
     assert again["removed"] is False                                                                      # nothing left to remove
     js = open(os.path.join(os.path.dirname(store_app.__file__), "static", "app.js"), encoding="utf-8").read()
-    assert "if (pending) return Promise.resolve(lastActive)" in js, "a refresh resets the open confirm and the second press does nothing"
+    assert "if (pending || editing) return Promise.resolve(lastActive)" in js, "a refresh resets the open confirm and the second press does nothing"

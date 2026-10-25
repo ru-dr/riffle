@@ -75,3 +75,32 @@ def test_an_unknown_split_over_http_is_404(store):
     with pytest.raises(urllib.error.HTTPError) as e:
         urllib.request.urlopen(req)
     assert e.value.code == 404
+
+
+def test_settings_that_plan_a_split_or_write_tokens_are_refused(store):
+    issue(store)
+    for bad in (FLAGS + ["--issue-tokens"], FLAGS + ["--tokens-out", "codes.txt"], FLAGS + ["--shard-plan", "6"],
+                FLAGS + ["--token-days=30"], ["--max-prs", "20\n--issue-tokens"], ["max-prs", "20"]):
+        with pytest.raises(ValueError):
+            tokens.set_split_settings(store.tp, "706ba187", bad)
+    assert tokens.load(store.tp)["splits"]["706ba187"]["flags"] == FLAGS      # nothing was written
+
+
+def test_bad_settings_over_http_are_a_400_with_the_reason(store):
+    issue(store)
+    req = urllib.request.Request(store.url + "/v1/admin/split-settings", method="POST",
+                                 data=json.dumps({"split_id": "706ba187", "flags": ["--shard-plan", "6"]}).encode(),
+                                 headers={"Authorization": f"Bearer {store.adm}", "Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as e:
+        urllib.request.urlopen(req)
+    assert e.value.code == 400 and "--shard-plan" in json.loads(e.value.read())["error"]
+
+
+def test_the_admin_page_ships_the_settings_editor(store):
+    js = urllib.request.urlopen(store.url + "/static/app.js").read().decode()
+    assert "settingsEditor" in js and '"split-settings"' in js and "textToFlags" in js
+
+
+def test_the_admin_editor_has_switches_for_the_common_settings(store):
+    js = urllib.request.urlopen(store.url + "/static/app.js").read().decode()
+    assert '"auto-remine"' in js and "setSwitch" in js and "miner default" in js

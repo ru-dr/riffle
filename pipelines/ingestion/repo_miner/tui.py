@@ -930,7 +930,7 @@ class RiffleTUI(App):
                     yield Checkbox("Git PR discovery", False, id="git_discovery", compact=True)
                     yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
                     yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
-                    yield Checkbox("Auto re-mine stale repos", True, id="auto_remine", compact=True)
+                    yield Checkbox("Auto re-mine stale repos", False, id="auto_remine", compact=True)
                     yield Checkbox("Skip big repos (quick test run)", False, id="skip_big", compact=True)
                     yield Label("Big = more than N commits")
                     yield Input("100000", id="big_n", type="integer", compact=True)

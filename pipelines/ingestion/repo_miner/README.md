@@ -72,6 +72,27 @@ What changed, in short; section 21 of [`ARCHITECTURE.md`](ARCHITECTURE.md) has t
 - **Training** (`pipelines/training/frames.py`) masks all 125 diff-derived columns on `open_snapshot == final` rows and
   groups the split by repo, PR and shared head commit, so splits for mixed-case repo names change.
 
+### GitHub quota: `GITHUB_TOKENS`
+
+A token has 5,000 REST calls an hour, and reading every PR timeline costs one call per PR (a repo of 35,000 PRs is
+about 7 hours on one token). `GITHUB_TOKENS` (commas, spaces or new lines) adds more tokens; the miner uses the first
+that has quota left and moves to the next on a `primary rate limit` (or as soon as a response says 0 are left),
+waiting only when every token is out. REST and GraphQL are counted apart. A quota belongs to the account, so only
+tokens of **different accounts** add quota, and they must be accounts you own: never share a token with another PC or
+person. Logs name a token by its position only. Timelines of closed and merged PRs stay in `ci_cache/*.api.sqlite`
+for 90 days (14 days for anything else), so a re-run reads them from disk.
+
+### A resume after an upgrade repeats work
+
+Moving to another miner major.minor (6.13 to 7.0) means a resume cannot reuse what the earlier version did: the
+checkpoint's PRs are mined again (their stamp names the old version) and the pinned PR list is fetched again, which
+reads every PR timeline again (one GitHub call per PR, 5,000 an hour per token, so a repo of 35,000 PRs takes about
+7 hours). `--audit` reads only `--out`, which does not hold a repo until it finishes, so it cannot see this. Every
+batch now prints a `[redo]` block before it mines, naming each affected repo, how many PRs, and how many timelines
+are cached; `--audit` prints the same for every checkpoint and selection. To leave a big repo for later, use
+`--skip-big N` or ctrl+n in the TUI; the shard split does not change. Do not edit the repos file. A patch release
+(7.0.0 to 7.0.1) does not trigger this.
+
 ## Install
 
 ```bash
@@ -85,6 +106,7 @@ else is an optional stage. Put your tokens in a `.env` file at the package root
 ```bash
 # .env
 GITHUB_TOKEN=ghp_...                 # PR list, CI checks, labels
+GITHUB_TOKENS=ghp_b...,ghp_c...      # optional: more tokens of YOUR OWN accounts, used in turn when one runs out of quota
 LLM_BACKEND=claude_cli               # default: headless Claude Code on your own login, no key
 LLM_MODEL=sonnet                     # default for claude_cli (claude-sonnet-5 with the api backend)
 LLM_API_KEY=sk-ant-...               # only with LLM_BACKEND=api
@@ -426,7 +448,7 @@ adds files has no history to blame): 95-100% is healthy, `<- check` (50-95%)
 means look for `[blame] warning` in `logs/run-*.log`, `<- re-mine` (under
 50%) means blame was failing. A re-mine only runs for repos in this PC's share
 (`--shard`); naming another PC's repo stops with nothing changed.
-`--auto-remine` is on by default (TUI: "Auto re-mine stale repos"; `--no-auto-remine` turns it off). At Start it audits
+`--auto-remine` is **off** by default (TUI: "Auto re-mine stale repos"; `--auto-remine` turns it on). With it on, Start audits
 the output and re-mines the stale repos in this PC's share: blame failing, or mined by a miner older than 7.0.0. A repo
 mined by a newer miner is never re-mined here, and a repo already re-mined automatically under this version is not
 re-mined again. A test run never re-mines.
