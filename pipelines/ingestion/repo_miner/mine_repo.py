@@ -85,6 +85,8 @@ def _step(name: str | None = None) -> None:
 def _kill_children() -> None:
     """SIGKILL every direct child of this process (and its process group when it
     leads one of its own), found through /proc. A no-op where /proc is missing."""
+    if not hasattr(os, "getpgrp") or not os.path.isdir("/proc"):
+        return                                        # Windows and macOS: no /proc, no process groups
     me, mine = os.getpid(), os.getpgrp()
     try:
         pids = [int(e) for e in os.listdir("/proc") if e.isdigit()]
@@ -994,6 +996,9 @@ def _open_snapshot(repo: str, pr: dict, pushes: list | None, default_branch: str
             "behind": gitio.count_before(repo, base, api_base, cut)}
 
 
+SNAPSHOT_SLICE = 2000
+
+
 def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str,
                             st: config.Settings) -> None:
     """Set pr["_open"] on every PR whose at-open state can be recovered.
@@ -1021,10 +1026,18 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
               f"diff is unobserved and falls back to the final diff; rerun to retry them.",
               file=sys.stderr)
     kinds: Counter = Counter()
-    # each snapshot is a handful of git subprocesses: run them in parallel
+    # each snapshot is a handful of git subprocesses: run them in parallel, a slice at a time so
+    # the pool never queues tens of thousands of jobs, and say how far it is
+    snaps: list = []
     with ThreadPoolExecutor(max_workers=max(1, st.workers)) as pool:
-        snaps = list(pool.map(lambda pr: _open_snapshot(
-            repo, pr, pushes.get(pr.get("number")), default_branch, st.rework_grace_s), prs))
+        for i in range(0, len(prs), SNAPSHOT_SLICE):
+            snaps.extend(pool.map(lambda pr: _open_snapshot(
+                repo, pr, pushes.get(pr.get("number")), default_branch, st.rework_grace_s),
+                prs[i:i + SNAPSHOT_SLICE]))
+            if len(prs) > SNAPSHOT_SLICE:
+                mem = runlog.rss_gb()
+                print(f"[open-snapshot] {len(snaps)}/{len(prs)} PRs"
+                      + (f", memory {mem:g} GB" if mem is not None else ""), file=sys.stderr, flush=True)
     for pr, snap in zip(prs, snaps):
         pr["_pushes"] = pushes.get(pr.get("number"))   # None: unknown (snapshot capture)
         if snap:
@@ -1033,6 +1046,45 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
     print(f"[open-snapshot] {dict(kinds)} (final = at-open diff not recoverable; "
           f"features use the final diff; PRs whose at-open diff turns out empty "
           f"are downgraded to final later, see open_snapshot in health)", file=sys.stderr)
+
+
+def _save_open_snapshots(sel_path: str | None, st: config.Settings, prs: list[dict], default_branch: str) -> None:
+    """Keep what _resolve_open_snapshots found in the pinned selection, so a restart of this repo does not
+    redo it (21 to 33 minutes on react and next.js). Not kept when a head could not be fetched: a rerun
+    must try those again."""
+    if not sel_path or any(p.get("_head_unobserved") for p in prs):
+        return
+    per = {str(p["number"]): {"o": p.get("_open"), "p": p.get("_pushes"), "u": False}
+           for p in prs if p.get("number") is not None}
+    update_selection(sel_path, {"open_snaps": {"grace": st.rework_grace_s, "branch": default_branch, "prs": per}})
+
+
+def _restore_open_snapshots(repo: str, sel_path: str | None, st: config.Settings, prs: list[dict],
+                            default_branch: str) -> bool:
+    """Apply the open snapshots kept by _save_open_snapshots. True only when they were made with this grace
+    and default branch, cover every PR, and every head they name is in the clone (a re-cloned repo has not
+    fetched them); otherwise nothing is touched and the caller resolves them."""
+    if not sel_path:
+        return False
+    saved = (load_selection(sel_path, st) or {}).get("open_snaps")
+    if not isinstance(saved, dict) or saved.get("grace") != st.rework_grace_s or saved.get("branch") != default_branch:
+        return False
+    per = saved.get("prs")
+    if not isinstance(per, dict) or any(str(p["number"]) not in per for p in prs if p.get("number") is not None):
+        return False
+    shas = {x for e in per.values() if isinstance(e, dict) and e.get("o") for x in (e["o"].get("head"), e["o"].get("base")) if x}
+    if shas and len(gitio.existing_commits(repo, list(shas))) < len(shas):
+        return False
+    for pr in prs:
+        e = per.get(str(pr.get("number")))
+        if not isinstance(e, dict):
+            continue
+        pr["_pushes"] = e.get("p")
+        if e.get("o"):
+            pr["_open"] = e["o"]
+    print(f"[open-snapshot] {len(prs)} PRs restored from the pinned selection (made with the same grace and "
+          f"branch, every head is in the clone); not resolved again", file=sys.stderr, flush=True)
+    return True
 
 
 # ---- pinned PR selection (resume) -----------------------------------------
@@ -1087,15 +1139,29 @@ def update_selection(path: str, extra: dict) -> None:
         pass
 
 
+TIMELINE_LOG_EVERY = 1000
+TIMELINE_LOG_SECS = 300
+
+
 def _prefetch_timelines(api, prs: list[dict], st: config.Settings) -> None:
     """pr["_events"] for every PR that doesn't have it yet, in parallel."""
     need = [p for p in prs if p.get("_events") is None and p.get("number") is not None]
     if not need:
         return
     progress.emit("stage", repo=f"{api.owner}/{api.repo}", stage="timelines")
+    # one GitHub call per PR, so a big repo is bound by the hourly quota: say how far it is, or a quota
+    # sleep (the "[api] rate limit hit" line) looks like a hang
+    t0, last, done = time.monotonic(), time.monotonic(), 0
     with ThreadPoolExecutor(max_workers=max(1, min(8, st.workers))) as pool:
         for pr, events in zip(need, pool.map(lambda p: api.pr_timeline(p["number"]), need)):
             pr["_events"] = events
+            done += 1
+            if done % TIMELINE_LOG_EVERY == 0 or time.monotonic() - last >= TIMELINE_LOG_SECS:
+                last = time.monotonic()
+                mem = runlog.rss_gb()
+                print(f"[timeline] {done}/{len(need)} read, {done / max(last - t0, 1) * 3600:,.0f} PRs/h "
+                      f"so far (a slow stretch is GitHub's hourly quota)"
+                      + (f", memory {mem:g} GB" if mem is not None else ""), file=sys.stderr, flush=True)
     print(f"[timeline] read {len(need)} PR timelines", file=sys.stderr)
 
 
@@ -1436,7 +1502,9 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
     if api is not None:
         runlog.stage("open snapshots")
         progress.emit("stage", repo=f"{owner}/{name}", stage="open snapshots")
-        _resolve_open_snapshots(repo, prs, api, default_branch, st)
+        if not _restore_open_snapshots(repo, sel_path, st, prs, default_branch):
+            _resolve_open_snapshots(repo, prs, api, default_branch, st)
+            _save_open_snapshots(sel_path, st, prs, default_branch)
     runlog.stage("concurrency")
     concurrency = _build_concurrency(repo, prs, base_resolver, st.workers)
     ci_map = {}

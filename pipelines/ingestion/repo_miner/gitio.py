@@ -65,7 +65,9 @@ class FetchError(GitError):
         self.specs = list(specs or [])
 
 
-_GIT_CONFIG = ("-c", "core.quotePath=false")
+# gc.auto and maintenance.auto off: a fetch of thousands of PR heads must not start an automatic repack
+# of a big clone (minutes of memory and disk with no output, which looks like a hang)
+_GIT_CONFIG = ("-c", "core.quotePath=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false")
 
 # Timeouts in seconds, read at call time so a run (or a test) can change them
 # with the environment. 0 or a negative value turns a timeout off.

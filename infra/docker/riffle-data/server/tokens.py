@@ -183,19 +183,118 @@ def settings_version(flags: list[str] | None) -> str:
     return hashlib.sha256(json.dumps([str(f) for f in (flags or [])]).encode()).hexdigest()[:12]
 
 
+# flags that belong to planning or hold secrets: never part of the settings every PC of a split adopts
+NOT_SHARED_FLAGS = ("--issue-tokens", "--tokens-out", "--token-days", "--shard-plan")
+
+
+_SCHEMA: dict | None = None
+
+
+def schema() -> dict | None:
+    """The shared-settings schema the admin form is built from (static/settings-schema.json, made from the miner's own
+    parser by settings_schema.py); None when the file is missing, and then only the plain checks apply."""
+    global _SCHEMA
+    if _SCHEMA is None:
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "settings-schema.json"), encoding="utf-8") as fh:
+                _SCHEMA = json.load(fh)
+        except (OSError, ValueError):
+            _SCHEMA = {}
+    return _SCHEMA or None
+
+
+def parse_settings(flags: list[str], strict: bool = True) -> dict[str, object]:
+    """{dest: value} for a list of shared flags: True or False for an on/off setting, the text for a value. With
+    `strict`, ValueError for a flag the miner does not share, a value of the wrong kind, a setting given twice or an
+    on/off setting given both ways. Without it, anything unknown is skipped (reading what is already stored)."""
+    sc = schema()
+    if not sc:
+        return {}
+    by_flag: dict[str, dict] = {}
+    for st in sc["settings"]:
+        by_flag[st["flag"]] = st
+        if st.get("off_flag"):
+            by_flag[st["off_flag"]] = st
+    out: dict[str, object] = {}
+    i = 0
+    while i < len(flags):
+        tok = flags[i]
+        name, eq, val = tok.partition("=")
+        st = by_flag.get(name)
+        i += 1
+        if not eq and i < len(flags) and not flags[i].startswith("--"):
+            nxt, has_val = flags[i], True
+        else:
+            nxt, has_val = val, bool(eq)
+        if st is None:
+            if strict:
+                raise ValueError(f"{name} is not a shared setting")
+            i += 1 if has_val and not eq else 0
+            continue
+        kind = st["kind"]
+        if kind in ("bool", "flag"):
+            if has_val:
+                raise ValueError(f"{name} is an on/off setting and takes no value")
+            value = False if name == st.get("off_flag") else True
+        else:
+            if not has_val or nxt == "":
+                raise ValueError(f"{name} needs a value")
+            value = nxt
+            if not eq:
+                i += 1
+            if strict:
+                if kind == "choice" and value not in st["choices"]:
+                    raise ValueError(f"{name} must be one of {', '.join(st['choices'])}")
+                if kind == "int" and not re.fullmatch(r"\d{1,9}", value):
+                    raise ValueError(f"{name} must be a whole number, not {value!r}")
+                if kind == "date" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                    raise ValueError(f"{name} must be a date like 2026-01-31")
+        if st["dest"] in out and strict:
+            raise ValueError(f"{st['flag']} is given more than once")
+        out[st["dest"]] = value
+    return out
+
+
+def check_flags(flags, current: list[str] | None = None) -> list[str]:
+    """The flags as a clean list, or ValueError saying what is wrong with them. Each setting starts with --, a
+    value is a plain string on one line, the planning flags that issue or write tokens are refused, and (with the
+    schema) every flag must be one the miner shares, with a value of the right kind. With `current`, the settings
+    the schema marks locked (repos file, split-by, output names) must not change: they would move repos between
+    PCs or rename files, so that takes a new plan."""
+    if not isinstance(flags, list) or len(flags) > 200 or not all(isinstance(f, str) and len(f) <= 500 for f in flags):
+        raise ValueError("flags must be a list of at most 200 short strings")
+    if any("\n" in f or "\r" in f or "\0" in f for f in flags):
+        raise ValueError("a flag must be one line of text")
+    if flags and not flags[0].startswith("--"):
+        raise ValueError(f"the first flag must start with --, not {flags[0]!r}")
+    bad = sorted({f for f in flags if f.split("=", 1)[0] in NOT_SHARED_FLAGS})
+    if bad:
+        raise ValueError(f"{', '.join(bad)} cannot be a shared setting (it plans a split or writes tokens)")
+    sc = schema()
+    if sc:
+        new = parse_settings(flags)
+        if current is not None:
+            old = parse_settings(current, strict=False)
+            for st in sc["settings"]:
+                if st.get("locked") and new.get(st["dest"]) != old.get(st["dest"]):
+                    raise ValueError(f"{st['flag']} is fixed for this split: changing it moves repos between PCs or renames files. Plan a new split instead")
+    return list(flags)
+
+
 def set_split_settings(path: str, split: str, flags: list[str]) -> str:
     """Replace a split's shared flags in place. The PC tokens and join codes are left alone, so nothing has to be
     handed out again. Returns the new settings version. LookupError when the split is unknown."""
     if not SPLIT.match(split or ""):
         raise ValueError("a split ID")
-    if not isinstance(flags, list) or len(flags) > 200 or not all(isinstance(f, str) and len(f) <= 500 for f in flags):
+    if not isinstance(flags, list):
         raise ValueError("flags must be a list of at most 200 short strings")
     with locked(path):
         data = load(path, strict=True)
         rec = data["splits"].get(split)
         if rec is None:
             raise LookupError(f"no split {split}")
-        rec["flags"] = list(flags)
+        flags = check_flags(flags, rec.get("flags") or [])
+        rec["flags"] = flags
         save(path, data)
     return settings_version(flags)
 

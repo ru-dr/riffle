@@ -60,6 +60,8 @@ BODIES = {
 <section class="rule section"><div class="shead"><div class="cap">Splits</div><h2>Rotate or revoke a whole split</h2>
 <p>Rotating makes new tokens for every PC of the split and stops the old ones at once, then shows the new join codes here, once. New splits are planned from the miner's TUI (Lead tools, F3), because the plan needs the repos file.</p></div></section>
 <section><div id="splits"></div></section>
+<section class="rule section" id="splitedit" hidden><div class="shead"><div class="cap">Settings</div><h2 id="se-title">Shared settings</h2><p id="se-note"></p></div>
+<div class="editbody" id="se-body"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">PC tokens</div><h2>Every machine that may upload</h2></div></section>
 <section><div id="pcs"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Storage</div><h2>What the store holds</h2>

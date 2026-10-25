@@ -454,14 +454,32 @@ _BLAME_COLS = ("max_file_top_author_share", "max_file_minor_contributor_count",
                "min_mod_line_age_days_min", "max_mod_lines_distinct_authors")
 
 
-def _read_out(out: str):
-    """The dataset as a pandas DataFrame (parquet, or the .jsonl fallback)."""
+def _read_out(out: str, columns=None):
+    """The dataset as a pandas DataFrame (parquet, or the .jsonl fallback). With `columns`, only those that
+    exist: the audit needs six of ~300 columns, and a whole dataset in memory is what a big output costs."""
     import pandas as pd
     for path in ([out] + ([out.rsplit(".", 1)[0] + ".jsonl"] if out.endswith(".parquet") else [])):
-        if os.path.isfile(path):
-            return path, (pd.read_parquet(path) if path.endswith(".parquet")
-                          else pd.read_json(path, lines=True))
+        if not os.path.isfile(path):
+            continue
+        if path.endswith(".parquet"):
+            if columns:
+                import pyarrow.parquet as pq
+                have = set(pq.read_schema(path).names)
+                return path, pd.read_parquet(path, columns=[c for c in columns if c in have])
+            return path, pd.read_parquet(path)
+        df = pd.read_json(path, lines=True)
+        return path, (df[[c for c in columns if c in df.columns]] if columns else df)
     return None, None
+
+
+# what the audit and the version checks read, in one pass (see _audit_frame)
+_AUDIT_COLS = ("repo", "miner_version", "AGE", "label_szz_bug") + _BLAME_COLS
+
+
+def _audit_frame(out: str):
+    """(path, DataFrame of the audit columns) read once, to share between _audit, _stale_by_version and
+    _mined_by_newer; (None, None) when --out is missing."""
+    return _read_out(out, _AUDIT_COLS) if _has_output(out) else (None, None)
 
 
 # the dataset format this miner writes: rows mined by an older miner (or with no version) are stale
@@ -490,12 +508,13 @@ def _version_key(version) -> tuple | None:
         return None
 
 
-def _mined_by_newer(out: str) -> dict[str, str]:
+def _mined_by_newer(out: str, frame=None) -> dict[str, str]:
     """{repo lower-cased: the newer miner version its rows were written by}, for repos whose rows come from a
-    miner newer than this one. Automatic re-mining never replaces those: another PC already mined them."""
+    miner newer than this one. Automatic re-mining never replaces those: another PC already mined them.
+    `frame` is an already read (path, DataFrame) from _audit_frame."""
     if not _has_output(out):
         return {}
-    path, df = _read_out(out)
+    path, df = frame or _audit_frame(out)
     if df is None or df.empty or "repo" not in df.columns or "miner_version" not in df.columns:
         return {}
     mine = _version_key(__version__)
@@ -508,12 +527,13 @@ def _mined_by_newer(out: str) -> dict[str, str]:
     return newer
 
 
-def _stale_by_version(out: str) -> dict[str, str]:
+def _stale_by_version(out: str, frame=None) -> dict[str, str]:
     """{repo as stored: why} for every repo in --out whose rows were not mined by this format (a row with no
-    miner_version, or one older than COMPAT_MINOR). Empty when --out is missing or has no rows."""
+    miner_version, or one older than COMPAT_MINOR). Empty when --out is missing or has no rows.
+    `frame` is an already read (path, DataFrame) from _audit_frame."""
     if not _has_output(out):
         return {}
-    path, df = _read_out(out)
+    path, df = frame or _audit_frame(out)
     if df is None or df.empty or "repo" not in df.columns:
         return {}
     stale: dict[str, str] = {}
@@ -530,12 +550,13 @@ def _stale_by_version(out: str) -> dict[str, str]:
     return stale
 
 
-def _audit(out: str) -> list[str]:
+def _audit(out: str, frame=None) -> list[str]:
     """Blame coverage per repo, measured only on PRs that touch files that
     already existed (AGE is set): a PR that only adds new files has no history
     to blame, so it can't count against the repo. Among the rest coverage
-    should be ~100%. Returns the repos to re-mine (coverage under 50%)."""
-    path, df = _read_out(out)
+    should be ~100%. Returns the repos to re-mine (coverage under 50%).
+    This reads --out only: repos still being mined are in the checkpoint, which _redo_report covers."""
+    path, df = frame or _audit_frame(out)
     if df is None or df.empty:
         print(f"[audit] nothing in {out}")
         return []
@@ -558,7 +579,7 @@ def _audit(out: str) -> list[str]:
         print(f"  {repo:40s} {len(g):5d}  {n_new:8d}  {cov_s}  {szz:4d}{note}")
     print("  (blame = share of PRs touching existing files that got blame data; "
           "new-only = PRs that only add files, which have no history to blame)")
-    stale = _stale_by_version(out)
+    stale = _stale_by_version(out, (path, df))
     if stale:
         print("[audit] version: these repos were mined by an older miner than 7.0.0, so they are stale:")
         for repo in sorted(stale):
@@ -576,6 +597,114 @@ def _audit(out: str) -> list[str]:
     if not bad and not check:
         print("[audit] every repo has blame data where there was history to blame")
     return bad
+
+
+CKPT_STAMP = "_ckpt"         # the key mine_repo.py stamps on every checkpointed row (a test keeps them equal)
+
+
+def _checkpoint_by_repo(out: str) -> dict[str, dict]:
+    """{repo lower-cased: {"rows": n, "stale": n, "miners": {major.minor, ...}}} for the checkpoint beside --out
+    (`<out>.partial.jsonl`: the PRs of repos still being mined). A row is stale when its stamp names another
+    miner major.minor than this one: mine_repo mines it again. Rows with no stamp are kept, like mine_repo does.
+    Settings other than the miner version can also differ; only the repo's own run says so."""
+    path = out + ".partial.jsonl"
+    mine = ".".join(__version__.split(".")[:2])
+    last: dict[tuple, str | None] = {}                       # (repo, pr) -> the stamp's miner; the last row wins
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(r, dict) or not r.get("repo") or r.get("pr_number") is None:
+                    continue
+                got = r.get(CKPT_STAMP)
+                last[(str(r["repo"]).lower(), r["pr_number"])] = got.get("miner") if isinstance(got, dict) else None
+    except OSError:
+        return {}
+    by_repo: dict[str, dict] = {}
+    for (repo, _pr), miner in last.items():
+        c = by_repo.setdefault(repo, {"rows": 0, "stale": 0, "miners": set()})
+        c["rows"] += 1
+        if miner is not None and miner != mine:
+            c["stale"] += 1
+            c["miners"].add(miner)
+    return by_repo
+
+
+def _selection_miner_major(cache_dir: str, stem: str) -> str | None:
+    """The miner major that pinned this repo's PR selection (`ci_cache/<owner>_<name>.selection.json`), read
+    from the file's first bytes: `params` is written first and the rest can be hundreds of MB. None when
+    there is no selection."""
+    try:
+        with open(os.path.join(cache_dir, f"{stem}.selection.json"), "rb") as fh:
+            head = fh.read(4096).decode("utf-8", "replace")
+    except OSError:
+        return None
+    m = re.search(r'"miner_major":\s*"([^"]*)"', head)
+    return m.group(1) if m else ""
+
+
+def _cached_timelines(cache_dir: str, stem: str) -> int | None:
+    """How many PR timelines `ci_cache/<owner>_<name>.api.sqlite` holds (each is a GitHub call saved)."""
+    path = os.path.join(cache_dir, f"{stem}.api.sqlite")
+    if not os.path.isfile(path):
+        return None
+    try:
+        import sqlite3
+        db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+        try:
+            return db.execute("SELECT COUNT(*) FROM kv WHERE k LIKE 'tl:%'").fetchone()[0]
+        finally:
+            db.close()
+    except Exception:                                       # noqa: BLE001 - a report must never stop a run
+        return None
+
+
+def _redo_report(out: str, cache_dir: str, repos: list[str] | None = None) -> dict[str, list[str]]:
+    """Say what the next run will do again because this miner is not the one that did the work: checkpointed
+    PRs of another miner version, and a PR selection pinned by another major (PR list, and every timeline,
+    are read again). `_audit` cannot see either, since it reads --out and these repos are not in it yet.
+    `repos` ("owner/name") limits it to this run's repos; None means every repo with a checkpoint or a
+    selection. Prints and returns {repo: [reasons]}."""
+    major = __version__.split(".")[0]
+    ck = _checkpoint_by_repo(out)
+    stems = {r.lower(): r.replace("/", "_") for r in (repos if repos is not None else ck)}
+    if repos is None and os.path.isdir(cache_dir):
+        known = set(stems.values())
+        for f in sorted(os.listdir(cache_dir)):
+            if f.endswith(".selection.json") and f[:-len(".selection.json")] not in known:
+                stem = f[:-len(".selection.json")]
+                stems[stem] = stem
+    found: dict[str, list[str]] = {}
+    for repo, stem in sorted(stems.items()):
+        why = []
+        c = ck.get(repo)
+        if c and c["stale"]:
+            why.append(f"{c['stale']:,} of its {c['rows']:,} checkpointed PRs were mined by miner "
+                       f"{', '.join(sorted(c['miners']))}; they are mined again (their rows differ from {__version__})")
+        sel = _selection_miner_major(cache_dir, stem)
+        if sel is not None and sel != major:
+            n = _cached_timelines(cache_dir, stem)
+            why.append(f"its pinned PR list was made by miner {sel or 'an unknown version'}.x: the PR list is fetched again "
+                       f"and every timeline is read again (one GitHub call per PR, 5,000 an hour per token; "
+                       f"{f'{n:,} are in the cache' if n else 'none are cached'})")
+        if why:
+            found[repo] = why
+    if found:
+        print(f"[redo] miner {__version__} cannot reuse earlier work for {len(found)} repo(s). A resume will "
+              f"repeat it before mining new PRs:", flush=True)
+        for repo, why in found.items():
+            for w in why:
+                print(f"  {repo}: {w}", flush=True)
+        print("  To leave a big one for later: --skip-big N or the TUI's ctrl+n (the shard split does not "
+              "change). Do not edit the repos file.", flush=True)
+    elif repos is None:
+        print("[redo] no checkpoint or pinned selection from another miner version", flush=True)
+    return found
 
 
 def pd_false(g):
@@ -1295,10 +1424,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="skip repos with more than N commits (by their repos.txt "
                          "[~N commits] tag) for a quick run; 0 = off. Skipped repos aren't "
                          "written, so a later run without it mines them")
-    ap.add_argument("--auto-remine", action=argparse.BooleanOptionalAction, default=True,
+    ap.add_argument("--auto-remine", action=argparse.BooleanOptionalAction, default=False,
                     help="before mining, audit --out and re-mine every stale repo in this run's share: blame "
-                         "failing, or mined by a miner older than 7.0.0. On by default; --no-auto-remine turns it "
-                         "off. A repo re-mined this way is not re-mined again by this miner version, so a repo "
+                         "failing, or mined by a miner older than 7.0.0. Off by default (a re-mine drops the "
+                         "repo's finished rows first); --auto-remine turns it on. A repo re-mined this way is not re-mined again by this miner version, so a repo "
                          "that is still flagged after its re-mine does not loop")
     ap.add_argument("--audit", action="store_true",
                     help="report each repo's share of rows with blame data and flag repos "
@@ -1359,6 +1488,7 @@ def main():
         _SYNC = {"args": args, "counts": {}}
     if args.audit:
         _audit(args.out)
+        _redo_report(args.out, _ci_cache_dir(args))
         return
     size_of: dict = {}
     domain_of: dict = {}
@@ -1429,8 +1559,10 @@ def main():
     # drop their old rows only then; dropping a repo another PC mines would
     # lose its rows here without replacing them.
     mine_here = {f"{o}/{n}".lower() for o, n, _ in entries}
+    frame = (None, None)
     if not args.test and args.out:
-        stale_here = {r: why for r, why in _stale_by_version(args.out).items() if r.lower() in mine_here}
+        frame = _audit_frame(args.out)                      # one read of the audit columns for all the checks
+        stale_here = {r: why for r, why in _stale_by_version(args.out, frame).items() if r.lower() in mine_here}
         if stale_here:
             print(f"[version] {len(stale_here)} repo(s) in this PC's share were mined by an older miner than 7.0.0 "
                   f"and are stale: {', '.join(sorted(stale_here))}. Re-mine them with --auto-remine (or "
@@ -1438,11 +1570,11 @@ def main():
     if args.auto_remine and not args.test:
         import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):
-            flagged = _audit(args.out)
+            flagged = _audit(args.out, frame)
         explicit = {x.lower() for x in args.remine_repo}
         already = _load_auto_remined(args.out)
         candidates = [r for r in flagged if r.lower() in mine_here and r.lower() not in explicit]
-        newer = _mined_by_newer(args.out)
+        newer = _mined_by_newer(args.out, frame)
         ahead = [r for r in candidates if r.lower() in newer]
         candidates = [r for r in candidates if r.lower() not in newer]
         auto = [r for r in candidates if already.get(r.lower()) != __version__]
@@ -1475,6 +1607,9 @@ def main():
     if done_repos:
         print(f"[resume] {len(done_repos)} repos already in {args.out}; skipping them "
               f"(--remine to redo)", flush=True)
+    if not args.test:
+        _redo_report(args.out, _ci_cache_dir(args),
+                     [f"{o}/{n}" for o, n, _ in entries if f"{o}/{n}".lower() not in done_repos])
     _settings_report(args.out, _SETTINGS["version"], done_repos)
     here = os.path.dirname(os.path.abspath(__file__))
     miner = os.path.join(here, "mine_repo.py")

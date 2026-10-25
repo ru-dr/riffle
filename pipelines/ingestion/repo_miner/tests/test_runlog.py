@@ -93,3 +93,14 @@ def test_fields_named_like_parameters_do_not_collide(tmp_path):
     runlog.configure(path=path, level="INFO")
     runlog.info("batch", "start", level="INFO", stage="x", msg="m")      # caught a real crash in a live run
     assert _events(path)[0]["level"] == "INFO"
+
+
+def test_stage_lines_carry_the_memory_in_use(capsys):
+    import time as _t
+    runlog.stage("a")
+    _t.sleep(1.05)
+    runlog.stage(None)
+    err = capsys.readouterr().err
+    assert "[stage] a done in" in err
+    if runlog.rss_gb() is not None:
+        assert "(memory " in err and "GB)" in err

@@ -899,8 +899,67 @@
     }
     return d;
   }
+  /* a split's flags as editable text: one setting per line, `--max-prs 8000`; a value with spaces is quoted */
+  function flagsToText(flags) {
+    var lines = [];
+    flags.forEach(function (f) {
+      f = String(f);
+      var q = !/[\s"']/.test(f) ? f : f.indexOf('"') < 0 ? '"' + f + '"' : "'" + f + "'";      // a value with both kinds of quote is not supported
+      if (f.slice(0, 2) === "--" || !lines.length) lines.push(q); else lines[lines.length - 1] += " " + q;
+    });
+    return lines.join("\n");
+  }
+  function textToFlags(text) {
+    var out = [];
+    text.split("\n").forEach(function (line, n) {
+      line = line.trim();
+      if (!line || line[0] === "#") return;
+      var toks = [], re = /'([^']*)'|"([^"]*)"|(\S+)/g, m;
+      while ((m = re.exec(line))) toks.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+      if (toks[0].slice(0, 2) !== "--") throw new Error("Line " + (n + 1) + " must start with --, e.g. --max-prs 8000");
+      out = out.concat(toks);
+    });
+    return out;
+  }
+  /* the shared settings as a form. The schema (static/settings-schema.json) is made from the miner's own parser,
+     so the form offers exactly what the miner shares. The model is {dest: value}; flags it does not know are kept. */
+  var SCHEMA = null;
+  function loadSchema() {
+    if (SCHEMA) return Promise.resolve(SCHEMA);
+    return fetch("/static/settings-schema.json", { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (j) { SCHEMA = j; return j; });
+  }
+  function parseModel(flags, schema) {
+    var by = {}, model = {}, extra = [], i = 0;
+    schema.settings.forEach(function (st) { by[st.flag] = st; if (st.off_flag) by[st.off_flag] = st; });
+    while (i < flags.length) {
+      var tok = String(flags[i]), eq = tok.indexOf("="), name = eq < 0 ? tok : tok.slice(0, eq), st = by[name];
+      i++;
+      var takesNext = eq < 0 && i < flags.length && String(flags[i]).slice(0, 2) !== "--";
+      if (!st) { extra.push(tok); if (takesNext) extra.push(String(flags[i++])); continue; }
+      if (st.kind === "bool") model[st.dest] = name === st.flag;
+      else if (st.kind === "flag") model[st.dest] = true;
+      else if (eq >= 0) model[st.dest] = tok.slice(eq + 1);
+      else if (takesNext) model[st.dest] = String(flags[i++]);
+    }
+    return { model: model, extra: extra };
+  }
+  function modelToFlags(model, extra, schema) {
+    var out = [];
+    schema.settings.forEach(function (st) {
+      var v = model[st.dest];
+      if (st.kind === "bool") { if (v === true) out.push(st.flag); else if (v === false) out.push(st.off_flag); }
+      else if (st.kind === "flag") { if (v) out.push(st.flag); }
+      else if (v !== undefined && v !== "") out.push(st.flag, String(v));
+    });
+    return out.concat(extra);
+  }
+  function showValue(st, v) {
+    if (st.kind === "bool") return v === undefined ? "miner default (" + (st.default ? "on" : "off") + ")" : v ? "on" : "off";
+    if (st.kind === "flag") return (st.invert ? !v : !!v) ? "on" : "off";
+    return v === undefined || v === "" ? (st.empty || "miner default") : String(v);
+  }
   function admin() {
-    var pending = null;
+    var pending = null, editing = null;
     function call(method, path, body) {
       return fetch("/v1/admin/" + path, { method: method, credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-Requested-With": "riffle" }, body: body ? JSON.stringify(body) : undefined
@@ -951,9 +1010,111 @@
       }));
       $("#newcodes").scrollIntoView({ block: "start" });
     }
+    /* the lead's shared settings for a split, edited in a panel under the table (not inside its narrow cell).
+       PCs read them when a batch starts */
+    function closeEditor() { editing = null; $("#splitedit").hidden = true; $("#se-body").replaceChildren(); draw(); }
+    function segmented(options, current, label, onPick) {
+      var box = el("div", "se-seg"), btns = [];
+      box.setAttribute("role", "group"); box.setAttribute("aria-label", label);
+      options.forEach(function (o) {
+        var b = el("button", "", o[1]); b.type = "button"; b.dataset.v = o[0];
+        b.onclick = function () { btns.forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); }); onPick(o[0]); };
+        btns.push(b); box.append(b);
+      });
+      box.set = function (v) { btns.forEach(function (x) { x.setAttribute("aria-pressed", String(x.dataset.v === String(v))); }); };
+      box.set(current); return box;
+    }
+    function openEditor(x) {
+      editing = x.split_id;
+      loadSchema().then(function (schema) {
+        var sec = $("#splitedit"), body = $("#se-body"), startFlags = (x.flags || []).map(String);
+        var start = parseModel(startFlags, schema), model = JSON.parse(JSON.stringify(start.model)), extra = start.extra.slice();
+        $("#se-title").textContent = "Settings of split " + x.split_id;
+        say($("#se-note"), "Every PC of this split takes these the next time it starts a batch. Each PC keeps its own machine settings (shard, workers, clone folder). Settings are stored in the open: never put a token or password in a field.");
+        var controls = {}, ta = h("textarea"), changes = el("div", "se-changes"), msg = el("div", "alert", ""), save = el("button", "btn solid", "Save settings");
+        msg.hidden = true;
+        ta.value = flagsToText(modelToFlags(model, extra, schema)); ta.spellcheck = false; ta.rows = 8; ta.setAttribute("aria-label", "Settings of split " + x.split_id + " as flags");
+        function fail(text) { msg.hidden = !text; msg.textContent = text || ""; }
+        function refresh(fromText) {
+          var flags = modelToFlags(model, extra, schema);
+          if (!fromText) ta.value = flagsToText(flags);
+          var rows = [], shapes = false;
+          schema.settings.forEach(function (st) {
+            if (JSON.stringify(model[st.dest]) === JSON.stringify(start.model[st.dest])) return;
+            rows.push(el("li", "", [el("b", "", st.label + ": "), showValue(st, start.model[st.dest]) + " → " + showValue(st, model[st.dest])]));
+            if (st.group === "mining" || st.group === "llm" || st.group === "features") shapes = true;
+          });
+          if (JSON.stringify(extra) !== JSON.stringify(start.extra)) rows.push(el("li", "", "Other flags changed"));
+          var ul = el("ul", "se-ul", rows);
+          changes.replaceChildren(rows.length ? ul : el("span", "se-diff", "No changes yet."));
+          if (shapes && rows.length) changes.append(el("div", "se-warn", "This changes the mined rows. Repos a PC already finished keep their old rows until they are re-mined, and PCs must run the same settings or the merge refuses their files."));
+          save.disabled = !rows.length; return rows.length > 0;
+        }
+        function group(g) {
+          var list = schema.settings.filter(function (st) { return st.group === g.id; });
+          if (!list.length) return null;
+          var wrap = el("div", "se-group");
+          wrap.append(el("div", "cap", g.title), el("p", "se-gnote", g.note));
+          list.forEach(function (st) {
+            var row = el("div", "se-row"), left = el("div", "se-left", [el("div", "se-label", st.label), el("div", "se-help", st.help || "")]), ctl;
+            var cur = model[st.dest];
+            if (st.locked) {
+              ctl = el("span", "se-locked", [showValue(st, cur)]); ctl.title = "Fixed for this split";
+            } else if (st.kind === "bool") {
+              ctl = segmented([["default", "Default " + (st.default ? "on" : "off")], ["on", "On"], ["off", "Off"]], cur === undefined ? "default" : cur ? "on" : "off", st.label,
+                function (v) { if (v === "default") delete model[st.dest]; else model[st.dest] = v === "on"; refresh(); });
+            } else if (st.kind === "flag") {
+              var on = st.invert ? !cur : !!cur;
+              ctl = segmented([["on", "On"], ["off", "Off"]], on ? "on" : "off", st.label,
+                function (v) { var present = st.invert ? v === "off" : v === "on"; if (present) model[st.dest] = true; else delete model[st.dest]; refresh(); });
+            } else if (st.kind === "choice") {
+              ctl = segmented([["", "Default"]].concat(st.choices.map(function (c) { return [c, c]; })), cur === undefined ? "" : cur, st.label,
+                function (v) { if (v === "") delete model[st.dest]; else model[st.dest] = v; refresh(); });
+            } else {
+              var inp = h("input"); inp.type = "text"; inp.className = "se-in"; inp.value = cur === undefined ? "" : String(cur);
+              inp.placeholder = st.kind === "date" ? "YYYY-MM-DD" : st.default != null && st.default !== "" ? "default " + st.default : st.empty || st.example || "default";
+              if (st.kind === "int") inp.inputMode = "numeric";
+              inp.setAttribute("aria-label", st.label);
+              inp.oninput = function () {
+                var v = inp.value.trim(), bad = (st.kind === "int" && v !== "" && !/^\d{1,9}$/.test(v)) || (st.kind === "date" && v !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(v)) || /^--/.test(v) || /\s/.test(v);
+                inp.classList.toggle("bad", bad); inp.title = bad ? (st.kind === "int" ? "A whole number" : st.kind === "date" ? "A date like 2026-01-31" : "No spaces, and not starting with --") : "";
+                if (v === "") delete model[st.dest]; else model[st.dest] = v; refresh();
+              };
+              ctl = inp;
+            }
+            controls[st.dest] = ctl; row.append(left, el("div", "se-ctl", ctl)); wrap.append(row);
+          });
+          return wrap;
+        }
+        ta.oninput = function () {
+          try {
+            var flags = textToFlags(ta.value), p = parseModel(flags, schema); model = p.model; extra = p.extra; fail("");
+            fill(); refresh(true);
+          } catch (e) { fail(e.message); }
+        };
+        /* the groups are rebuilt when the raw text is edited; the text box itself is never moved, so it keeps focus */
+        var host = el("div", "se-groups"), raw = h("details", "se-raw"), foot = el("div", "se-foot"), acts = el("div", "actions"), cancel = el("button", "btn", "Cancel");
+        function fill() { host.replaceChildren.apply(host, schema.groups.map(group).filter(Boolean)); }
+        raw.append(h("summary", "", "All settings as flags (advanced)"), ta);
+        cancel.onclick = closeEditor; acts.append(cancel, save); foot.append(changes, acts);
+        save.onclick = function () {
+          var flags = modelToFlags(model, extra, schema);
+          if (!refresh(true)) { fail("Nothing to save."); return; }
+          save.disabled = true;
+          call("POST", "split-settings", { split_id: x.split_id, flags: flags }).then(function (r) {
+            window.riffleToast("Saved. Settings version " + r.settings_version + ". PCs use it when they next start a batch.", "ok"); closeEditor();
+          }).catch(function (e) { save.disabled = false; fail(e.message); });
+        };
+        fill(); body.replaceChildren(host, raw, msg, foot); refresh(true);
+        sec.hidden = false; sec.scrollIntoView({ block: "start", behavior: "smooth" });
+      }).catch(function (e) { window.riffleToast("Could not load the settings list: " + e.message); editing = null; });
+    }
+    function settingsEditor(x) {
+      var b = el("button", "btn link", "Edit settings"); b.onclick = function () { openEditor(x); }; return b;
+    }
     var lastActive = false;
     function draw() {
-      if (pending) return Promise.resolve(lastActive);                    // a button is waiting for its second press: a refresh would reset it
+      if (pending || editing) return Promise.resolve(lastActive);         // a button is waiting for its second press, or settings are being edited: a refresh would reset it
       return call("GET", "overview").then(function (d) {
         BV.latest.admin = d; bvFeed("admin");
         call("GET", "storage").then(drawStorage).catch(function () { /* the rest of the page does not depend on it */ });
@@ -975,7 +1136,7 @@
             else if (i === 2) td.textContent = x.uploaded + "/" + x.tokens + " uploaded";
             else if (i === 3) td.textContent = x.version || "–";
             else if (i === 4) td.textContent = (x.created || "").slice(0, 10);
-            else if (i === 5) { td.append(flagList(x.flags || [], x.models || [])); }
+            else if (i === 5) { td.append(flagList(x.flags || [], x.models || []), settingsEditor(x)); }
             else {
               var acts = el("div", "actions");
               acts.append(x.can_rotate ? confirmBtn("Rotate", "rot:" + x.split_id, function () {

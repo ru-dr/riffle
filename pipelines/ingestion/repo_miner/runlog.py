@@ -124,6 +124,23 @@ def _fmt(secs: float) -> str:
     return f"{h}h{m:02d}m" if h else f"{m}m{sec:02d}s" if m else f"{sec}s"
 
 
+def rss_gb() -> float | None:
+    """This process's resident memory in GB (Linux /proc, else psutil when installed); None when unknown. A run
+    that dies with no message was usually out of memory: logging this per stage shows where it grew."""
+    try:
+        with open("/proc/self/status", encoding="ascii", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024 ** 2, 2)
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import psutil
+        return round(psutil.Process().memory_info().rss / 1024 ** 3, 2)
+    except Exception:                                       # noqa: BLE001 - never fail a run over a gauge
+        return None
+
+
 def stage(name: str | None = None, **fields) -> None:
     """Mark the start of a run stage, ending the previous one: no re-indenting
     of straight-line code needed. The run log gets `[stage] X done in 2m57s` (so
@@ -135,9 +152,11 @@ def stage(name: str | None = None, **fields) -> None:
         _STAGE["name"], _STAGE["t0"] = name, now
     if prev:
         dur = now - t0
+        mem = rss_gb()
         if dur >= 1:
-            print(f"[stage] {prev} done in {_fmt(dur)}", file=sys.stderr, flush=True)
-        info("stage", "done", name=prev, dur_s=round(dur, 2))
+            print(f"[stage] {prev} done in {_fmt(dur)}" + (f" (memory {mem:g} GB)" if mem is not None else ""),
+                  file=sys.stderr, flush=True)
+        info("stage", "done", name=prev, dur_s=round(dur, 2), **({"rss_gb": mem} if mem is not None else {}))
     if name:
         info("stage", "start", name=name, **fields)
 

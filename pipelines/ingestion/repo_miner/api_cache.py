@@ -8,7 +8,8 @@ the JSON the API call returned (compressed), keyed by what was asked (`tl:<pr>` 
 unreadable or truncated read is never cached, so a gap is retried, not remembered.
 
 A cached answer is what the first read saw, the same way the pinned PR selection is. Entries
-older than MAX_AGE_S are ignored, so a long-lived cache cannot hide new events for ever.
+older than MAX_AGE_S are ignored, so a long-lived cache cannot hide new events for ever. The timeline of a closed
+or merged PR is kept CLOSED_KEEP_S (90 days): it costs one GitHub call of a 5,000 an hour quota to read again.
 RIFFLE_NO_API_CACHE=1 turns it off. Every failure here falls back to reading GitHub.
 """
 from __future__ import annotations
@@ -21,6 +22,7 @@ import time
 import zlib
 
 MAX_AGE_S = 14 * 86400
+CLOSED_KEEP_S = 90 * 86400      # a closed or merged PR's timeline is final bar late comments: kept this long (see put)
 
 
 class ApiCache:
@@ -61,11 +63,14 @@ class ApiCache:
             except (sqlite3.Error, zlib.error, ValueError):
                 return None
 
-    def put(self, key: str, value, ttl: float | None = None) -> None:
+    def put(self, key: str, value, ttl: float | None = None, keep: float | None = None) -> None:
         """Store `value`. `ttl` (seconds, under MAX_AGE_S): an answer that is only good for a while, such
         as the timeline of a PR still open; it is stored as if it were that much older, so it expires
-        (and is purged) sooner."""
+        (and is purged) sooner. `keep` (seconds, over MAX_AGE_S): an answer good for longer, stored as if
+        it were newer."""
         t = time.time() - (MAX_AGE_S - ttl if ttl is not None and ttl < MAX_AGE_S else 0)
+        if keep is not None and keep > MAX_AGE_S:
+            t = time.time() + (keep - MAX_AGE_S)
         with self._lock:
             db = self._conn()
             if db is None:

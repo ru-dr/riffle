@@ -77,8 +77,8 @@ def test_version_parsing_compares_minor_not_text():
     assert bd._major_minor("junk") is None
 
 
-def test_auto_remine_is_on_by_default_and_can_be_turned_off():
-    assert bd.build_parser().parse_args([]).auto_remine is True
+def test_auto_remine_is_off_by_default_and_can_be_turned_on():
+    assert bd.build_parser().parse_args([]).auto_remine is False
     assert bd.build_parser().parse_args(["--no-auto-remine"]).auto_remine is False
     assert bd.build_parser().parse_args(["--auto-remine"]).auto_remine is True
 
@@ -102,9 +102,9 @@ def test_a_record_from_another_version_does_not_block_a_remine(tmp_path, monkeyp
 def test_rows_from_a_newer_miner_are_not_auto_remined(tmp_path):
     pytest.importorskip("pandas")
     out = str(tmp_path / "d.jsonl")
-    _rows(out, [_row("a/newer", 1, "7.0.1"), _row("b/same", 1, "7.0.0"), _row("c/older", 1, "6.13.3")])
+    _rows(out, [_row("a/newer", 1, "7.0.2"), _row("b/same", 1, bd.__version__), _row("c/older", 1, "6.13.3")])
     newer = bd._mined_by_newer(out)
-    assert newer == {"a/newer": "7.0.1"}
+    assert newer == {"a/newer": "7.0.2"}
 
 
 def test_version_keys_compare_patch_levels():
