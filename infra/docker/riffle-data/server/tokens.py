@@ -183,19 +183,37 @@ def settings_version(flags: list[str] | None) -> str:
     return hashlib.sha256(json.dumps([str(f) for f in (flags or [])]).encode()).hexdigest()[:12]
 
 
+# flags that belong to planning or hold secrets: never part of the settings every PC of a split adopts
+NOT_SHARED_FLAGS = ("--issue-tokens", "--tokens-out", "--token-days", "--shard-plan")
+
+
+def check_flags(flags) -> list[str]:
+    """The flags as a clean list, or ValueError saying what is wrong with them. Each setting starts with --, a
+    value is a plain string on one line, and the planning flags that issue or write tokens are refused."""
+    if not isinstance(flags, list) or len(flags) > 200 or not all(isinstance(f, str) and len(f) <= 500 for f in flags):
+        raise ValueError("flags must be a list of at most 200 short strings")
+    if any("\n" in f or "\r" in f or "\0" in f for f in flags):
+        raise ValueError("a flag must be one line of text")
+    if flags and not flags[0].startswith("--"):
+        raise ValueError(f"the first flag must start with --, not {flags[0]!r}")
+    bad = sorted({f for f in flags if f.split("=", 1)[0] in NOT_SHARED_FLAGS})
+    if bad:
+        raise ValueError(f"{', '.join(bad)} cannot be a shared setting (it plans a split or writes tokens)")
+    return list(flags)
+
+
 def set_split_settings(path: str, split: str, flags: list[str]) -> str:
     """Replace a split's shared flags in place. The PC tokens and join codes are left alone, so nothing has to be
     handed out again. Returns the new settings version. LookupError when the split is unknown."""
     if not SPLIT.match(split or ""):
         raise ValueError("a split ID")
-    if not isinstance(flags, list) or len(flags) > 200 or not all(isinstance(f, str) and len(f) <= 500 for f in flags):
-        raise ValueError("flags must be a list of at most 200 short strings")
+    flags = check_flags(flags)
     with locked(path):
         data = load(path, strict=True)
         rec = data["splits"].get(split)
         if rec is None:
             raise LookupError(f"no split {split}")
-        rec["flags"] = list(flags)
+        rec["flags"] = flags
         save(path, data)
     return settings_version(flags)
 

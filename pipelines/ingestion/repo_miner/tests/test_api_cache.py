@@ -223,3 +223,14 @@ def test_a_failing_graphql_call_gives_up_after_a_few_tries(monkeypatch):
     monkeypatch.setattr(github_api.time, "sleep", lambda s: None)
     status, data, _ = api._get("/graphql", body={"query": "{ x }"})
     assert (status, data) == (0, None) and len(tries) == 3          # REST callers get 9 tries; GraphQL has a fallback
+
+
+def test_a_kept_answer_outlives_the_ordinary_age(tmp_path, monkeypatch):
+    c = api_cache.ApiCache(str(tmp_path / "k.sqlite"))
+    c.put("tl:1", [1], keep=api_cache.CLOSED_KEEP_S)
+    c.put("tl:2", [2])
+    real = api_cache.time.time
+    monkeypatch.setattr(api_cache.time, "time", lambda: real() + api_cache.MAX_AGE_S + 86400)   # 15 days on
+    assert c.get("tl:1") == [1] and c.get("tl:2") is None
+    monkeypatch.setattr(api_cache.time, "time", lambda: real() + api_cache.CLOSED_KEEP_S + 86400)
+    assert c.get("tl:1") is None

@@ -246,6 +246,11 @@ class Settings:
 
     # networking
     github_token: str | None = field(default_factory=lambda: os.getenv("GITHUB_TOKEN"))
+    # more tokens of this PC's owner (GITHUB_TOKENS, separated by commas, spaces or newlines): when the one in
+    # use has no quota left the next is used. One quota belongs to one account, so only tokens of different
+    # accounts add quota; never put another person's token here
+    github_tokens: tuple = field(default_factory=lambda: tuple(
+        t for t in re.split(r"[\s,]+", os.getenv("GITHUB_TOKENS") or "") if t))
     # LLM backend: "claude_cli" (headless `claude -p`, uses your Claude Code
     # login — no API key) or "api" (OpenAI-compatible endpoint + LLM_API_KEY)
     llm_backend: str = field(default_factory=lambda: os.getenv("LLM_BACKEND", "claude_cli"))

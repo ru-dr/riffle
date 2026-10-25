@@ -362,7 +362,7 @@ def test_activity_shows_when_each_pc_mined_and_what_it_is_doing_now(store):
     for ago_s, prs in ((30 * h, 0), (29.9 * h, 10), (29.8 * h, 25)):               # mined 30 hours ago, then went quiet
         beat("pc1", ago_s, "repo done", prs, "o/a")
     beat("pc1", 5 * h, "repo done", 40, "o/a")                                       # and came back
-    beat("pc1", now - int(now) // 3600 * 3600 - 1, "repo done", 55, "o/b")   # just after the current hour starts                                          # mining right now
+    beat("pc1", max(0, min(60, now % 3600 - 1)), "repo done", 55, "o/b")             # mining right now: a minute ago, inside this hour's block
     beat("pc2", 2 * h, "repo done", 5)
     beat("pc2", 1 * h, "batch done", 9)                                              # finished
     svc.index.db.commit()
@@ -442,4 +442,4 @@ def test_an_admin_can_remove_a_split_and_the_page_keeps_a_confirm_open_across_re
     again = json.loads(req(store, "POST", "/v1/admin/revoke", store.adm, {"split_id": "abc", "remove": True})[1])
     assert again["removed"] is False                                                                      # nothing left to remove
     js = open(os.path.join(os.path.dirname(store_app.__file__), "static", "app.js"), encoding="utf-8").read()
-    assert "if (pending) return Promise.resolve(lastActive)" in js, "a refresh resets the open confirm and the second press does nothing"
+    assert "if (pending || editing) return Promise.resolve(lastActive)" in js, "a refresh resets the open confirm and the second press does nothing"
