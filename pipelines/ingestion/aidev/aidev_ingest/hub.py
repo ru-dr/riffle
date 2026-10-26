@@ -11,13 +11,14 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import IO, Iterator, Protocol
 
 # Must be set before huggingface_hub is imported.
 os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
 
 import pyarrow.parquet as pq  # noqa: E402
-from huggingface_hub import HfApi, HfFileSystem  # noqa: E402
+from huggingface_hub import HfApi, HfFileSystem, hf_hub_download  # noqa: E402
 from huggingface_hub.hf_api import RepoFile  # noqa: E402
 
 from .pin import REPO_ID, REPO_TYPE  # noqa: E402
@@ -103,3 +104,20 @@ class HubSource:
     def parquet_info(self, path: str, revision: str) -> ParquetInfo:
         with self._fs.open(f"datasets/{self.repo_id}@{revision}/{path}", "rb") as handle:
             return summarize_parquet(handle)
+
+    def download_file(self, path: str, revision: str, dest_dir: Path) -> Path:
+        """Download one file, pinned to a commit, anonymously. Resumes a partial download.
+
+        `local_dir` puts the file (and its resume metadata) under dest_dir instead of
+        the shared Hugging Face cache, which would hold a second copy of every table.
+        """
+        return Path(
+            hf_hub_download(
+                self.repo_id,
+                path,
+                repo_type=REPO_TYPE,
+                revision=revision,
+                token=False,
+                local_dir=str(dest_dir),
+            )
+        )
