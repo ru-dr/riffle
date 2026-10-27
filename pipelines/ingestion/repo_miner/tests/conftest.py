@@ -6,6 +6,8 @@ os.environ["RIFFLE_NO_DOTENV"] = "1"
 for _k in ("RIFFLE_SYNC_URL", "RIFFLE_SYNC_TOKEN", "RIFFLE_ADMIN_TOKEN"):
     os.environ.pop(_k, None)
 os.environ["RIFFLE_NO_AUTO_UPDATE"] = "1"      # tests never pull code; test_auto_update.py turns it back on for its own temp repos
+os.environ.setdefault("RIFFLE_NO_DOCTOR", "1")       # importing tui.py runs the environment doctor; on a runner without every package it would exit and end pytest
+os.environ.setdefault("RIFFLE_NO_PLAN_USAGE", "1")
 os.environ["RIFFLE_NO_API_CACHE"] = "1"       # tests never write a repo cache; test_api_cache.py turns it on in a temp dir
 
 
