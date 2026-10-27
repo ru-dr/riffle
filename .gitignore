@@ -28,6 +28,11 @@ mlruns/
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfvars
+!*.tfvars.example
+tfplan
+*.tfplan
+backend.hcl
 
 # Full-resolution source paintings (not served)
 site/assets/source/
