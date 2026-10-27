@@ -15,7 +15,7 @@ import pytest
 from aidev_ingest.__main__ import DEFAULT_EXPECTED
 from aidev_ingest.hub import FileInfo, ParquetInfo, summarize_parquet
 from aidev_ingest.inventory import build_inventory, check_plan, compare, summary, table_name
-from aidev_ingest.pin import REVISION, TABLES, planned_tables
+from aidev_ingest.pin import FETCH_POLICIES, REVISION, SCOPES, TABLES, as_is_tables, planned_tables
 
 REPO = "example/repo"
 REV = "a" * 40
@@ -132,12 +132,23 @@ def test_pin_is_a_full_commit_hash():
     assert re.fullmatch(r"[0-9a-f]{40}", REVISION)
 
 
-def test_every_table_has_a_valid_policy_and_reason():
+def test_every_table_has_a_valid_policy_scope_and_reason():
     for name, plan in TABLES.items():
-        assert plan.fetch in {"full", "pop_filtered", "skip"}, name
+        assert plan.fetch in FETCH_POLICIES, name
+        assert plan.scope in SCOPES, name
         assert plan.reason, name
         if plan.fetch == "skip":
             assert name not in planned_tables()
+
+
+def test_the_plan_matches_what_was_agreed():
+    """11 tables copied as published, 1 pruned, 1 skipped; two tables are full scope."""
+    assert len(as_is_tables()) == 11
+    assert [n for n, p in TABLES.items() if p.fetch == "pruned"] == ["pr_commit_details"]
+    assert [n for n, p in TABLES.items() if p.fetch == "skip"] == ["all_pull_request"]
+    assert TABLES["pr_commit_details"].drop_columns == ("patch",)
+    full_scope = sorted(n for n, p in TABLES.items() if p.scope == "all")
+    assert full_scope == ["all_pull_request", "all_repository", "all_user"]
 
 
 def test_committed_inventory_matches_the_pin_and_the_plan():
