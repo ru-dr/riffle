@@ -32,12 +32,15 @@ class TablePlan:
       pop     only AIDev-pop, repositories with more than 100 stars
       all     every repository in AIDev
     drop_columns are removed before writing (patches carry licence risk).
+    hold_upload, when set, is why the table must not be uploaded yet; `upload` skips it
+    unless it is named in --allow-held. It is a stop sign for a decision, not a ban.
     """
 
     fetch: str
     reason: str
     drop_columns: tuple[str, ...] = ()
     scope: str = "pop"
+    hold_upload: str = ""
 
 
 TABLES: dict[str, TablePlan] = {
@@ -51,7 +54,12 @@ TABLES: dict[str, TablePlan] = {
     "pr_reviews": TablePlan("as_is", "CHANGES_REQUESTED and non-author responses (labels)"),
     "pr_comments": TablePlan("as_is", "maintainer comments for the duplicate and unwanted classes"),
     "pr_review_comments": TablePlan(
-        "as_is", "inline review comments; joins via pull_request_review_id; diff_hunk holds code snippets"
+        "as_is",
+        "inline review comments; joins via pull_request_review_id",
+        hold_upload=(
+            "its diff_hunk column holds source-code snippets from repositories with mixed licences; "
+            "decide whether to upload it as is, drop that column, or leave it local"
+        ),
     ),
     "pr_commits": TablePlan("as_is", "commits after open mean rework"),
     "issue": TablePlan("as_is", "linked issue text, an open-time feature"),

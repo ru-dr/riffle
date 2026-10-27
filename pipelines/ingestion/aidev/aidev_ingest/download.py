@@ -152,11 +152,24 @@ def download_tables(
     out_dir = out_dir.resolve()
     rev_dir = out_dir / revision
     order = sorted(tables, key=lambda t: expected[t].size)  # smallest first: a bug shows on a small file
-    pending = [t for t in order if not (rev_dir / f"{t}.parquet").exists()]
+    # A table the manifest says was uploaded and removed locally is done: fetching it again
+    # would only refill the disk with something the bucket already holds.
+    prior = (manifest.load(rev_dir) or {"tables": {}})["tables"]
+    # `uploaded` with no file on disk is a run that died between deleting the file and recording
+    # that; `upload` finishes the record, and fetching the table again would only waste the download.
+    uploaded_and_removed = {
+        t for t in order if prior.get(t, {}).get("state") in ("local_deleted", "uploaded") and not (rev_dir / f"{t}.parquet").exists()
+    }
+    pending = [t for t in order if not (rev_dir / f"{t}.parquet").exists() and t not in uploaded_and_removed]
 
     if dry_run:
         return [
-            Outcome(t, "planned" if t in pending else "present", expected[t].size) for t in order
+            Outcome(
+                t,
+                "uploaded" if t in uploaded_and_removed else ("planned" if t in pending else "present"),
+                expected[t].size,
+            )
+            for t in order
         ]
 
     for path in (rev_dir, rev_dir / PARTIAL, *(rev_dir / f"{t}.parquet" for t in tables)):
@@ -173,6 +186,11 @@ def download_tables(
         want = expected[table]
         final = rev_dir / f"{table}.parquet"
 
+        if table in uploaded_and_removed and not final.exists():
+            log(f"{table}: already uploaded and removed locally, skipped")
+            outcomes.append(Outcome(table, "uploaded", want.size))
+            continue
+
         if final.exists():
             problems = verify_file(final, want)
             if problems:
@@ -180,7 +198,9 @@ def download_tables(
                     f"{table}: {final} already exists but fails verification ({'; '.join(problems)}). "
                     "Not overwriting raw data; move the file aside to download it again."
                 )
-            manifest.record_table(rev_dir, inventory, want)
+            # Re-verifying a file must not forget that it was already uploaded.
+            was_uploaded = prior.get(table, {}).get("state") in ("uploaded", "local_deleted")
+            manifest.record_table(rev_dir, inventory, want, state="uploaded" if was_uploaded else "local_verified")
             log(f"{table}: already present and verified, skipped")
             outcomes.append(Outcome(table, "skipped", want.size))
             continue
