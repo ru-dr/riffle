@@ -77,13 +77,40 @@ def test_rows_made_under_other_settings_are_stale(tmp_path):
     assert stale == 1 and "llm" in diff
 
 
-def test_stamp_follows_version_minor_and_obs_day_not_patch():
+def test_stamp_follows_settings_and_the_obs_day_never_the_miner_version(monkeypatch):
     st = _settings()
     a = mine_repo._ckpt_stamp(st, NOW)
     assert a["obs_cutoff"] == "2026-01-01"
-    assert a["miner"].count(".") == 1
+    assert "miner" not in a                                            # a new miner never invalidates earlier work by itself
+    for v in ("7.0.1", "7.1.0", "8.0.0"):
+        monkeypatch.setattr(mine_repo, "__version__", v)
+        assert mine_repo._ckpt_stamp(st, NOW) == a
     assert mine_repo._ckpt_stamp(st, NOW.replace(hour=5)) == a
     assert mine_repo._ckpt_stamp(_settings(enable_szz=False), NOW) != a
+
+
+def test_a_new_miner_keeps_the_checkpoint_of_an_older_one_but_a_changed_setting_still_remines(tmp_path):
+    now = mine_repo._ckpt_stamp(_settings(), NOW)
+    older_miner = dict(now, miner="6.13")                              # what 7.0.x and earlier wrote
+    p = tmp_path / "o.partial.jsonl"
+    _put(p, [{"repo": "a/b", "pr_number": 1, mine_repo.CKPT_STAMP: older_miner},
+             {"repo": "a/b", "pr_number": 2, mine_repo.CKPT_STAMP: dict(older_miner, llm=not now["llm"])},
+             {"repo": "a/b", "pr_number": 3, mine_repo.CKPT_STAMP: now}])
+    rows, stale, diff = mine_repo.load_checkpoint(str(p), "a/b", now)
+    assert sorted(r["pr_number"] for r in rows) == [1, 3]              # the version difference alone costs nothing
+    assert stale == 1 and diff == ["llm"]                              # the LLM switch still does, and the version is not named
+
+
+def test_a_pinned_pr_list_survives_a_new_miner_version_but_not_new_selection_settings(tmp_path):
+    st = _settings()
+    path = str(tmp_path / "r.selection.json")
+    assert "miner_major" not in mine_repo._selection_params(st)
+    with open(path, "w", encoding="utf-8") as fh:                      # a list pinned by miner 6, the way 7.0 wrote it
+        json.dump({"params": dict(mine_repo._selection_params(st), miner_major="6"), "merged": [1, 2]}, fh)
+    assert mine_repo.load_selection(path, st)["merged"] == [1, 2]
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"params": dict(mine_repo._selection_params(st), miner_major="6", max_prs=5), "merged": [1]}, fh)
+    assert mine_repo.load_selection(path, st) is None                  # a changed window or cap is still a different selection
 
 
 def test_heal_tail_cuts_a_fragment_and_terminates_a_whole_record(tmp_path):
@@ -296,7 +323,7 @@ def test_an_ordinary_resume_remines_nothing(repo, tmp_path, monkeypatch):
 
 def test_a_failed_repo_keeps_its_rows_when_another_repo_is_dropped(tmp_path):
     p = tmp_path / "o.partial.jsonl"
-    stamp = {"miner": "7.0"}
+    stamp = mine_repo._ckpt_stamp(_settings(), NOW)
     _put(p, [{"repo": "a/failed", "pr_number": 1, mine_repo.CKPT_STAMP: stamp},
              {"repo": "b/done", "pr_number": 5, mine_repo.CKPT_STAMP: stamp},
              {"repo": "a/failed", "pr_number": 2, mine_repo.CKPT_STAMP: stamp}])

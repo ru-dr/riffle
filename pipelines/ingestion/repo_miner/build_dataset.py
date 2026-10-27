@@ -665,9 +665,10 @@ def _cached_timelines(cache_dir: str, stem: str) -> int | None:
 
 
 def _redo_report(out: str, cache_dir: str, repos: list[str] | None = None) -> dict[str, list[str]]:
-    """Say what the next run will do again because this miner is not the one that did the work: checkpointed
-    PRs of another miner version, and a PR selection pinned by another major (PR list, and every timeline,
-    are read again). `_audit` cannot see either, since it reads --out and these repos are not in it yet.
+    """Say which repos in progress hold work from another miner version. Nothing is redone: a new miner version
+    never throws earlier work away by itself (checkpointed PRs and the pinned PR list are kept), so this is a
+    notice, naming each repo, for whoever decides to mine one again by hand (--remine-repo, the TUI's
+    "Re-mine repos"). `_audit` cannot see them, since it reads --out and these repos are not in it yet.
     `repos` ("owner/name") limits it to this run's repos; None means every repo with a checkpoint or a
     selection. Prints and returns {repo: [reasons]}."""
     major = __version__.split(".")[0]
@@ -685,25 +686,23 @@ def _redo_report(out: str, cache_dir: str, repos: list[str] | None = None) -> di
         c = ck.get(repo)
         if c and c["stale"]:
             why.append(f"{c['stale']:,} of its {c['rows']:,} checkpointed PRs were mined by miner "
-                       f"{', '.join(sorted(c['miners']))}; they are mined again (their rows differ from {__version__})")
+                       f"{', '.join(sorted(c['miners']))} (this is {__version__}); they are kept")
         sel = _selection_miner_major(cache_dir, stem)
         if sel is not None and sel != major:
             n = _cached_timelines(cache_dir, stem)
-            why.append(f"its pinned PR list was made by miner {sel or 'an unknown version'}.x: the PR list is fetched again "
-                       f"and every timeline is read again (one GitHub call per PR, 5,000 an hour per token; "
-                       f"{f'{n:,} are in the cache' if n else 'none are cached'})")
+            why.append(f"its pinned PR list was made by miner {sel or 'an unknown version'}.x; it is kept "
+                       f"({f'{n:,} timelines are cached' if n else 'no timelines are cached'})")
         if why:
             found[repo] = why
     if found:
-        print(f"[redo] miner {__version__} cannot reuse earlier work for {len(found)} repo(s). A resume will "
-              f"repeat it before mining new PRs:", flush=True)
+        print(f"[version] miner {__version__} keeps the earlier work of {len(found)} repo(s) from another miner "
+              f"version; nothing is mined again unless you ask:", flush=True)
         for repo, why in found.items():
             for w in why:
                 print(f"  {repo}: {w}", flush=True)
-        print("  To leave a big one for later: --skip-big N or the TUI's ctrl+n (the shard split does not "
-              "change). Do not edit the repos file.", flush=True)
+        print("  To mine one again, type it in the TUI's \"Re-mine repos\" box (--remine-repo owner/name).", flush=True)
     elif repos is None:
-        print("[redo] no checkpoint or pinned selection from another miner version", flush=True)
+        print("[version] no checkpoint or pinned selection from another miner version", flush=True)
     return found
 
 

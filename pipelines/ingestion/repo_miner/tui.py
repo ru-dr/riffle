@@ -241,7 +241,10 @@ def run_phase(*, repos, now: float, breaker=None, llm_paused=None, assembling=Fa
     """What a running batch is doing right now, as a status word, a colour (run, warn, bad) and a detail line.
     This is the web view's headline, so it names the worst thing in the way before it says MINING: a GitHub quota
     wait, a paused LLM, a repo with no progress, then the stage the current repo is in."""
-    active = [r for r in repos if r.started and not r.ended and not r.halted]
+    # a repo is in progress from its clone on, not only from "mining PRs": `started` is set only when mining begins, so the
+    # long preparation stages (fetching, timelines, open snapshots, CI history...) would otherwise read as "nothing running"
+    active = [r for r in repos if not r.ended and not r.halted and r.stage != "queued"
+              and not (r.stage or "").startswith(("done", "failed", "skipped", "BREAKER"))]
     waits = [(r.rl_until - now, r.name) for r in active if r.rl_until and r.rl_until > now]
     if breaker:
         return {"word": "STOPPED: ERROR", "level": "bad", "detail": f"Breaker: {breaker}"}
@@ -934,7 +937,7 @@ class RiffleTUI(App):
                     yield Input(str(config.default_workers()), id="workers", type="integer", compact=True)
                     yield Label("LLM concurrency")
                     yield Input("4", id="llm_conc", type="integer", compact=True)
-                    yield Label("Re-mine repos (owner/name, comma-separated)")
+                    yield Label("Re-mine repos (owner/name, comma-separated): the only way a repo is mined again")
                     yield Input("", id="remine", placeholder="e.g. rust-lang/cargo", compact=True)
                     yield Label("Test repo (Test run only)")
                     yield Input("https://github.com/pallets/flask", id="test_repo", compact=True)

@@ -194,7 +194,7 @@ def _run(cmd: list[str], **kw) -> None:
     max_active_tasks=64,
     tags=["miner", "ingestion"],
     params={
-        "miner_version": Param("7.0.2", type="string", description="miner version of the run to follow"),
+        "miner_version": Param("7.1.0", type="string", description="miner version of the run to follow"),
         "split_id": Param("", type="string", description="8-hex split ID the PCs print at start; blank = the newest run"),
         "idle_min": Param(30, type="integer", description="a trace quiet this long means the run was stopped"),
         "dvc_remote": Param("", type="string", description="DVC remote, e.g. gs://bucket/riffle; blank skips publish"),

@@ -56,6 +56,18 @@ def test_the_current_stage_names_the_status():
     assert phase(_repo("o/a", "fetching PRs p12"))["word"] == "FETCHING PRS"      # the page number is dropped
 
 
+def test_the_long_preparation_stages_are_named_not_called_starting():
+    """`started` is only set once PRs are being mined, so a repo in its CI history (hours on a big one) has started=None."""
+    gut = _repo("o/gut", "ci history", started=None)
+    queued = _repo("o/next", "queued", started=None)
+    p = phase(gut, queued)
+    assert p["word"] == "CI HISTORY" and p["detail"] == "o/gut: ci history" and p["level"] == "run"
+    for stage, word in (("fetching PRs p9", "FETCHING PRS"), ("timelines", "TIMELINES"), ("open snapshots", "OPEN SNAPSHOTS"),
+                        ("loading history", "LOADING HISTORY"), ("cloning", "CLONING"), ("starting", "STARTING")):
+        assert phase(_repo("o/gut", stage, started=None), queued)["word"] == word
+    assert phase(_repo("o/done", "done", started=None, ended=NOW - 5), queued)["word"] == "STARTING"      # a finished repo is not in progress
+
+
 def test_only_repos_in_flight_count():
     done = _repo("o/a", "done", ended=NOW - 5, rl_until=NOW + 600)
     nxt = _repo("o/b", "queued", started=None)
