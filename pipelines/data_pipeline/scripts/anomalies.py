@@ -154,20 +154,27 @@ def outliers(series: pd.Series, table: str, column: str, factor: float, log_scal
     ]
 
 
-def consistency(pr: pd.DataFrame) -> list[Anomaly]:
-    """Pull requests whose own columns contradict each other."""
+def contradiction_masks(pr: pd.DataFrame) -> dict[str, pd.Series]:
+    """For each rule a pull request can break, a boolean mask of the rows that break it.
+
+    preprocess quarantines exactly these rows, so the rules live in one place.
+    """
     created = pd.to_datetime(pr["created_at"], utc=True, errors="coerce")
     closed = pd.to_datetime(pr["closed_at"], utc=True, errors="coerce")
     merged = pd.to_datetime(pr["merged_at"], utc=True, errors="coerce")
-    rules = {
+    return {
         "closed_at before created_at": closed < created,
         "merged_at before created_at": merged < created,
         "merged_at set but closed_at empty": merged.notna() & closed.isna(),
         "state is open but closed_at is set": (pr["state"] == "open") & closed.notna(),
         "state is closed but closed_at is empty": (pr["state"] == "closed") & closed.isna(),
     }
+
+
+def consistency(pr: pd.DataFrame) -> list[Anomaly]:
+    """Pull requests whose own columns contradict each other."""
     found = []
-    for message, mask in rules.items():
+    for message, mask in contradiction_masks(pr).items():
         if mask.any():
             # A handful of bad rows is quarantined and reported; a sudden jump means the source broke.
             severity = "error" if mask.mean() > CONSISTENCY_ERROR_RATE else "warn"

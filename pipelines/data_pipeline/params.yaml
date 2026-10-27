@@ -6,3 +6,5 @@ validation:
   min_rows:
     pull_request: 300000
     repository: 20000
+features:
+  test_fraction: 0.2
