@@ -6,7 +6,7 @@ How Riffle runs, per environment.
 | --- | --- |
 | [`docker`](docker) | Service images and the local Compose stacks (today: Airflow, the riffle-data team store) |
 | [`k8s`](k8s) | Manifests for staging and prod |
-| [`terraform`](terraform) | Postgres, Redis, Pub/Sub, buckets, GKE, IAM |
+| [`terraform`](terraform) | The team store VM (`store-vm`: store, Loki + Grafana, Airflow, bucket, IAM); later Postgres, Redis, Pub/Sub, GKE |
 | [`loki`](loki), [`grafana`](grafana), [`alloy`](alloy) | The logging stack: where logs are stored, read, and collected from. One folder of configuration each; [`compose.logging.yaml`](compose.logging.yaml) runs the three together locally |
 
 | Environment | Where | Notes |

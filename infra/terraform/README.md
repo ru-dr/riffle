@@ -11,6 +11,7 @@ Identity Federation exists; after that, change it through a pull request.
 | Directory | What it holds |
 | --- | --- |
 | [`foundation`](foundation) | Ingestion base on GCP: raw bucket, BigQuery datasets, Artifact Registry, job service accounts, budget alert |
+| [`store-vm`](store-vm) | The team store VM on GCP: bucket, service account, address, firewall, and the VM that runs the store, Loki + Grafana and Airflow from `infra/docker` and `infra/compose.logging.yaml` (ADR 0018) |
 
 ## foundation
 

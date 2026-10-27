@@ -3,3 +3,10 @@
 # and pipelines/training, and runs without Airflow.
 # Pin Airflow providers here when a DAG needs one, for example:
 # apache-airflow-providers-google
+
+# riffle_miner DAG: merge_shards.py and publish.py need pandas and pyarrow; publish versions
+# the merged tables with DVC (GCS remote); gather reads datasets from the bucket.
+pandas>=2.0
+pyarrow>=14.0
+dvc[gs]>=3.50
+google-cloud-storage>=2.16

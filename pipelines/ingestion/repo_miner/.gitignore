@@ -17,3 +17,7 @@ health/
 .sync_state.json
 .join.json
 joined_repos/
+
+# sync state: the lock file and the temporary copy a sync writes before it replaces the state
+.sync_state.json.lock
+.sync_state.json.*.tmp

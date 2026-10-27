@@ -22,6 +22,11 @@
    "note": "Off by default. A re-mine drops a repo's finished rows before it mines them again."
   },
   {
+   "id": "tracking",
+   "title": "Run tracking",
+   "note": "How closely the team follows a run. Changes no rows, only how often the trace reaches the store."
+  },
+  {
    "id": "locked",
    "title": "Split and files",
    "note": "Fixed for this split: changing them moves repos between PCs or renames files, and PCs could overlap or lose rows. Plan a new split from the miner's TUI instead."
@@ -300,6 +305,16 @@
    "help": "At start, drop and mine again any repo this PC finished with an older miner or with blame failing. Leave it off to keep finished rows as they are.",
    "default": false,
    "off_flag": "--no-auto-remine"
+  },
+  {
+   "dest": "live_tracking",
+   "flag": "--live-tracking",
+   "kind": "bool",
+   "label": "Live run tracking",
+   "group": "tracking",
+   "help": "Every PC uploads its run trace to the store every 10 seconds instead of every 15 minutes, so the store's log search, Loki and Airflow follow the run as it goes. It adds a small upload per PC and changes no row.",
+   "default": false,
+   "off_flag": "--no-live-tracking"
   },
   {
    "dest": "repos_file",

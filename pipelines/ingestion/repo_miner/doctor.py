@@ -47,6 +47,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import deps
+import localstack
 from version import __version__
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -541,6 +542,29 @@ def _admin_token_check() -> tuple[str, str, str, str | None] | None:
     return ("Admin token", WARN, r["why"] if not r.get("kind") else f"that is a {str(r['kind']).rstrip('s')} token, not an admin token", None)
 
 
+def _local_stack_checks() -> list[tuple[str, str, str, str | None]]:
+    """Run tracking on this PC (localstack.py, ADR 0017): Docker, then the store, Grafana/Loki and Airflow.
+    Optional, so a problem is a warning. The fix starts everything and turns tracking on for the TUI."""
+    ok, why = localstack.docker_status()
+    if not ok:
+        return [("Docker", WARN, f"{why}: needed only to watch a run in Loki and Airflow", None)]
+    out = [("Docker", OK, "compose and the daemon answer", None)]
+    st = localstack.status()
+    on = localstack.enabled()
+    names = {"store": ("Local store", localstack.STORE_URL), "grafana": ("Grafana + Loki", localstack.GRAFANA_URL),
+             "airflow": ("Airflow", localstack.AIRFLOW_URL)}
+    for key, (label, url) in names.items():
+        if st[key]:
+            out.append((label, OK, f"up at {url}", None))
+        else:
+            out.append((label, WARN, f"not running at {url}"
+                        + ("" if on else "; the TUI starts it when 'Track this run' is ticked"), "local_stack"))
+    out.append(("Run tracking", OK if on else WARN,
+                "on: the TUI starts the stack for each run; a joined PC still reports to the team store, with a copy to the local one"
+                if on else "off (RIFFLE_LOCAL_STACK is not 1): runs go where .env says", None if on else "local_stack"))
+    return out
+
+
 def run_checks(plat: Platform | None = None) -> list[Result]:
     plat = plat or detect_platform()
     added = deps.extend_path()      # tools installed to ~/go/bin, ~/.local/bin, npm -g count
@@ -610,6 +634,9 @@ def run_checks(plat: Platform | None = None) -> list[Result]:
     for chk in (_team_store_check(), _read_token_check(), _admin_token_check()):
         if chk:
             add(chk[0], chk[1], chk[2], fix=chk[3], group="Credentials")
+
+    for chk in _local_stack_checks():
+        add(chk[0], chk[1], chk[2], fix=chk[3], group="Run tracking (Loki + Airflow)")
 
     backend = _env("LLM_BACKEND") or "claude_cli"
     if backend == "claude_cli":
@@ -817,6 +844,20 @@ def _fix_longpaths(plat: Platform) -> None:
     print("  Set git config --global core.longpaths true")
 
 
+def _fix_local_stack(plat: Platform) -> None:
+    try:
+        ok = localstack.ensure_up(say=lambda m: print("  " + m))
+    except Exception as e:                                  # noqa: BLE001  (a fix that fails must not stop the doctor)
+        print(f"  {_sym(FAIL)} could not start it: {type(e).__name__}: {e}")
+        return
+    if ok:
+        _set_env_value("RIFFLE_LOCAL_STACK", "1")
+        print(f"  {_sym(OK)} tracking is on: Start in the TUI now opens {localstack.GRAFANA_URL} "
+              f"and {localstack.AIRFLOW_URL} data for the run")
+    else:
+        print(f"  {_sym(WARN)} not started; see the lines above")
+
+
 FIXERS: dict[str, tuple[str, Callable[[Platform], None]]] = {
     "venv": ("Install the Python venv module now?", _fix_venv),
     "pip": ("Install the missing Python packages now?", _fix_pip),
@@ -829,6 +870,8 @@ FIXERS: dict[str, tuple[str, Callable[[Platform], None]]] = {
     "claude": ("Install Claude Code (for LLM flags) now?", lambda p: _fix_system("claude", p)),
     "api_tools": ("Install the missing API-contract tools now?", _fix_api_tools),
     "longpaths": ("Enable git long paths now?", _fix_longpaths),
+    "local_stack": ("Start the local Loki + Airflow stack and turn run tracking on? (first time builds images, minutes)",
+                    _fix_local_stack),
 }
 
 

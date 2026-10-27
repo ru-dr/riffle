@@ -21,4 +21,4 @@ if __name__ == "__main__":
     password = os.environ.get("POSTGRES_PASSWORD")
     if not password:
         sys.exit("POSTGRES_PASSWORD is not set")
-    print(build(password))
+    print(build(password), end="")     # no newline: Airflow 3.3 keeps it, and it would end up in the database name

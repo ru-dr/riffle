@@ -1036,6 +1036,7 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
                 prs[i:i + SNAPSHOT_SLICE]))
             if len(prs) > SNAPSHOT_SLICE:
                 mem = runlog.rss_gb()
+                runlog.info("stage", "progress", name="open snapshots", phase="snapshots", done=len(snaps), total=len(prs))
                 print(f"[open-snapshot] {len(snaps)}/{len(prs)} PRs"
                       + (f", memory {mem:g} GB" if mem is not None else ""), file=sys.stderr, flush=True)
     for pr, snap in zip(prs, snaps):
@@ -1101,8 +1102,7 @@ def _selection_params(st: config.Settings) -> dict:
     return {"window_from": st.window_from, "window_to": st.window_to, "max_prs": st.max_prs,
             "min_age_days": st.min_age_days, "lead_in_days": st.lead_in_days,
             "merge_outcome": st.enable_merge_outcome, "max_unmerged": st.max_unmerged,
-            "merge_signal": st.merge_signal, "abandon_days": st.abandon_days,
-            "miner_major": __version__.split(".")[0]}
+            "merge_signal": st.merge_signal, "abandon_days": st.abandon_days}
 
 
 def load_selection(path: str, st: config.Settings) -> dict | None:
@@ -1112,7 +1112,8 @@ def load_selection(path: str, st: config.Settings) -> dict | None:
             sel = json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
-    return sel if sel.get("params") == _selection_params(st) else None
+    saved = {k: v for k, v in (sel.get("params") or {}).items() if k != "miner_major"}   # an older miner also stamped its major
+    return sel if saved == _selection_params(st) else None
 
 
 def save_selection(path: str, st: config.Settings, data: dict) -> None:
@@ -1284,11 +1285,11 @@ _STAMP_FLAGS = ("enable_scanners", "enable_api_contract", "enable_review_history
 
 
 def _ckpt_stamp(st: config.Settings, obs_cutoff: datetime) -> dict:
-    """What a row's values depend on besides the PR: the miner's major.minor (a patch
-    release is output-identical), the LLM, the CI-history and SZZ switches, the day
-    outcomes were observed through, and the flags in _STAMP_FLAGS."""
-    stamp = {"miner": ".".join(__version__.split(".")[:2]),
-             "llm": bool(st.enable_llm),
+    """What a row's values depend on besides the PR: the LLM, the CI-history and SZZ switches, the day
+    outcomes were observed through, and the flags in _STAMP_FLAGS. NOT the miner's version: a new miner never
+    throws earlier work away by itself. Each row keeps its own `miner_version` column, and a repo is mined
+    again only when someone asks (--remine-repo, the TUI's "Re-mine repos")."""
+    stamp = {"llm": bool(st.enable_llm),
              "llm_model": st.llm_model if st.enable_llm else None,
              "ci_history": bool(st.enable_ci_history), "szz": bool(st.enable_szz),
              "obs_cutoff": obs_cutoff.astimezone(timezone.utc).strftime("%Y-%m-%d")}
@@ -1332,6 +1333,8 @@ def load_checkpoint(path: str, repo_key: str, stamp: dict) -> tuple[list[dict], 
     rows, stale, diff = [], 0, set()
     for r in by_pr.values():
         got = r.pop(CKPT_STAMP, None)
+        if isinstance(got, dict):
+            got = {k: v for k, v in got.items() if k != "miner"}          # rows written by a miner that stamped its version
         if isinstance(got, dict) and got != stamp:
             stale += 1
             diff.update(k for k in set(got) | set(stamp) if got.get(k) != stamp.get(k))
@@ -1816,6 +1819,7 @@ def _infer_owner_name(repo: str):
 
 
 def main():
+    runlog.honour_sigint()
     config.stop_on_break()
     ap = argparse.ArgumentParser(description="Extract Riffle v1 features from a clone.")
     ap.add_argument("--repo", default=None, help="path to local clone (required unless --llm-test)")

@@ -413,7 +413,7 @@ pre.log .target{outline:2px solid var(--accent);outline-offset:1px;border-radius
 #bigview .bupt{height:4vh}
 @media (max-width:64rem){#bigview .bhl .cap{display:none}#bigview .bhr{flex-direction:column;align-items:flex-end;gap:.2vh}#bigview .bclock{white-space:nowrap;font-size:clamp(16px,5vw,26px)}#bigview .bstate{font-size:clamp(16px,5.4vw,30px)}#bigview .bh{align-items:center}}
 .g4{grid-template-columns:repeat(4,1fr)}@media (max-width:64rem){.g4{grid-template-columns:1fr 1fr}}
-#bigview .bkpis .stat .v{font-size:30px}
+#bigview .bkpis .stat .v{font-size:30px;white-space:nowrap;overflow:hidden}
 @media (max-width:48rem){#bigview .bkpis>:last-child:nth-child(odd){grid-column:1/-1}}
 
 /* ---- phones and tablets: a list table is one card per row (app.js grid: "cards"); every cell carries its column's name ----

@@ -110,3 +110,30 @@ def test_auto_remine_is_a_lead_setting_that_reaches_pcs():
     assert ("auto_remine", True, False) in join.differences(lead, LEAD + ["--no-auto-remine"])
     args = bd.build_parser().parse_args(join.adopted_argv(MINE, lead))
     assert args.auto_remine is True
+
+
+def test_live_tracking_is_a_lead_setting_that_reaches_pcs():
+    lead = LEAD + ["--live-tracking"]
+    assert "--live-tracking" in join.shared_argv(lead) and "--live-tracking" not in join.machine_argv(lead)
+    assert ("live_tracking", True, False) in join.differences(lead, LEAD + ["--no-live-tracking"])
+    args = bd.build_parser().parse_args(join.adopted_argv(MINE, lead))
+    assert args.live_tracking is True
+    assert bd.build_parser().parse_args(LEAD).live_tracking is False          # off unless the lead turns it on
+
+
+def test_live_tracking_sets_ten_second_beats_unless_the_environment_says_otherwise(monkeypatch):
+    import runlog
+    for k in ("RIFFLE_SYNC_BEAT_S", "RIFFLE_SYNC_LOG_BEAT_S", "RIFFLE_HEARTBEAT_S"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(bd, "HEARTBEAT_S", 180)
+    monkeypatch.setattr(bd, "LOG_BEAT_S", 900)
+    bd.apply_live_tracking(bd.build_parser().parse_args(LEAD))                   # off: nothing changes
+    assert (bd.HEARTBEAT_S, bd.LOG_BEAT_S) == (180, 900) and "RIFFLE_SYNC_BEAT_S" not in os.environ
+    bd.apply_live_tracking(bd.build_parser().parse_args(LEAD + ["--live-tracking", "--test"]))
+    assert bd.HEARTBEAT_S == 180                                                  # a test run never changes its pace
+    monkeypatch.setenv("RIFFLE_SYNC_LOG_BEAT_S", "45")
+    bd.apply_live_tracking(bd.build_parser().parse_args(LEAD + ["--live-tracking"]))
+    assert bd.HEARTBEAT_S == 10.0 and bd.LOG_BEAT_S == 45.0                      # the explicit setting wins
+    assert os.environ["RIFFLE_HEARTBEAT_S"] == "10"                               # and the per-repo miners inherit the pace
+    monkeypatch.delenv("RIFFLE_HEARTBEAT_S")
+    monkeypatch.delenv("RIFFLE_SYNC_BEAT_S")

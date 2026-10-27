@@ -82,16 +82,17 @@ tokens of **different accounts** add quota, and they must be accounts you own: n
 person. Logs name a token by its position only. Timelines of closed and merged PRs stay in `ci_cache/*.api.sqlite`
 for 90 days (14 days for anything else), so a re-run reads them from disk.
 
-### A resume after an upgrade repeats work
+### A resume after an upgrade keeps the work
 
-Moving to another miner major.minor (6.13 to 7.0) means a resume cannot reuse what the earlier version did: the
-checkpoint's PRs are mined again (their stamp names the old version) and the pinned PR list is fetched again, which
-reads every PR timeline again (one GitHub call per PR, 5,000 an hour per token, so a repo of 35,000 PRs takes about
-7 hours). `--audit` reads only `--out`, which does not hold a repo until it finishes, so it cannot see this. Every
-batch now prints a `[redo]` block before it mines, naming each affected repo, how many PRs, and how many timelines
-are cached; `--audit` prints the same for every checkpoint and selection. To leave a big repo for later, use
-`--skip-big N` or ctrl+n in the TUI; the shard split does not change. Do not edit the repos file. A patch release
-(7.0.0 to 7.0.1) does not trigger this.
+A new miner version never throws earlier work away by itself. A resume reuses the checkpoint's PRs and the pinned PR list
+whatever version made them, so a minor or major release costs a repo in progress nothing, and each row keeps the version that
+mined it in its `miner_version` column. Every batch prints a `[version]` block before it mines, naming the repos in progress whose
+work came from another version, so you can decide.
+
+A repo is mined again only when you ask: type it in the TUI's **Re-mine repos** box (`--remine-repo owner/name`). That drops the
+repo's finished rows, its checkpoint and its pinned list, and mines it again. What still changes a checkpointed row, because the row
+would differ, is a setting: the LLM on or off or its model, the CI-history and SZZ switches, the observation day and the stage
+and scope flags. The log names the keys that differ. `--auto-remine` stays off unless you turn it on.
 
 ## Install
 
@@ -453,6 +454,12 @@ the output and re-mines the stale repos in this PC's share: blame failing, or mi
 mined by a newer miner is never re-mined here, and a repo already re-mined automatically under this version is not
 re-mined again. A test run never re-mines.
 
+**Watching a run.** The trace (`logs/run-*.trace.jsonl`) is the one log. With the team store it goes up after each repo and every
+15 minutes; with `--live-tracking` (TUI: "Live tracking", a lead setting, off by default) it goes up every 10 s as new lines only, so the
+store's log search, Grafana (Loki) and the Airflow `riffle_miner` graph follow the run as it goes. It changes no row. To run the whole
+stack on one PC instead (Loki, Grafana, Airflow in Docker), `python doctor.py` offers to start it, and the TUI's "Also run Loki + Airflow
+on this PC" sends that PC's run to it. See ADR 0017 and `ARCHITECTURE.md` section 13.1.
+
 Quick runs: `--skip-big N` (TUI: "Skip big repos", "Big = more than N
 commits", default 100000) skips repos whose `[~N commits]` tag in repos.txt is
 larger (14 repos at 100k: llvm, rust, ClickHouse, swift, tensorflow, ...). In
@@ -533,8 +540,8 @@ again with "Reuse clones" on resumes.
 - **Caches.** The historical CI map expires after 7 days (`CI_MAP_TTL_S`) and is rebuilt when it was built before the
   newest PR. An open PR's timeline is cached for 1 hour, a closed one for 14 days. `RIFFLE_NO_API_CACHE=1` turns the
   API cache off.
-- **Reused rows.** Each line of the checkpoint carries a stamp of the settings that shape the data (miner major.minor,
-  LLM on or off and model, CI history, SZZ, the observation cutoff day, and the stage and scope flags). On resume, a
+- **Reused rows.** Each line of the checkpoint carries a stamp of the settings that shape the data (LLM on or off and
+  model, CI history, SZZ, the observation cutoff day, and the stage and scope flags; not the miner version). On resume, a
   row with a different stamp is mined again and the log names the keys that differ. Rows from older versions with no
   stamp are accepted.
 
