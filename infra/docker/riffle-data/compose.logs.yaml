@@ -3,7 +3,8 @@
 #   docker compose -f compose.yaml -f compose.logs.yaml up -d
 #   docker compose -f compose.yaml -f compose.logs.yaml --profile public up -d     # with HTTPS on a VM
 #
-# It is a separate file so the store starts without it, and without GRAFANA_ADMIN_PASSWORD.
+# It is a separate file so the store starts without it, and without GRAFANA_ADMIN_PASSWORD (set it in .env
+# before using this file; compose stops with a "missing a value" error if it is empty).
 # The miner's trace is the only log: the store keeps the file and forwards each new line to Loki
 # (server/loki.py). Nothing else writes to Loki, and PCs never talk to it. Grafana listens on
 # loopback only; on a VM, read it through an SSH tunnel (infra/terraform/store-vm).
@@ -30,7 +31,7 @@ services:
     image: grafana/grafana:11.5.2
     restart: unless-stopped
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
     ports:
