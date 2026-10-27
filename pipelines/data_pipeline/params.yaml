@@ -1,3 +1,8 @@
 aidev:
   commit: b37f9fd1613cfec55886105bb76721918d015dc7
   tables: pull_request,repository
+validation:
+  iqr_factor: 3.0
+  min_rows:
+    pull_request: 300000
+    repository: 20000

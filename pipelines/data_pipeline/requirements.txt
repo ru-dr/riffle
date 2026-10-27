@@ -3,4 +3,7 @@
 -e ../ingestion/aidev      # the pinned AIDev download, verify and inventory code
 dvc[gs]>=3.50,<4           # stages and the GCS remote
 PyYAML>=6
+pandas>=2.2
+pyarrow>=14
+great-expectations>=1.3,<2   # schema and statistics checks
 pytest>=8

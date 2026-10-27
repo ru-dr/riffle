@@ -9,3 +9,20 @@ stages:
       - aidev.tables
     outs:
       - data/raw/${aidev.commit}
+  validate:
+    desc: Check schema and statistics with Great Expectations and look for anomalies
+    cmd: python -m scripts.validate
+    deps:
+      - data/raw/${aidev.commit}
+      - scripts/validate.py
+      - scripts/anomalies.py
+      - scripts/schema.py
+      - scripts/data_io.py
+    params:
+      - aidev.commit
+      - validation.iqr_factor
+      - validation.min_rows
+    outs:
+      - reports/schema_stats.json
+      - reports/validation.json
+      - reports/anomalies.json

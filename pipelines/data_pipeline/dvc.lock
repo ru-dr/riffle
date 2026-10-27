@@ -17,3 +17,47 @@ stages:
       md5: 911aaddfae589abc1b6572a4a1afeeb2.dir
       size: 363577822
       nfiles: 3
+  validate:
+    cmd: python -m scripts.validate
+    deps:
+    - path: data/raw/b37f9fd1613cfec55886105bb76721918d015dc7
+      hash: md5
+      md5: 911aaddfae589abc1b6572a4a1afeeb2.dir
+      size: 363577822
+      nfiles: 3
+    - path: scripts/anomalies.py
+      hash: md5
+      md5: c068ed9aa18d35ebbae1337af821af53
+      size: 8252
+    - path: scripts/data_io.py
+      hash: md5
+      md5: 94c44657af9b7fc2c710c26ba03a3ea4
+      size: 751
+    - path: scripts/schema.py
+      hash: md5
+      md5: b4d6009432023d6a0406a2f82e279b71
+      size: 1791
+    - path: scripts/validate.py
+      hash: md5
+      md5: 071652b379f6f1f783e51ed5cb79aaf2
+      size: 9534
+    params:
+      params.yaml:
+        aidev.commit: b37f9fd1613cfec55886105bb76721918d015dc7
+        validation.iqr_factor: 3.0
+        validation.min_rows:
+          pull_request: 300000
+          repository: 20000
+    outs:
+    - path: reports/anomalies.json
+      hash: md5
+      md5: 1bccd11426277ece1bd83e61e5ca12aa
+      size: 910
+    - path: reports/schema_stats.json
+      hash: md5
+      md5: 4e8a2f0d878c71b533c9402a6431a81f
+      size: 4165
+    - path: reports/validation.json
+      hash: md5
+      md5: ccd42eb530f4dfeedfe5e402679770ad
+      size: 6621
