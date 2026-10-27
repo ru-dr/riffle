@@ -84,6 +84,10 @@ jobs:
       - name: Team store (riffle-data) and the miner's sync client
         run: python -m pytest infra/docker/riffle-data/tests -q
 
+  # The logging stack (Loki, Alloy, Grafana). Its own job: it is its own stack. Checks the
+  # configuration and that Compose accepts the file; no container is started.
+  logging:
+    name: logging
   # AIDev ingestion: its own job, as it is its own service. Offline only: a fake hub and the
   # committed inventory. The tests that talk to Hugging Face need RUN_NETWORK_TESTS=1 and are
   # not run here.
@@ -97,6 +101,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      - run: pip install pytest pyyaml
+
+      - name: Logging stack configuration
+        run: python -m pytest infra/tests/test_logging_stack.py -q
       - run: pip install pytest huggingface_hub pyarrow
 
       - name: AIDev pin and inventory (offline)
