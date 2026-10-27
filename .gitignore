@@ -19,11 +19,14 @@ __pycache__/
 /services/intake/bin/
 
 # ML / data: raw downloads are never committed. DVC pointer files are.
-/data/
+/data/*
+!/data/*.dvc
 mlruns/
 
 # Terraform
 .terraform/
+*.tfvars
+!*.tfvars.example
 *.tfstate
 *.tfstate.*
 

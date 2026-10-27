@@ -15,7 +15,7 @@ Riffle is a self-hosted GitHub App that ranks pull requests by learned risk. The
 - `fixtures/config/`: example `riffle.yml` files that must validate against the schemas.
 - `site/`: the marketing page and `/docs` (Next.js 16, React 19, Tailwind 4, Bun). This is the only part that builds.
 - `pipelines/ingestion/repo_miner/`: the repo miner, the primary source of training data. It writes three tables (see "Repo miner" below). Its `README.md` is the operator guide, `ARCHITECTURE.md` the full reference (why it is built this way, every stage, column, flag and file; also on the docs site as Architecture > Repo miner), and `version.py` holds its version. `pipelines/ingestion/README.md` holds the directory's rule that normalisation lives there.
-- `pipelines/dags/`: Airflow DAGs (scheduling only; today a smoke DAG). `infra/docker/airflow/`: the Docker Compose stack that runs Airflow locally and on one VM, with its own README (ADR 0013).
+- `pipelines/dags/`: Airflow DAGs (scheduling only; a smoke DAG and `riffle_miner`, which shows each miner stage from the run traces and then merges, checks and DVC-versions the tables, ADR 0017). `infra/docker/airflow/`: the Docker Compose stack that runs Airflow locally and on one VM, with its own README (ADR 0013).
 - `pipelines/training/`: only the shared loader so far (`frames.py`, which joins the miner's three tables into training frames); training itself is not built. `services/*`, `infra/k8s`, `infra/terraform`: not built yet. Each directory has a `README.md` that says what belongs there and which invariants it owns, so read it before adding code there.
 
 `make bootstrap/up/seed/test/lint` and `make replay`/`make train` are documented but not implemented. Don't assume they work.

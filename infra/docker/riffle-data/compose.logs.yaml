@@ -1,0 +1,48 @@
+# Run-trace search and charts (ADR 0017), added to the store only when you ask for it:
+#
+#   docker compose -f compose.yaml -f compose.logs.yaml up -d
+#   docker compose -f compose.yaml -f compose.logs.yaml --profile public up -d     # with HTTPS on a VM
+#
+# It is a separate file so the store starts without it, and without GRAFANA_ADMIN_PASSWORD.
+# The miner's trace is the only log: the store keeps the file and forwards each new line to Loki
+# (server/loki.py). Nothing else writes to Loki, and PCs never talk to it. Grafana listens on
+# loopback only; on a VM, read it through an SSH tunnel (infra/terraform/store-vm).
+
+services:
+  riffle-data:
+    environment:
+      RIFFLE_LOKI_URL: http://loki:3100
+      # links on the admin page (the store never fetches them)
+      RIFFLE_GRAFANA_URL: ${RIFFLE_GRAFANA_URL:-http://localhost:3000}
+      RIFFLE_AIRFLOW_URL: ${RIFFLE_AIRFLOW_URL:-http://localhost:8080}
+
+  loki:
+    image: grafana/loki:3.4.2
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    ports:
+      - "${GRAFANA_BIND_ADDR:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [loki]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  loki-data:
+  grafana-data:

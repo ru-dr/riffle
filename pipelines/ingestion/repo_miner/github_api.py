@@ -1065,6 +1065,17 @@ class GitHubAPI:
         out: dict[int, list | None] = {}
         if not self.token:
             return {n: None for n in numbers}     # GraphQL needs auth
+        total = len(numbers)
+        if self._disk:                            # a restart does not ask again for what an earlier try already read
+            for n in numbers:
+                hit = self._disk.get(f"fp:{n}")
+                if isinstance(hit, list):
+                    out[n] = [(e[0], e[1]) for e in hit]
+            numbers = [n for n in numbers if n not in out]
+            if out:
+                runlog.info("stage", "progress", name="open snapshots", phase="force-pushes", done=len(out), total=total,
+                            cached=len(out))
+        t0, calls = time.time(), 0
         for i in range(0, len(numbers), batch):
             part = numbers[i:i + batch]
             fields = " ".join(
@@ -1090,6 +1101,17 @@ class GitHubAPI:
                     out[n] = [(e.get("createdAt"), (e.get("beforeCommit") or {}).get("oid"))
                               for e in (node.get("timelineItems") or {}).get("nodes") or []
                               if e]
+                    if self._disk:                # only an answer that was read: unknown (None) is never remembered
+                        self._disk.put(f"fp:{n}", [list(e) for e in out[n]], ttl=6 * 3600)
+            calls += 1
+            if calls % 20 == 0 or i + batch >= len(numbers):
+                done = total - len(numbers) + min(i + batch, len(numbers))
+                el = max(1e-6, time.time() - t0)
+                left = (len(numbers) - min(i + batch, len(numbers))) * el / max(1, min(i + batch, len(numbers)))
+                runlog.info("stage", "progress", name="open snapshots", phase="force-pushes", done=done, total=total,
+                            secs_per_call=round(el / calls, 1), eta_s=int(left))
+                print(f"[open-snapshot] force-push lookups {done:,}/{total:,} PRs "
+                      f"({el / calls:.1f}s a call, about {int(left // 60)} min left)", file=sys.stderr, flush=True)
         return out
 
     def _suites_for_events(self, sha: str, events: tuple[str, ...]) -> set[int] | None:

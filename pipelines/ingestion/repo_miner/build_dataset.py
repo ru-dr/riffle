@@ -916,10 +916,23 @@ def _run_watched(cmd: list[str], repo: str, stall_s: float | None = None) -> tup
 # each repo's state for the store's progress page: pending, mining, done, failed
 # or skipped, with its finished rows and, once selected, how many PRs it has.
 _SYNC: dict | None = None
-LOG_BEAT_S = 900           # everything that changed (log, trace, checkpoint, finished tables, health) goes to the store this often
+LOG_BEAT_S = runlog._env_float("RIFFLE_SYNC_LOG_BEAT_S", 900)   # the log and trace go to the store this often (with the defaults, everything that changed does)
+FULL_BEAT_S = 900          # everything that changed (checkpoint, finished tables, health too) goes at least this often
 BEAT_SYNC_BUDGET_S = 120   # ...and a heartbeat sync never holds the batch loop longer than this
 BEAT_MAX_FILE_BYTES = 48 * 1024 ** 2   # a bigger file is left for the repo's end or Stop (about 0.5 MB/s fits 120 s)
-HEARTBEAT_S = 180          # status-only update (progress, current repo) while a long repo mines
+HEARTBEAT_S = runlog._env_float("RIFFLE_SYNC_BEAT_S", 180)     # status-only update (progress, current repo) while a long repo mines
+
+
+def apply_live_tracking(args) -> None:
+    """--live-tracking: 10 s beats unless the environment already names one. The environment is also what the
+    per-repo miner processes read, so they heartbeat at the same pace."""
+    global HEARTBEAT_S, LOG_BEAT_S
+    if not getattr(args, "live_tracking", False) or getattr(args, "test", False):
+        return
+    for name in ("RIFFLE_SYNC_BEAT_S", "RIFFLE_SYNC_LOG_BEAT_S", "RIFFLE_HEARTBEAT_S"):
+        os.environ.setdefault(name, "10")
+    HEARTBEAT_S = runlog._env_float("RIFFLE_SYNC_BEAT_S", HEARTBEAT_S)
+    LOG_BEAT_S = runlog._env_float("RIFFLE_SYNC_LOG_BEAT_S", LOG_BEAT_S)
 
 
 def _sync_begin(entries: list, done_repos: dict) -> None:
@@ -998,6 +1011,7 @@ def _run_settings(args) -> dict:
     return {"llm": llm, "llm_model": model if llm else None, "llm_backend": backend if llm else None,
             "llm_scope": g("llm_scope") if llm else None, "llm_concurrency": g("llm_concurrency") if llm else None,
             "szz": bool(g("szz")), "ci_history": bool(g("ci_history")), "scanners": not g("no_scanners"),
+            "live_tracking": bool(g("live_tracking")),
             "workers": g("workers"), "max_prs": g("max_prs"), "window_from": g("window_from"), "window_to": g("window_to"),
             "full_repo": bool(g("full_repo")), "cap_on": g("cap_on"), "only_domain": g("only_domain"),
             "repos_file": os.path.basename(g("repos_file") or "") or None, "shard": g("shard")}
@@ -1133,6 +1147,23 @@ def _sync_prefix(status: dict) -> str:
     return f"{__version__}/{status['split_id'] or 'nosplit'}"
 
 
+def _mirror(status: dict, files: bool, **kw) -> None:
+    """The same upload to the optional second store (sync.mirror_settings), after the first. It has its own state
+    and its own short time budget, says nothing, and can never raise or change what the first store got."""
+    try:
+        cfg = sync.mirror_settings()
+        if cfg is None or _SYNC is None:
+            return
+        if files:
+            args = _SYNC["args"]
+            sync.sync(args.out, _sync_prefix(status), status, health_dir=getattr(args, "health_dir", "health"),
+                      repos=set(_SYNC.get("repos", {})), cfg=cfg, **dict({"budget_s": 60}, **kw))
+        else:
+            sync.put_status(_sync_prefix(status), status, cfg=cfg)
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
 def _sync_now(why: str, **counts) -> None:
     """Send this PC's output to the central store, if one is configured. Never
     fails or blocks the run (sync.py): an unreachable store is a warning."""
@@ -1145,6 +1176,7 @@ def _sync_now(why: str, **counts) -> None:
         sync.report(sync.sync(args.out, _sync_prefix(status), status,
                               health_dir=getattr(args, "health_dir", "health"),
                               repos=set(_SYNC.get("repos", {}))), why)
+        _mirror(status, files=True, budget_s=10 if why in ("stopped", "batch aborted") else 60)
         _SYNC["beat"] = time.monotonic()
     except Exception as e:                                  # noqa: BLE001
         print(f"[sync] failed ({type(e).__name__}: {e}); the run is unaffected", file=sys.stderr, flush=True)
@@ -1153,21 +1185,31 @@ def _sync_now(why: str, **counts) -> None:
 def _sync_beat(force: bool = False, why: str = "heartbeat") -> None:
     """A status-only update (no files): every HEARTBEAT_S while a child runs, and at once when `force` (the run
     started, a repo started), so the store shows a PC the moment it begins instead of after its first repo."""
-    if _SYNC is None or not _SYNC.get("repos") or (not force and time.monotonic() - _SYNC.get("beat", 0) < HEARTBEAT_S):
-        return
+    if _SYNC is None or not _SYNC.get("repos") or (
+            not force and time.monotonic() - _SYNC.get("beat", 0) < max(HEARTBEAT_S, _SYNC.get("slow", 0))):
+        return                                              # "slow": a failing store is asked less and less often, up to every 5 minutes
     _SYNC["beat"] = time.monotonic()
     try:
         status = _sync_status(why)
         sync.put_status(_sync_prefix(status), status)
-        if time.monotonic() - _SYNC.get("log_beat", -LOG_BEAT_S) >= LOG_BEAT_S:
-            _SYNC["log_beat"] = time.monotonic()
-            args = _SYNC["args"]                            # the full sync: only what changed goes, so a failed send is retried
+        _mirror(status, files=False)
+        now = time.monotonic()
+        due_full = now - _SYNC.get("full_beat", -FULL_BEAT_S) >= FULL_BEAT_S
+        if due_full or now - _SYNC.get("log_beat", -LOG_BEAT_S) >= LOG_BEAT_S:
+            _SYNC["log_beat"] = now
+            if due_full:
+                _SYNC["full_beat"] = now
+            args = _SYNC["args"]                            # only what changed goes, so a failed send is retried; a quick beat sends the logs only
             res = sync.sync(args.out, _sync_prefix(status), status,
                             health_dir=getattr(args, "health_dir", "health"),
                             repos=set(_SYNC.get("repos", {})), budget_s=BEAT_SYNC_BUDGET_S,
-                            max_bytes=BEAT_MAX_FILE_BYTES)
+                            max_bytes=BEAT_MAX_FILE_BYTES, only_logs=not due_full)
             if res["sent"] or res["failed"]:
                 sync.report(res, "heartbeat")
+            _mirror(status, files=True, max_bytes=BEAT_MAX_FILE_BYTES, only_logs=not due_full)
+            bad = bool(res["failed"] or res["stopped"] not in (None, "off"))       # "off" is a setting, not a failure
+            _SYNC["slow"] = min(300.0, max(HEARTBEAT_S, _SYNC.get("slow", 0) * 2 or HEARTBEAT_S * 2)) if bad else 0
+        _SYNC["beat"] = time.monotonic()                    # due again a beat after this one FINISHED, never while it was running
     except Exception:                                       # noqa: BLE001
         pass
 
@@ -1429,6 +1471,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "failing, or mined by a miner older than 7.0.0. Off by default (a re-mine drops the "
                          "repo's finished rows first); --auto-remine turns it on. A repo re-mined this way is not re-mined again by this miner version, so a repo "
                          "that is still flagged after its re-mine does not loop")
+    ap.add_argument("--live-tracking", action=argparse.BooleanOptionalAction, default=False,
+                    help="upload this run's trace to the team store every 10 s (and write a worker heartbeat every 10 s), "
+                         "so Loki, the store's log search and the Airflow graph follow the run as it goes. Off by default: "
+                         "the trace is then uploaded every 15 minutes and after each repo. A lead setting; it changes no row. "
+                         "An explicit RIFFLE_SYNC_BEAT_S, RIFFLE_SYNC_LOG_BEAT_S or RIFFLE_HEARTBEAT_S still wins")
     ap.add_argument("--audit", action="store_true",
                     help="report each repo's share of rows with blame data and flag repos "
                          "mined while blame was failing, then exit")
@@ -1447,6 +1494,7 @@ def main():
     config.stop_on_break()
     ap = build_parser()
     args = ap.parse_args()
+    apply_live_tracking(args)
     args, _SETTINGS["version"] = _adopt_lead_settings(sys.argv[1:], args)
     problems = validate_options(args)
     if problems:
@@ -1616,6 +1664,7 @@ def main():
 
     print(f"[batch] {len(entries)} repos -> {args.out}\n", flush=True)
     progress.emit("batch_start", repos=[f"{o}/{n}" for o, n, _ in entries], out=args.out)
+    runlog.info("batch", "repos", repos=[f"{o}/{n}" for o, n, _ in entries])    # the Airflow DAG draws one chain per repo
     _sync_begin(entries, done_repos)
     attempts = max(1, args.repo_retries + 1)
     ok, failed, skipped = 0, [], []
@@ -1809,9 +1858,10 @@ def main():
     _assemble_snapshots(args)
     _write_shard_manifest(args, entries, ok, failed)
     # an aborted batch (the LLM breaker) is not "done": the store treats only "batch done" as a finished PC
+    runlog.info("batch", "done", ok=ok, n=len(entries), failed=failed, skipped=skipped, out=args.out,
+                aborted=bool(aborted))                      # before the last sync, so the store's copy of the trace ends with it
     _sync_now("batch aborted" if aborted else "batch done", repos_total=len(entries), repos_ok=ok, failed=list(failed))
     progress.emit("batch_done", ok=ok, n=len(entries), failed=failed, skipped=skipped)
-    runlog.info("batch", "done", ok=ok, n=len(entries), failed=failed, skipped=skipped, out=args.out)
     if runlog.enabled("INFO"):
         print(f"[trace] {os.environ['RIFFLE_TRACE']}  (summary: python trace_report.py <file>)", flush=True)
     if skipped:

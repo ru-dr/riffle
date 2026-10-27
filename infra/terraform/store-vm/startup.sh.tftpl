@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Rendered by Terraform into the VM's startup-script. It runs on every boot and is safe to run again
+# (`sudo google_metadata_script_runner startup`): Docker is installed once, the repo is moved to the
+# wanted ref, the .env files are written once (so secrets survive a re-run), and the stacks are started.
+# Log: /var/log/riffle-startup.log
+set -euo pipefail
+exec > >(tee -a /var/log/riffle-startup.log) 2>&1
+echo "== riffle startup $(date -u +%FT%TZ)"
+
+if ! command -v docker >/dev/null; then
+  apt-get update -y
+  apt-get install -y ca-certificates curl git
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
+  apt-get update -y
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  systemctl enable --now docker
+fi
+command -v git >/dev/null || apt-get install -y git
+
+# --- the code: the repo at the wanted ref (a token, if any, is used for the fetch and never stored)
+# a private repo's token goes in through git's environment config, never on a command line (`ps` would show it)
+%{ if repo_token_secret != "" ~}
+TOKEN=$(gcloud secrets versions access latest --secret="${repo_token_secret}" --project="${project}")
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader
+GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+export GIT_CONFIG_VALUE_0
+unset TOKEN
+%{ endif ~}
+[ -d /opt/riffle/.git ] || git init -q /opt/riffle
+cd /opt/riffle
+git remote remove origin 2>/dev/null || true
+git remote add origin "${repo_url}"
+git fetch -q --depth 1 origin "${repo_ref}"
+git checkout -q -f FETCH_HEAD
+unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+
+STORE=/opt/riffle/infra/docker/riffle-data
+AIR=/opt/riffle/infra/docker/airflow
+mkdir -p /opt/riffle/secrets && chmod 700 /opt/riffle/secrets
+
+# setkv FILE KEY VALUE: set a key in a .env file (add it, or replace its value); secrets are never passed through here
+setkv() {
+  touch "$1" && chmod 600 "$1"
+  if grep -q "^$2=" "$1"; then sed -i "s|^$2=.*|$2=$3|" "$1"; else echo "$2=$3" >> "$1"; fi
+}
+newsecret() { python3 -c 'import secrets;print(secrets.token_urlsafe(18))'; }
+
+# --- the store and, optionally, Loki + Grafana
+umask 077
+setkv $STORE/.env RIFFLE_BUCKET "${bucket}"
+setkv $STORE/.env GOOGLE_CLOUD_PROJECT "${project}"
+setkv $STORE/.env RIFFLE_BIND_ADDR 127.0.0.1
+setkv $STORE/.env RIFFLE_DOMAIN "${domain}"
+setkv $STORE/.env RIFFLE_PUBLIC_URL "https://${domain}"
+setkv $STORE/.env RIFFLE_TRUST_PROXY 1
+setkv $STORE/.env RIFFLE_COOKIE_SECURE 1
+# Grafana's password: made once, whenever logging is first switched on (compose.logs.yaml refuses to start without it)
+grep -q "^GRAFANA_ADMIN_PASSWORD=." $STORE/.env || setkv $STORE/.env GRAFANA_ADMIN_PASSWORD "$(newsecret)"
+cd $STORE
+docker compose -f compose.yaml %{ if enable_logs }-f compose.logs.yaml %{ endif }--profile public up -d --build --remove-orphans
+
+%{ if enable_airflow ~}
+# --- Airflow, beside the store (it reads the store's volume read-only and the bucket for datasets)
+if [ ! -f $AIR/.env ]; then
+  python3 - <<'PY'
+import base64, os, secrets
+users = [u for u in "${airflow_users}".split(",") if u]
+names = [u.split(":")[0] for u in users]
+pw = {n: secrets.token_urlsafe(14).replace("_", "x").replace("-", "y") for n in names}
+env = {
+    "AIRFLOW_UID": "50000", "AIRFLOW_BIND_ADDR": "127.0.0.1", "AIRFLOW_PORT": "8080",
+    "AIRFLOW_FERNET_KEY": base64.urlsafe_b64encode(os.urandom(32)).decode(),
+    "AIRFLOW_API_SECRET_KEY": secrets.token_urlsafe(32), "AIRFLOW_JWT_SECRET": secrets.token_urlsafe(32),
+    "POSTGRES_PASSWORD": secrets.token_urlsafe(24),
+    "AIRFLOW_USERS": ",".join(users), "AIRFLOW_PASSWORDS": ",".join(f"{n}:{p}" for n, p in pw.items()),
+    "AIRFLOW_LOAD_EXAMPLES": "false", "RIFFLE_BUCKET": "${bucket}",
+}
+old = os.umask(0o077)
+open("/opt/riffle/infra/docker/airflow/.env", "w").write("\n".join(f"{k}={v}" for k, v in env.items()) + "\n")
+open("/opt/riffle/secrets/airflow-passwords.txt", "w").write("\n".join(f"{n} {p}" for n, p in pw.items()) + "\n")
+PY
+fi
+setkv $AIR/.env RIFFLE_BUCKET "${bucket}"
+cd $AIR
+docker compose up -d --build
+%{ endif ~}
+
+touch /var/lib/riffle-ready
+echo "== riffle startup done"

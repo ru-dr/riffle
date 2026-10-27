@@ -103,6 +103,8 @@ Open http://127.0.0.1:8470 and paste the reader token. The lead puts `RIFFLE_SYN
 
 ## Run it on GCP
 
+The repeatable way is Terraform: [`infra/terraform/store-vm`](../../terraform/store-vm) builds the bucket, service account, address, firewall and a VM that runs this store, Loki + Grafana and Airflow (ADR 0018). The `gcloud` steps and `gcp/up.sh` below are the manual route and the one the first VM was made with.
+
 This has been run only on a laptop, never on GCP. You need a Google Cloud
 organisation or account, a project with billing, and `gcloud` signed in to it.
 Replace the names.
@@ -146,6 +148,23 @@ characters, hashes only on disk), HTTPS, a strict Content-Security-Policy, and a
 20 failed sign-ins per address per five minutes. The throttle counts distinct failing tokens, so a valid token still passes while an address is blocked, and `whoami` and `/v1/split` are throttled too. Anyone who learns a read token can read
 everything, so give it to as few people as possible and `manage.py revoke` it if it leaks.
 Prefer an IAP tunnel or Tailscale if only your own team needs access.
+
+## Search and chart run traces (Loki, optional)
+
+```bash
+docker compose -f compose.yaml -f compose.logs.yaml up -d      # adds Loki and Grafana; set GRAFANA_ADMIN_PASSWORD in .env first
+```
+
+The miner's trace is the one log. The store keeps each trace file as before and forwards every new line to Loki as it arrives (`server/loki.py`);
+nothing tails the disk, and PCs never contact Loki (ADR 0017). With Loki set up:
+
+- the **Log search** page reads Loki (the files are the fallback, shown without "From Loki." in its note);
+- the **admin page** has a Run tracking panel: whether Loki is receiving, lines sent, what is queued, the last error, and links to Grafana and Airflow;
+- Grafana, http://127.0.0.1:3000 (user `admin`), has the "Riffle miner" dashboard, or Explore, for example
+  `{job="riffle-miner", miner_stage="szz"} | json | msg="done"`. Labels: `pc`, `miner_version`, `split`, `run`, `lvl`, `component`, `miner_stage`; `repo` and `pr` are structured metadata. Traces are kept 90 days.
+
+A watched run uploads only its new trace lines every 10 s (`X-Append-Offset`); the bucket copy catches up every 5 minutes and when the run ends.
+If Loki is down the store goes on; it sends what Loki missed from the file when Loki is back (`loki_offsets` in `index.db`).
 
 ## Query with DuckDB
 

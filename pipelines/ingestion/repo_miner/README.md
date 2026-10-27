@@ -453,6 +453,12 @@ the output and re-mines the stale repos in this PC's share: blame failing, or mi
 mined by a newer miner is never re-mined here, and a repo already re-mined automatically under this version is not
 re-mined again. A test run never re-mines.
 
+**Watching a run.** The trace (`logs/run-*.trace.jsonl`) is the one log. With the team store it goes up after each repo and every
+15 minutes; with `--live-tracking` (TUI: "Live tracking", a lead setting, off by default) it goes up every 10 s as new lines only, so the
+store's log search, Grafana (Loki) and the Airflow `riffle_miner` graph follow the run as it goes. It changes no row. To run the whole
+stack on one PC instead (Loki, Grafana, Airflow in Docker), `python doctor.py` offers to start it, and the TUI's "Also run Loki + Airflow
+on this PC" sends that PC's run to it. See ADR 0017 and `ARCHITECTURE.md` section 13.1.
+
 Quick runs: `--skip-big N` (TUI: "Skip big repos", "Big = more than N
 commits", default 100000) skips repos whose `[~N commits]` tag in repos.txt is
 larger (14 repos at 100k: llvm, rust, ClickHouse, swift, tensorflow, ...). In

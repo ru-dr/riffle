@@ -40,7 +40,19 @@ LEVELS = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}
 SLOW_CALL_S = 30.0
 SLOW_PR_S = 300.0
 STALL_S = 300.0
-HEARTBEAT_S = 120.0
+
+
+def _env_float(name: str, default: float, low: float = 1.0, high: float = 86400.0) -> float:
+    """A number between `low` and `high` (a day) from the environment; anything else (empty, text, nan, inf, too
+    small or too big for a timer) is the default, never an error."""
+    try:
+        v = float(os.environ.get(name) or default)
+    except ValueError:
+        return default
+    return v if low <= v <= high else default
+
+
+HEARTBEAT_S = _env_float("RIFFLE_HEARTBEAT_S", 120.0)   # a watched run (tui.py "Track this run") sets 10
 
 _LOCK = threading.Lock()
 _FH = None
@@ -264,7 +276,11 @@ def start_heartbeat() -> None:
                 continue
             quiet = now - _STATE["last_done"]
             if quiet >= STALL_S:
-                warn("heartbeat", f"no PR finished for {quiet:.0f}s", in_flight=flight[:6])
+                if now - getattr(loop, "last_warn", -1e9) >= max(HEARTBEAT_S, 120.0):     # a 10 s beat must not mean a warning every 10 s
+                    loop.last_warn = now
+                    warn("heartbeat", f"no PR finished for {quiet:.0f}s", in_flight=flight[:6])
+                else:
+                    info("heartbeat", "alive", since_last_pr_s=round(quiet), in_flight=flight[:6])
             else:
                 info("heartbeat", "alive", since_last_pr_s=round(quiet), in_flight=flight[:6])
 

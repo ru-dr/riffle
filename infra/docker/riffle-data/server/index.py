@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS runs (pc TEXT NOT NULL, prefix TEXT NOT NULL, status 
 CREATE TABLE IF NOT EXISTS activity (pc TEXT NOT NULL, prefix TEXT NOT NULL, ts REAL NOT NULL, reason TEXT,
                                      prs_done INTEGER, repos_done INTEGER, current TEXT);
 CREATE INDEX IF NOT EXISTS activity_ts ON activity (ts);
+CREATE TABLE IF NOT EXISTS loki_offsets (key TEXT PRIMARY KEY, offset INTEGER NOT NULL);
 """
 ACTIVITY_KEEP_S = 35 * 86400                                 # the activity graph looks back at most 30 days
 
@@ -43,6 +44,22 @@ class Index:
         with self.lock, self.db:
             self.db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?)",
                             (key, pc, size, sha256, time.time() if updated is None else updated))
+
+    def loki_offset(self, key: str) -> int:
+        """How many bytes of this trace Loki is known to have (loki.py)."""
+        with self.lock:
+            r = self.db.execute("SELECT offset FROM loki_offsets WHERE key=?", (key,)).fetchone()
+        return int(r[0]) if r else 0
+
+    def set_loki_offset(self, key: str, offset: int) -> None:
+        with self.lock, self.db:
+            self.db.execute("INSERT INTO loki_offsets VALUES (?,?) ON CONFLICT(key) DO UPDATE SET offset=MAX(offset, excluded.offset)",
+                            (key, offset))
+
+    def reset_loki_offset(self, key: str) -> None:
+        """Forget how much of a trace Loki has (the file was replaced by a shorter one)."""
+        with self.lock, self.db:
+            self.db.execute("DELETE FROM loki_offsets WHERE key=?", (key,))
 
     def put_run(self, pc: str, prefix: str, status: dict, updated: float | None = None) -> None:
         """`updated` is when the status was really written; a rebuild passes the file's own time, so a PC that crashed

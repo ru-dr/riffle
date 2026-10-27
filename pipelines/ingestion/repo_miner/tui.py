@@ -71,6 +71,7 @@ else:
 
 import config  # noqa: E402  (loads .env, so GITHUB_TOKEN from it counts)
 import dashboard  # noqa: E402
+import localstack  # noqa: E402
 import naming  # noqa: E402
 from features import llm_flags  # noqa: E402
 
@@ -123,7 +124,7 @@ def form_values(argv: list[str]) -> dict:
             "snapshots": bool(ns.snapshots), "szz": bool(ns.szz), "ci_history": bool(ns.ci_history),
             "merge_outcome": bool(ns.merge_outcome), "scanners": not ns.no_scanners,
             "api_contract": not ns.no_api_contract, "git_discovery": ns.pr_discovery == "git", "split_by": ns.split_by,
-            "auto_remine": bool(ns.auto_remine)}
+            "auto_remine": bool(ns.auto_remine), "live_tracking": bool(ns.live_tracking)}
     if ns.lead_in_days is not None:
         vals["lead_in"] = str(ns.lead_in_days)
     if ns.llm_scope:
@@ -148,7 +149,8 @@ MODELS = [("Haiku (default, fast/cheap)", "haiku"), ("Sonnet", "sonnet"), ("Opus
 LOCKED_IDS = frozenset((
     "repos_file", "out", "out_prefix", "out_postfix", "pcs", "pc_index", "max_prs", "min_age", "window_from",
     "window_to", "cap_training", "full_repo", "lead_in", "only_domain", "llm", "llm_model", "llm_training",
-    "close_other_only", "snapshots", "szz", "ci_history", "merge_outcome", "scanners", "api_contract", "git_discovery", "split_by"))
+    "close_other_only", "snapshots", "szz", "ci_history", "merge_outcome", "scanners", "api_contract", "git_discovery", "split_by",
+    "live_tracking"))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(HERE, "build_dataset.py")
@@ -233,6 +235,34 @@ def _fmt_secs(s: float | None) -> str:
     h, rem = divmod(s, 3600)
     m, sec = divmod(rem, 60)
     return f"{h}h{m:02d}m" if h else (f"{m}m{sec:02d}s" if m else f"{sec}s")
+
+
+def run_phase(*, repos, now: float, breaker=None, llm_paused=None, assembling=False) -> dict:
+    """What a running batch is doing right now, as a status word, a colour (run, warn, bad) and a detail line.
+    This is the web view's headline, so it names the worst thing in the way before it says MINING: a GitHub quota
+    wait, a paused LLM, a repo with no progress, then the stage the current repo is in."""
+    active = [r for r in repos if r.started and not r.ended and not r.halted]
+    waits = [(r.rl_until - now, r.name) for r in active if r.rl_until and r.rl_until > now]
+    if breaker:
+        return {"word": "STOPPED: ERROR", "level": "bad", "detail": f"Breaker: {breaker}"}
+    if waits:
+        left, name = max(waits)
+        return {"word": "RATE LIMITED", "level": "warn",
+                "detail": f"GitHub quota used up: resumes in {_fmt_secs(left)}"}
+    if llm_paused:
+        return {"word": "LLM PAUSED", "level": "warn", "detail": llm_paused}
+    if assembling:
+        return {"word": "ASSEMBLING", "level": "run", "detail": "building the snapshot tables"}
+    for r in active:
+        idle = now - r.last_event if r.last_event else 0
+        if r.stage == "mining" and idle >= STALL_SECS:
+            return {"word": "NO PROGRESS", "level": "warn", "detail": f"{r.name}: nothing new for {_fmt_secs(idle)}"}
+    cur = active[0] if active else None
+    if cur is None:
+        return {"word": "STARTING" if any(r.stage == "queued" for r in repos) else "WAITING", "level": "run", "detail": ""}
+    stage = re.sub(r"\s+p\d+$", "", cur.stage or "starting")          # "fetching PRs p3" is still "fetching PRs"
+    word = {"mining": "MINING", "cloning": "CLONING", "starting": "STARTING"}.get(stage, stage.upper())
+    return {"word": word, "level": "run", "detail": "" if stage == "mining" else f"{cur.name}: {stage}"}
 
 
 @dataclass
@@ -931,6 +961,10 @@ class RiffleTUI(App):
                     yield Checkbox("Reuse clones (resume)", True, id="skip_existing", compact=True)
                     yield Checkbox("Keep clones", False, id="keep_clones", compact=True)
                     yield Checkbox("Auto re-mine stale repos", False, id="auto_remine", compact=True)
+                    yield Checkbox("Live tracking: upload the trace every 10 s (lead setting)", False,
+                                   id="live_tracking", compact=True)
+                    yield Checkbox("Also run Loki + Airflow on this PC (docker)", localstack.enabled(),
+                                   id="local_stack", compact=True)
                     yield Checkbox("Skip big repos (quick test run)", False, id="skip_big", compact=True)
                     yield Label("Big = more than N commits")
                     yield Input("100000", id="big_n", type="integer", compact=True)
@@ -1472,6 +1506,7 @@ class RiffleTUI(App):
             if self._on(wid):
                 cmd.append(flag)
         cmd.append("--auto-remine" if self._on("auto_remine") else "--no-auto-remine")
+        cmd.append("--live-tracking" if self._on("live_tracking") else "--no-live-tracking")
         if not self._on("merge_outcome"):
             cmd.append("--no-merge-outcome")
         if not self._on("scanners"):
@@ -1714,6 +1749,29 @@ class RiffleTUI(App):
         self.run_worker(self._run_proc(cmd), exclusive=True, group="proc")
         self._set_running(True)
 
+    local_up = False
+    _dag_at = 0.0
+
+    def _say_from_thread(self, msg: str) -> None:
+        self.call_from_thread(self._log, msg, style="cyan")
+
+    def _trigger_dag(self, delay: float = 0.0) -> None:
+        """Refresh the Airflow graph (a new riffle_miner run reads the traces now in the store). `delay` lets the
+        miner's upload after a repo land first; runs closer than 20 s apart are merged into one."""
+        if not self.local_up or time.monotonic() - self._dag_at < 20:
+            return
+        self._dag_at = time.monotonic()
+
+        def go() -> None:
+            try:
+                localstack.trigger_dag(__version__, say=self._say_from_thread)
+            except Exception:                                           # noqa: BLE001  (a worker that raises ends the app)
+                pass
+        if delay:
+            self.set_timer(delay, lambda: self.run_worker(go, thread=True, group="dag"))
+        else:
+            self.run_worker(go, thread=True, group="dag")
+
     def action_stop(self) -> None:
         if self.proc is None:
             return
@@ -1817,6 +1875,34 @@ class RiffleTUI(App):
                    RIFFLE_CONTROL=self.control_path or "")
         if self.log_path:               # the structured trace sits next to the run log
             env["RIFFLE_TRACE"] = self.log_path.rsplit(".", 1)[0] + ".trace.jsonl"
+        self.local_up = False
+        if self._on("local_stack"):
+            self._log("[local] tracking is on: starting the store, Loki, Grafana and Airflow if they are not up",
+                      style="cyan")
+            try:                    # tracking is optional: it never delays the miner for long, and never stops it
+                ok = await asyncio.wait_for(asyncio.to_thread(localstack.ensure_up, self._say_from_thread),
+                                            localstack.start_wait_s())
+            except asyncio.TimeoutError:
+                ok = False
+                self._log(f"[local] the stack is still starting after {localstack.start_wait_s():.0f}s; "
+                          "mining starts without it and the next run will use it", style="yellow")
+            except Exception as e:                      # noqa: BLE001
+                ok = False
+                self._log(f"[local] tracking failed ({type(e).__name__}: {e})", style="yellow")
+            extra = localstack.sync_env() if ok else {}
+            if extra:
+                env.update(extra)       # this run only; .env still names the team store
+                env.update(localstack.live_env())       # upload the trace every 10 s so Airflow moves while it runs
+                self.local_up = True
+                if "RIFFLE_MIRROR_URL" in extra:
+                    self._log("[local] this run reports to the team store as usual, and the local store gets a copy "
+                              "for Loki and Airflow.", style="cyan")
+                else:
+                    self._log("[local] this PC is not joined to a team store, so this run reports to the local store.",
+                              style="cyan")
+                self._trigger_dag()
+            else:
+                self._log("[local] tracking is off for this run: uploads follow .env", style="bold yellow")
         self.proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=HERE, env=env, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
@@ -1855,6 +1941,8 @@ class RiffleTUI(App):
         elif _exit_reason(rc):
             msg = f"{_exit_reason(rc)}, exit {rc}"
         self._final_state = msg
+        self._dag_at = 0.0
+        self._trigger_dag()                           # the miner's last upload is done: show the end state
         for r in self.repos.values():                 # a repo cut off mid-mine is not "mining" any more
             if r.started and not r.ended and r.stage != "queued":
                 r.halted = self.stats.ended
@@ -2036,6 +2124,7 @@ class RiffleTUI(App):
             else:
                 r.stage = ("done (earlier run)" if e.get("already") else "done") \
                     if e.get("status") == "ok" else e.get("status", "done")
+                self._trigger_dag(delay=25)
             resort = True
         elif ev == "repo_failed":
             r = self._repo(e["repo"])
@@ -2220,7 +2309,18 @@ class RiffleTUI(App):
             "llm_usage": usage,
             "breaker": self.stats.breaker,
             "assembly": self.assembly,
+            "phase": self._phase(paused),
         })
+
+    def _phase(self, paused) -> dict | None:
+        """The web view's status word; a failure here must not take the stats panel down with it."""
+        if not self.proc:
+            return None
+        try:
+            return run_phase(repos=list(self.repos.values()), now=time.time(), breaker=self.stats.breaker,
+                             llm_paused=paused, assembling=bool(self.assembly and self.assembly.get("state") == "running"))
+        except Exception:                                               # noqa: BLE001
+            return None
 
     def _sync_text(self) -> str | None:
         """One line for the stats panel: is this run uploading, and when did it last?"""

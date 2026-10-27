@@ -1036,6 +1036,7 @@ def _resolve_open_snapshots(repo: str, prs: list[dict], api, default_branch: str
                 prs[i:i + SNAPSHOT_SLICE]))
             if len(prs) > SNAPSHOT_SLICE:
                 mem = runlog.rss_gb()
+                runlog.info("stage", "progress", name="open snapshots", phase="snapshots", done=len(snaps), total=len(prs))
                 print(f"[open-snapshot] {len(snaps)}/{len(prs)} PRs"
                       + (f", memory {mem:g} GB" if mem is not None else ""), file=sys.stderr, flush=True)
     for pr, snap in zip(prs, snaps):
