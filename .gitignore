@@ -20,6 +20,8 @@ __pycache__/
 
 # ML / data: raw downloads are never committed. DVC pointer files are.
 /data/
+# Drop folder for commands run on the host: Alloy ships these into Loki. Never committed.
+/logs/
 mlruns/
 
 # Terraform

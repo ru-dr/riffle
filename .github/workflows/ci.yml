@@ -83,3 +83,20 @@ jobs:
 
       - name: Team store (riffle-data) and the miner's sync client
         run: python -m pytest infra/docker/riffle-data/tests -q
+
+  # The logging stack (Loki, Alloy, Grafana). Its own job: it is its own stack. Checks the
+  # configuration and that Compose accepts the file; no container is started.
+  logging:
+    name: logging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install pytest pyyaml
+
+      - name: Logging stack configuration
+        run: python -m pytest infra/tests/test_logging_stack.py -q
