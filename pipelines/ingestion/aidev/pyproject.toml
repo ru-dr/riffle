@@ -1,0 +1,20 @@
+[project]
+name = "riffle-aidev-ingest"
+version = "0.1.0"
+description = "Pinned, read-only inventory of the AIDev dataset, and its ingestion into the raw layer"
+requires-python = ">=3.11"
+dependencies = [
+  "huggingface_hub>=0.30",
+  "pyarrow>=14",
+]
+
+[project.optional-dependencies]
+gcs = ["google-cloud-storage>=2.16"]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["aidev_ingest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: talks to the Hugging Face Hub; set RUN_NETWORK_TESTS=1 to run"]

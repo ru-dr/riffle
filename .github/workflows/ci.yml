@@ -88,6 +88,11 @@ jobs:
   # configuration and that Compose accepts the file; no container is started.
   logging:
     name: logging
+  # AIDev ingestion: its own job, as it is its own service. Offline only: a fake hub and the
+  # committed inventory. The tests that talk to Hugging Face need RUN_NETWORK_TESTS=1 and are
+  # not run here.
+  aidev:
+    name: aidev
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -100,3 +105,7 @@ jobs:
 
       - name: Logging stack configuration
         run: python -m pytest infra/tests/test_logging_stack.py -q
+      - run: pip install pytest huggingface_hub pyarrow
+
+      - name: AIDev pin and inventory (offline)
+        run: python -m pytest pipelines/ingestion/aidev/tests -q

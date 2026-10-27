@@ -50,6 +50,10 @@ python -m pytest pipelines/training/tests infra/docker/airflow/tests infra/docke
 python -m pytest infra/tests/test_logging_stack.py -q    # CI job `logging`: the logging stack's config, no containers
 ```
 
+```bash
+python -m pytest pipelines/ingestion/aidev/tests -q   # CI job `aidev`: offline; add RUN_NETWORK_TESTS=1 to also query Hugging Face
+```
+
 The miner tests need no network, no semgrep and no LLM; CI never runs those. Tests that need pandas skip themselves when it is absent.
 
 ## Repo miner (`pipelines/ingestion/repo_miner/`)
