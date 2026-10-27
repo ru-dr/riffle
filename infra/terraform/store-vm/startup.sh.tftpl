@@ -38,6 +38,7 @@ unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 
 STORE=/opt/riffle/infra/docker/riffle-data
 AIR=/opt/riffle/infra/docker/airflow
+LOG=/opt/riffle/infra
 mkdir -p /opt/riffle/secrets && chmod 700 /opt/riffle/secrets
 
 # setkv FILE KEY VALUE: set a key in a .env file (add it, or replace its value); secrets are never passed through here
@@ -56,8 +57,13 @@ setkv $STORE/.env RIFFLE_DOMAIN "${domain}"
 setkv $STORE/.env RIFFLE_PUBLIC_URL "https://${domain}"
 setkv $STORE/.env RIFFLE_TRUST_PROXY 1
 setkv $STORE/.env RIFFLE_COOKIE_SECURE 1
-# Grafana's password: made once, whenever logging is first switched on (compose.logs.yaml refuses to start without it)
-grep -q "^GRAFANA_ADMIN_PASSWORD=." $STORE/.env || setkv $STORE/.env GRAFANA_ADMIN_PASSWORD "$(newsecret)"
+%{ if enable_logs ~}
+# Loki and Grafana are the project's one logging stack (infra/compose.logging.yaml). Alloy is left out on purpose: it
+# needs the Docker socket, and the store pushes the miners' traces to Loki itself. Its Grafana login is made once.
+setkv $LOG/.env LOGGING_BIND_ADDR 127.0.0.1
+grep -q "^GF_SECURITY_ADMIN_PASSWORD=." $LOG/.env || setkv $LOG/.env GF_SECURITY_ADMIN_PASSWORD "$(newsecret)"
+(cd $LOG && docker compose -f compose.logging.yaml up -d loki grafana)     # first: it makes the network the store joins
+%{ endif ~}
 cd $STORE
 docker compose -f compose.yaml %{ if enable_logs }-f compose.logs.yaml %{ endif }--profile public up -d --build --remove-orphans
 

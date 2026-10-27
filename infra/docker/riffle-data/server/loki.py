@@ -17,6 +17,7 @@ in as structured metadata.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import threading
@@ -30,6 +31,12 @@ MAX_QUEUE_BYTES = 64 * 1024 ** 2       # and so does more than this much waiting
 READ_CHUNK = 1024 * 1024               # bytes of a trace read and queued at once; the worker asks for the next chunk when this one is in
 MAX_REQUEST_BYTES = 900_000            # Loki refuses a push over 4 MB (gRPC limit); stay well under it
 FUTURE_GRACE_S = 60                    # a line stamped further ahead than this (a PC with a fast clock) is stamped now
+# The logging stack's Loki (infra/loki/config.yaml) refuses lines older than reject_old_samples_max_age, 168 h. A trace
+# older than that is left out here (counted as `too_old`), not sent for Loki to refuse; RIFFLE_LOKI_MAX_AGE_H follows its config.
+try:
+    MAX_AGE_NS = int(float(os.environ.get("RIFFLE_LOKI_MAX_AGE_H") or 160) * 3600 * 10 ** 9)
+except ValueError:
+    MAX_AGE_NS = 160 * 3600 * 10 ** 9
 TIMEOUT_S = 8
 SEARCH_DAYS = 30
 TRACE_KEY = re.compile(r"^(?P<pc>[^/]+)/(?P<version>[^/]+)/(?P<split>[^/]+)/logs/(?P<run>[^/]+)\.trace\.jsonl$")
@@ -53,9 +60,10 @@ def _ns(stamp) -> int:
     return now if ns > now + FUTURE_GRACE_S * 10 ** 9 else ns
 
 
-def streams_for(key: str, data: bytes) -> list[dict]:
+def streams_for(key: str, data: bytes, counts: dict | None = None) -> list[dict]:
     """Loki streams for the complete lines in `data` (a slice of the trace at `key`). A torn or foreign line is
-    sent as plain text with the run's labels, so nothing the miner wrote is lost."""
+    sent as plain text with the run's labels, so nothing the miner wrote is lost; a line older than Loki keeps
+    (MAX_AGE_NS) is left out and counted in `counts["too_old"]`."""
     m = TRACE_KEY.match(key)
     if not m:
         return []
@@ -77,7 +85,12 @@ def streams_for(key: str, data: bytes) -> list[dict]:
             if isinstance(v, str) and v:
                 labels[label] = v[:40]
         meta = {k: str(ev[k]) for k in ("repo", "pr") if ev.get(k) is not None}
-        entry = [str(_ns(ev.get("t"))), text[:20000]] + ([meta] if meta else [])
+        ns = _ns(ev.get("t"))
+        if time.time_ns() - ns > MAX_AGE_NS:
+            if counts is not None:
+                counts["too_old"] = counts.get("too_old", 0) + 1
+            continue
+        entry = [str(ns), text[:20000]] + ([meta] if meta else [])
         groups.setdefault(tuple(sorted(labels.items())), []).append(entry)
     return [{"stream": dict(k), "values": sorted(v, key=lambda e: int(e[0]))} for k, v in groups.items()]
 
@@ -171,14 +184,15 @@ class LokiSink:
             if gen != self.gen.get(key, 0):
                 continue                                     # an earlier push of this key failed: these bytes follow the gap, so
             try:                                             # they wait for the next catch_up, which reads from the real offset
-                rejected = 0
-                for body in chunks(streams_for(key, data)):
+                rejected, counts = 0, {}
+                for body in chunks(streams_for(key, data, counts)):
                     rejected += self._post_tolerant(body)
                 n = data.count(b"\n")
                 with self.lock:
                     self.stats.update(last_ok=time.time(), last_error=None)
-                    self.stats["lines"] += n - rejected
+                    self.stats["lines"] += n - rejected - counts.get("too_old", 0)
                     self.stats["rejected"] += rejected
+                    self.stats["too_old"] = self.stats.get("too_old", 0) + counts.get("too_old", 0)
                     self.stats["batches"] += 1
                 if end is not None and self.index:
                     if start is None or self.index.loki_offset(key) >= start:       # never record bytes after a gap

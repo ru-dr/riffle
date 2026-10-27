@@ -1,0 +1,15 @@
+# Grafana reads this at start-up, so Loki is already connected on first login.
+# Read by infra/compose.logging.yaml, mounted at /etc/grafana/provisioning.
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+    # Defined here, not in the UI, so it cannot drift from this file.
+    editable: false
+    jsonData:
+      maxLines: 1000

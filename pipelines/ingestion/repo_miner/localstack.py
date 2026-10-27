@@ -2,7 +2,9 @@
 localstack.py — start the run-tracking stack on this PC, for a miner run you want to watch (ADR 0017).
 
 Three Docker Compose projects already in the repo make it:
-  infra/docker/riffle-data   the store (port 8470) plus, with compose.logs.yaml, Loki and Grafana (3000)
+  infra/compose.logging.yaml the project's one logging stack: Loki (3100) and Grafana (3000) are started from it
+                             (Alloy is not needed here: the store pushes the traces)
+  infra/docker/riffle-data   the store (port 8470); compose.logs.yaml joins it to that stack so it can push to Loki
   infra/docker/airflow       Airflow (8080) and its `riffle_miner` DAG, one task per miner stage
 
 ensure_up() creates their .env files with fresh secrets when missing, starts both, makes a write-only
@@ -32,6 +34,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 STORE_DIR = os.path.join(ROOT, "infra", "docker", "riffle-data")
+LOGGING_DIR = os.path.join(ROOT, "infra")                              # compose.logging.yaml: Loki, Alloy, Grafana
 AIRFLOW_DIR = os.path.join(ROOT, "infra", "docker", "airflow")
 ENV_PATH = os.path.join(HERE, ".env")
 
@@ -132,12 +135,14 @@ def _word() -> str:
 
 
 def ensure_env_files() -> dict[str, str]:
-    """Make both Compose .env files if missing. Returns the logins to show: grafana and airflow."""
+    """Make the three Compose .env files (store, logging stack, Airflow) if missing, and fill in what is blank
+    without changing anything that is set. Returns the logins to show: grafana and airflow."""
     s_env, a_env = os.path.join(STORE_DIR, ".env"), os.path.join(AIRFLOW_DIR, ".env")
+    l_env = os.path.join(LOGGING_DIR, ".env")
     if not os.path.isfile(s_env):
-        _write_env(s_env, s_env + ".example", {"GRAFANA_ADMIN_PASSWORD": _word()})
-    elif not _read_env(s_env).get("GRAFANA_ADMIN_PASSWORD"):
-        _write_env(s_env, s_env + ".example", {"GRAFANA_ADMIN_PASSWORD": _word()})
+        _write_env(s_env, s_env + ".example", {})
+    if not _read_env(l_env).get("GF_SECURITY_ADMIN_PASSWORD"):
+        _write_env(l_env, l_env + ".example", {"GF_SECURITY_ADMIN_PASSWORD": _word()})
     if not os.path.isfile(a_env):
         _write_env(a_env, a_env + ".example", {
             "AIRFLOW_FERNET_KEY": base64.urlsafe_b64encode(os.urandom(32)).decode(),
@@ -147,9 +152,10 @@ def ensure_env_files() -> dict[str, str]:
             "AIRFLOW_USERS": "riffle:admin",
             "AIRFLOW_PASSWORDS": "riffle:" + _word(),
         })
-    s, a = _read_env(s_env), _read_env(a_env)
+    g, a = _read_env(l_env), _read_env(a_env)
     user, _, pw = (a.get("AIRFLOW_PASSWORDS") or "").split(",")[0].partition(":")
-    return {"grafana": f"admin / {s.get('GRAFANA_ADMIN_PASSWORD', '?')}", "airflow": f"{user} / {pw}"}
+    return {"grafana": f"{g.get('GRAFANA_ADMIN_USER') or 'admin'} / {g.get('GF_SECURITY_ADMIN_PASSWORD', '?')}",
+            "airflow": f"{user} / {pw}"}
 
 
 # ------------------------------------------------------------------ docker steps
@@ -245,7 +251,11 @@ def _ensure_up(say) -> bool:
     logins = ensure_env_files()
     st = status()
     if not (st["store"] and st["grafana"]):
-        say("[local] starting the store, Loki and Grafana (first run builds images)...")
+        say("[local] starting Loki and Grafana (infra/compose.logging.yaml), then the store (first run builds images)...")
+        r = _compose(LOGGING_DIR, "-f", "compose.logging.yaml", "up", "-d", "loki", "grafana")   # first: it makes the network the store joins
+        if r.returncode:
+            say(f"[local] logging stack failed: {(r.stderr or r.stdout).strip()[-300:]}")
+            return False
         r = _compose(STORE_DIR, "-f", "compose.yaml", "-f", "compose.logs.yaml", "up", "-d", "--build")
         if r.returncode:
             say(f"[local] store stack failed: {(r.stderr or r.stdout).strip()[-300:]}")

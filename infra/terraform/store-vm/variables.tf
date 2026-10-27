@@ -65,7 +65,7 @@ variable "repo_token_secret" {
 }
 
 variable "enable_logs" {
-  description = "Loki and Grafana beside the store (ADR 0017)."
+  description = "Loki and Grafana (infra/compose.logging.yaml) beside the store, which then pushes the miners' traces to Loki (ADR 0017)."
   type        = bool
   default     = true
 }

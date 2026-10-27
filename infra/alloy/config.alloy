@@ -1,0 +1,65 @@
+// Grafana Alloy: reads logs and sends them to Loki. Two sources:
+//   1. every Docker container on this machine, through the Docker socket;
+//   2. files in the host drop folder, for commands run outside Docker.
+// Read by infra/compose.logging.yaml. The drop folder is mounted at /var/log/riffle.
+
+// ---- Docker containers ------------------------------------------------------
+
+discovery.docker "containers" {
+	host             = "unix:///var/run/docker.sock"
+	refresh_interval = "10s"
+}
+
+// Turns Docker's metadata into the labels you search by in Grafana. Targets are not
+// used here (hence `targets = []`); only the rules are, in loki.source.docker below.
+discovery.relabel "containers" {
+	targets = []
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		regex         = "/(.*)"
+		target_label  = "container"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+		target_label  = "service"
+	}
+
+	rule {
+		source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+		target_label  = "compose_project"
+	}
+}
+
+loki.source.docker "containers" {
+	host          = "unix:///var/run/docker.sock"
+	targets       = discovery.docker.containers.targets
+	relabel_rules = discovery.relabel.containers.rules
+	labels        = {job = "docker"}
+	forward_to    = [loki.write.local.receiver]
+}
+
+// ---- Host drop folder -------------------------------------------------------
+
+// Anything a command writes to <repo>/logs/ as *.log or *.jsonl, in any subfolder.
+local.file_match "host" {
+	path_targets = [
+		{__path__ = "/var/log/riffle/**/*.log", job = "host"},
+		{__path__ = "/var/log/riffle/**/*.jsonl", job = "host"},
+	]
+	sync_period = "10s"
+}
+
+loki.source.file "host" {
+	targets    = local.file_match.host.targets
+	forward_to = [loki.write.local.receiver]
+}
+
+// ---- Destination ------------------------------------------------------------
+
+loki.write "local" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}

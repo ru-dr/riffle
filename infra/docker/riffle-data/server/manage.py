@@ -10,6 +10,7 @@ manage.py — issue, list and revoke tokens.
   python manage.py list
   python manage.py reindex             rebuild the index from the VM's disk
   python manage.py restore             on a new VM: tokens, the pages' small files and the index, from the bucket
+  python manage.py loki-reset          Loki's storage was wiped: forget what it has, then restart the store to send every trace again
 
 Every change to the tokens is copied to the bucket (backup.py), so a lost VM disk loses nothing.
 
@@ -47,6 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list")
     sub.add_parser("reindex")
     sub.add_parser("restore")
+    sub.add_parser("loki-reset")
     args = ap.parse_args(argv)
     path = os.path.join(DATA, "tokens.json")
     try:
@@ -68,6 +70,9 @@ def main(argv: list[str] | None = None) -> int:
                     extra = (f"  split {rec['split']}" if rec.get("split") else "") + (
                         f"  expires {time.strftime('%Y-%m-%d', time.gmtime(rec['expires']))}" if rec.get("expires") else "")
                     print(f"{kind[:-1]:7} {name:24} created {rec.get('created')}{extra}")
+        elif args.cmd == "loki-reset":
+            n = index.Index(os.path.join(DATA, "index.db")).reset_all_loki_offsets()
+            print(f"forgot Loki's offsets for {n} traces; restart the store (docker compose restart riffle-data) and it sends them all again")
         elif args.cmd == "restore":
             store = _store()
             if store._bucket is None:

@@ -16,7 +16,7 @@ The miner runs on the team's PCs and syncs its run log, trace and tables to the 
 - DVC tracks only the merged tables and their merge manifest, under `mined/<miner version>/`, in a workspace made with `dvc init --no-scm` and pushed to a GCS remote with the VM's service account. The DAG prints the `mined.dvc` pointer; a person commits it as `data/mined.dvc`. Per-PC files keep going through `sync.py`.
 - The miner's run trace (`runlog.py`) stays the only log. The store keeps each trace file and forwards every new line to Loki as it arrives (`server/loki.py`), so no agent tails the disk and nothing else writes to Loki; PCs never contact it. Labels are `pc`, `miner_version`, `split`, `run`, `lvl`, `component` (the trace's `stage` field) and `miner_stage`; repo and PR number are structured metadata; retention is 90 days.
 - A watched run uploads only the new complete trace lines (`X-Append-Offset`, accepted by stores that say `append` in `/v1/whoami`), every 10 s, instead of the whole file. Any mismatch or an older store falls back to the whole-file PUT. The bucket copy is brought up to date every 5 minutes and when the run ends.
-- The store's log search reads Loki when it is set up (the files are the fallback), and the admin page has a Run tracking panel: Loki's state, lines sent, queue, last error, and links to Grafana and Airflow. Loki and Grafana are in `infra/docker/riffle-data/compose.logs.yaml`, an override file, so the store starts without them. Grafana listens on loopback with a provisioned dashboard.
+- The store's log search reads Loki when it is set up (the files are the fallback), and the admin page has a Run tracking panel: Loki's state, lines sent, queue, last error, and links to Grafana and Airflow. There is one Loki and one Grafana, the project's logging stack in `infra/compose.logging.yaml` (`infra/loki`, `infra/grafana`); the store joins its network through `infra/docker/riffle-data/compose.logs.yaml`, an override file, so the store starts without it. The miner dashboard is provisioned in `infra/grafana/provisioning/dashboards/`. Traces reach Loki only through the store, never also through Alloy's drop folder, so no line arrives twice.
 
 ## Options not taken
 
@@ -31,7 +31,7 @@ The miner runs on the team's PCs and syncs its run log, trace and tables to the 
 
 ## Consequences
 
-- New: `stages.py`, `publish.py` and their tests in `pipelines/ingestion/repo_miner`, the DAG, `server/loki.py`, `compose.logs.yaml` and `observability/` in `infra/docker/riffle-data`, and an append upload in `sync.py`.
+- New: `stages.py`, `publish.py` and their tests in `pipelines/ingestion/repo_miner`, the DAG, `server/loki.py` and `compose.logs.yaml` in `infra/docker/riffle-data`, the miner dashboard in `infra/grafana`, and an append upload in `sync.py`.
 - The Airflow image gains pandas, pyarrow, DVC and `google-cloud-storage`, and its Compose file mounts `pipelines/ingestion`, `contracts` and the store's volume read-only. No contract changes, so no miner version bump.
 - The store remembers how much of each trace Loki has (`loki_offsets` in its index), so a Loki that was down gets what it missed from the file; repeated lines are dropped by Loki.
 - Grafana needs its own admin password in `.env`. No invariant is touched: the LLM is not on any scoring path and nothing leaves the installation.

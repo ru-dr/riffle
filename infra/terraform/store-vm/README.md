@@ -33,8 +33,8 @@ terraform output airflow_passwords    # the command that prints the Airflow logi
 ```
 
 Then, on the VM, as in the store's README: `sudo docker compose exec riffle-data python manage.py add-reader lead`, and issue the PCs'
-join codes from the admin page. PCs use `terraform output sync_url`. Grafana's login is `admin` with `GRAFANA_ADMIN_PASSWORD` from
-`/opt/riffle/infra/docker/riffle-data/.env`.
+join codes from the admin page. PCs use `terraform output sync_url`. Grafana's login is `admin` with `GF_SECURITY_ADMIN_PASSWORD` from
+`/opt/riffle/infra/.env`. Loki and Grafana are the project's logging stack (`infra/compose.logging.yaml`); Alloy is not started on the VM.
 
 ## Things to know
 

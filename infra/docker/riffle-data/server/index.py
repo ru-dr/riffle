@@ -56,6 +56,11 @@ class Index:
             self.db.execute("INSERT INTO loki_offsets VALUES (?,?) ON CONFLICT(key) DO UPDATE SET offset=MAX(offset, excluded.offset)",
                             (key, offset))
 
+    def reset_all_loki_offsets(self) -> int:
+        """Forget everything Loki is known to have (its storage was wiped); the next start sends every trace again."""
+        with self.lock, self.db:
+            return self.db.execute("DELETE FROM loki_offsets").rowcount
+
     def reset_loki_offset(self, key: str) -> None:
         """Forget how much of a trace Loki has (the file was replaced by a shorter one)."""
         with self.lock, self.db:

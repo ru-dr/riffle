@@ -351,3 +351,31 @@ def test_an_append_during_a_bucket_upload_keeps_the_trace_dirty(env, monkeypatch
     monkeypatch.setattr(svc.store, "mirror", slow_mirror)
     svc.mirror_pending()
     assert released.is_set() and svc._unmirrored.get(FULL, 0) >= 2      # still dirty: the bucket copy lacks line b
+
+
+def test_lines_older_than_lokis_window_are_left_out_not_refused(env, monkeypatch):
+    monkeypatch.setattr(loki, "MAX_AGE_NS", 3600 * 10 ** 9)             # Loki on main keeps 168 h; here one hour
+    old = json.dumps({"t": "2020-01-01T00:00:00.000Z", "lvl": "INFO", "stage": "pr", "msg": "ancient"})
+    fresh = json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()), "lvl": "INFO", "stage": "pr", "msg": "fresh"})
+    counts = {}
+    streams = loki.streams_for(FULL, (old + "\n" + fresh + "\n").encode(), counts)
+    lines = [v[1] for s in streams for v in s["values"]]
+    assert len(lines) == 1 and "ancient" not in lines[0] and counts == {"too_old": 1}
+    # an upload of an old trace still moves the offset on, and says what it skipped
+    put(env, KEY, (old + "\n").encode())
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len((old + "\n").encode()))
+    assert env.service.loki.status()["too_old"] == 1 and not env.fake.lines()
+
+
+def test_loki_reset_makes_the_store_send_every_trace_again(env, monkeypatch, capsys):
+    import manage
+    body = (ev("a") + "\n").encode()
+    put(env, KEY, body)
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len(body))
+    monkeypatch.setattr(manage, "DATA", env.service.data)
+    assert manage.main(["loki-reset"]) == 0
+    assert "forgot Loki's offsets for 1 traces" in capsys.readouterr().out
+    assert env.service.index.loki_offset(FULL) == 0
+    env.service.loki.pending.clear()
+    env.service._loki_backfill()                                        # what a restart does
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len(body))

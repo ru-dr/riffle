@@ -17,6 +17,7 @@ Riffle is a self-hosted GitHub App that ranks pull requests by learned risk. The
 - `pipelines/ingestion/repo_miner/`: the repo miner, the primary source of training data. It writes three tables (see "Repo miner" below). Its `README.md` is the operator guide, `ARCHITECTURE.md` the full reference (why it is built this way, every stage, column, flag and file; also on the docs site as Architecture > Repo miner), and `version.py` holds its version. `pipelines/ingestion/README.md` holds the directory's rule that normalisation lives there.
 - `pipelines/dags/`: Airflow DAGs (scheduling only; a smoke DAG and `riffle_miner`, which shows each miner stage from the run traces and then merges, checks and DVC-versions the tables, ADR 0017). `infra/docker/airflow/`: the Docker Compose stack that runs Airflow locally and on one VM, with its own README (ADR 0013).
 - `pipelines/training/`: only the shared loader so far (`frames.py`, which joins the miner's three tables into training frames); training itself is not built. `services/*`, `infra/k8s`, `infra/terraform`: not built yet. Each directory has a `README.md` that says what belongs there and which invariants it owns, so read it before adding code there.
+- `infra/loki`, `infra/grafana`, `infra/alloy`, `infra/compose.logging.yaml`: the local logging stack (Loki stores logs, Alloy ships container logs and the gitignored `logs/` drop folder, Grafana shows them). Config only, one README each; run it from `infra/` (see `infra/README.md`). Each directory has a `README.md` that says what belongs there and which invariants it owns, so read it before adding code there. The miner's run traces reach this Loki through the team store (`infra/docker/riffle-data/server/loki.py`, joined by `compose.logs.yaml`), never through Alloy's drop folder (ADR 0017).
 
 `make bootstrap/up/seed/test/lint` and `make replay`/`make train` are documented but not implemented. Don't assume they work.
 
@@ -46,6 +47,11 @@ Python tests (repo root; CI runs them, so keep them passing):
 ```bash
 python -m pytest contracts/tests pipelines/ingestion/repo_miner/tests -q   # CI job `contracts`: core dependencies only
 python -m pytest pipelines/training/tests infra/docker/airflow/tests infra/docker/riffle-data/tests -q    # CI job `pipelines` runs these and the miner tests, with pandas and pyarrow
+python -m pytest infra/tests/test_logging_stack.py -q    # CI job `logging`: the logging stack's config, no containers
+```
+
+```bash
+python -m pytest pipelines/ingestion/aidev/tests -q   # CI job `aidev`: offline; add RUN_NETWORK_TESTS=1 to also query Hugging Face
 ```
 
 The miner tests need no network, no semgrep and no LLM; CI never runs those. Tests that need pandas skip themselves when it is absent.

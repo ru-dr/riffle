@@ -23,12 +23,13 @@ def test_enabled_reads_the_environment(monkeypatch):
 
 
 def test_env_files_get_fresh_secrets_and_existing_ones_are_kept(tmp_path, monkeypatch):
-    for d, body in (("store", "GRAFANA_ADMIN_PASSWORD=\nGRAFANA_PORT=3000\n"),
+    for d, body in (("store", "RIFFLE_PORT=8470\n"), ("logging", "GRAFANA_ADMIN_USER=admin\nGF_SECURITY_ADMIN_PASSWORD=\nLOKI_RETENTION=168h\n"),
                     ("air", "AIRFLOW_FERNET_KEY=\nAIRFLOW_API_SECRET_KEY=\nAIRFLOW_JWT_SECRET=\nPOSTGRES_PASSWORD=\n"
                             "AIRFLOW_USERS=\nAIRFLOW_PASSWORDS=\nAIRFLOW_PORT=8080\n")):
         (tmp_path / d).mkdir()
         (tmp_path / d / ".env.example").write_text(body)
     monkeypatch.setattr(localstack, "STORE_DIR", str(tmp_path / "store"))
+    monkeypatch.setattr(localstack, "LOGGING_DIR", str(tmp_path / "logging"))
     monkeypatch.setattr(localstack, "AIRFLOW_DIR", str(tmp_path / "air"))
     first = localstack.ensure_env_files()
     env = localstack._read_env(str(tmp_path / "air" / ".env"))
@@ -37,6 +38,9 @@ def test_env_files_get_fresh_secrets_and_existing_ones_are_kept(tmp_path, monkey
     user, _, pw = env["AIRFLOW_PASSWORDS"].partition(":")
     assert len(pw) >= 12 and "," not in pw and ":" not in pw          # what airflow's init demands
     assert first["airflow"] == f"{user} / {pw}"
+    log = localstack._read_env(str(tmp_path / "logging" / ".env"))
+    assert len(log["GF_SECURITY_ADMIN_PASSWORD"]) >= 12 and log["LOKI_RETENTION"] == "168h"       # the logging stack's own variable
+    assert first["grafana"] == f"admin / {log['GF_SECURITY_ADMIN_PASSWORD']}"
     assert localstack.ensure_env_files() == first                       # second call changes nothing
 
 

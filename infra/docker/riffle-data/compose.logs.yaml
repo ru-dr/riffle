@@ -1,49 +1,24 @@
-# Run-trace search and charts (ADR 0017), added to the store only when you ask for it:
+# Lets the team store forward the miners' run traces to Loki (ADR 0017), added only when you ask for it:
 #
-#   docker compose -f compose.yaml -f compose.logs.yaml up -d
-#   docker compose -f compose.yaml -f compose.logs.yaml --profile public up -d     # with HTTPS on a VM
+#   cd infra && docker compose -f compose.logging.yaml up -d loki grafana     # Loki and Grafana: infra/loki, infra/grafana
+#   cd docker/riffle-data && docker compose -f compose.yaml -f compose.logs.yaml up -d
+#   (on a VM with HTTPS: add --profile public)
 #
-# It is a separate file so the store starts without it, and without GRAFANA_ADMIN_PASSWORD (set it in .env
-# before using this file; compose stops with a "missing a value" error if it is empty).
-# The miner's trace is the only log: the store keeps the file and forwards each new line to Loki
-# (server/loki.py). Nothing else writes to Loki, and PCs never talk to it. Grafana listens on
-# loopback only; on a VM, read it through an SSH tunnel (infra/terraform/store-vm).
+# There is one Loki and one Grafana, the logging stack in infra/. This file only joins the store to that stack's
+# network and tells the store where Loki is. The miner's trace is the only log: the store keeps the file and pushes
+# each new line to Loki (server/loki.py). Do not also point Alloy's drop folder (RIFFLE_LOGS_DIR) at a miner's
+# logs folder: every line would arrive twice. Start the logging stack first, or Compose cannot find its network.
 
 services:
   riffle-data:
+    networks: [default, logging]
     environment:
       RIFFLE_LOKI_URL: http://loki:3100
       # links on the admin page (the store never fetches them)
       RIFFLE_GRAFANA_URL: ${RIFFLE_GRAFANA_URL:-http://localhost:3000}
       RIFFLE_AIRFLOW_URL: ${RIFFLE_AIRFLOW_URL:-http://localhost:8080}
 
-  loki:
-    image: grafana/loki:3.4.2
-    restart: unless-stopped
-    command: ["-config.file=/etc/loki/loki.yaml"]
-    volumes:
-      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
-      - loki-data:/loki
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-
-  grafana:
-    image: grafana/grafana:11.5.2
-    restart: unless-stopped
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-    ports:
-      - "${GRAFANA_BIND_ADDR:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
-    volumes:
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana-data:/var/lib/grafana
-    depends_on: [loki]
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-
-volumes:
-  loki-data:
-  grafana-data:
+networks:
+  logging:
+    name: riffle-logging_default
+    external: true
