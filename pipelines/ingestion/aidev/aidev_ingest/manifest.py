@@ -96,11 +96,19 @@ def _open(rev_dir: Path, inventory: dict[str, Any]) -> dict[str, Any]:
 
 
 def record_table(
-    rev_dir: Path, inventory: dict[str, Any], expected: Expected, state: str = "local_verified"
+    rev_dir: Path,
+    inventory: dict[str, Any],
+    expected: Expected,
+    state: str = "local_verified",
+    **extra: Any,
 ) -> None:
+    """Record one table. `extra` carries facts learned later, such as the bucket's md5."""
     manifest = _open(rev_dir, inventory)
     plan = TABLES[expected.table]
+    previous = manifest["tables"].get(expected.table, {})
     manifest["tables"][expected.table] = {
+        **{k: v for k, v in previous.items() if k in ("remote_md5",)},
+        **extra,
         "file": f"{expected.table}.parquet",
         "size": expected.size,
         "sha256": expected.sha256,
@@ -112,6 +120,14 @@ def record_table(
     }
     manifest["updated_at"] = _now()
     manifest["tool_version"] = __version__
+    write(rev_dir, manifest)
+
+
+def set_flag(rev_dir: Path, inventory: dict[str, Any], name: str, value: bool) -> None:
+    """A top-level yes/no fact about the folder, such as whether a snapshot is still owed."""
+    manifest = _open(rev_dir, inventory)
+    manifest[name] = value
+    manifest["updated_at"] = _now()
     write(rev_dir, manifest)
 
 

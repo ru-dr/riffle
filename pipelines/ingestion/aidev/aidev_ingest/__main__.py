@@ -1,9 +1,10 @@
-"""Command line: `python -m aidev_ingest inventory|check|download|verify|closure`."""
+"""Command line: `python -m aidev_ingest inventory|check|download|verify|closure|upload|verify-remote`."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from .hub import HubSource
 from .inventory import build_inventory, check_plan, compare, summary
 from .manifest import ManifestError, record_check, verify_dir
 from .pin import REPO_ID, REVISION, TAG, as_is_tables
+from .upload import UploadError, upload_tables, verify_remote
 
 DEFAULT_EXPECTED = Path(__file__).resolve().parent.parent / "expected" / f"aidev-{TAG}.inventory.json"
 
@@ -188,6 +190,89 @@ def cmd_closure(args: argparse.Namespace) -> int:
     return 0
 
 
+BUCKET_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]")
+
+
+def make_bucket(name: str):
+    """The real bucket. A function so tests can replace it; imported late so the Google
+    client is needed only when an upload actually runs."""
+    from .gcs import GcsBucket
+
+    return GcsBucket(name)
+
+
+def _bucket(args: argparse.Namespace):
+    name = args.bucket or os.environ.get("AIDEV_RAW_BUCKET", "")
+    if not BUCKET_NAME.fullmatch(name):
+        print(
+            "error: name the raw bucket with --bucket or the AIDEV_RAW_BUCKET environment variable "
+            "(it is deliberately not stored in the repository)",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        return make_bucket(name)
+    except (RuntimeError, UploadError) as error:  # library not installed, or no credentials
+        print(f"error: {error}", file=sys.stderr)
+        return None
+
+
+def cmd_upload(args: argparse.Namespace) -> int:
+    loaded = _inventory_and_out(args)
+    if loaded is None:
+        return 2
+    inventory, out = loaded
+    bucket = _bucket(args)
+    if bucket is None:
+        return 2
+    tables = [t.strip() for t in args.tables.split(",") if t.strip()] if args.tables else as_is_tables()
+    allow = tuple(t.strip() for t in args.allow_held.split(",") if t.strip()) if args.allow_held else ()
+    try:
+        outcomes = upload_tables(
+            inventory,
+            tables,
+            out,
+            bucket,
+            dry_run=args.dry_run,
+            keep_local=args.keep_local,
+            allow_held=allow,
+            log=lambda m: print(m, file=sys.stderr),
+        )
+    except (UploadError, ManifestError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    for o in outcomes:
+        extra = ", local copy deleted" if o.local_deleted else ""
+        print(f"{o.table:<22}{o.size / 1e6:>10.1f} MB  {o.action}{extra}")
+    held = [o.table for o in outcomes if o.action == "held"]
+    if args.dry_run:
+        print("dry run: nothing was uploaded or deleted")
+    if held:
+        print(f"held back: {', '.join(held)} (see the messages above; release with --allow-held)")
+    return 0
+
+
+def cmd_verify_remote(args: argparse.Namespace) -> int:
+    loaded = _inventory_and_out(args)
+    if loaded is None:
+        return 2
+    inventory, out = loaded
+    bucket = _bucket(args)
+    if bucket is None:
+        return 2
+    try:
+        problems = verify_remote(inventory, out, bucket)
+    except ManifestError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    for line in problems:
+        print(f"PROBLEM: {line}", file=sys.stderr)
+    if problems:
+        return 1
+    print("ok: the bucket matches the manifest and the inventory")
+    return 0
+
+
 def _add_location(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("--out", help="parent folder of the raw files (default: data/raw/aidev in the checkout)")
     sub.add_argument("--expected", default=str(DEFAULT_EXPECTED), help="the committed inventory")
@@ -220,6 +305,21 @@ def main(argv: list[str] | None = None) -> int:
     clo = sub.add_parser("closure", help="report pop-scoped rows whose pr_id is not in pull_request")
     _add_location(clo)
     clo.set_defaults(func=cmd_closure)
+
+    bucket_help = "the raw bucket (or set AIDEV_RAW_BUCKET); never stored in the repository"
+    up = sub.add_parser("upload", help="upload verified tables to the raw bucket, verify them there, delete the local copy")
+    _add_location(up)
+    up.add_argument("--bucket", help=bucket_help)
+    up.add_argument("--tables", help="comma-separated subset (default: every as_is table)")
+    up.add_argument("--dry-run", action="store_true", help="show what would happen; upload and delete nothing")
+    up.add_argument("--keep-local", action="store_true", help="verify in the bucket but keep the local files")
+    up.add_argument("--allow-held", help="comma-separated held tables to upload anyway (see pin.py hold_upload)")
+    up.set_defaults(func=cmd_upload)
+
+    vr = sub.add_parser("verify-remote", help="check the bucket against the manifest, without downloading")
+    _add_location(vr)
+    vr.add_argument("--bucket", help=bucket_help)
+    vr.set_defaults(func=cmd_verify_remote)
 
     args = parser.parse_args(argv)
     return args.func(args)

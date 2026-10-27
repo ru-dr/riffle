@@ -4,8 +4,9 @@ Pinned, verified access to [AIDev](https://huggingface.co/datasets/hao-li/AIDev)
 the Hugging Face dataset of pull requests opened by AI coding agents. It records
 exactly what is at one revision of the dataset, checks that it has not changed,
 and downloads 11 of its 13 tables to a local folder, proving each file is
-byte-for-byte the one the pin describes. Uploading to Google Cloud Storage, and
-the large `pr_commit_details` table, come later.
+byte-for-byte the one the pin describes. It then uploads them to a Google Cloud
+Storage raw bucket, verifies each object there, and deletes the local copy. The
+large `pr_commit_details` table comes later.
 
 ## The pin
 
@@ -79,6 +80,49 @@ digest of the inventory it was checked against, and each table's size, checksum,
 row count, columns and state (`local_verified`). It holds relative paths only.
 `verify` re-checks the folder against it with no network.
 
+### Uploading to the raw bucket
+
+```bash
+export AIDEV_RAW_BUCKET=<your raw bucket>          # or pass --bucket; never stored in the repo
+pip install 'riffle-aidev-ingest[gcs]'             # the Google client, needed only for these two commands
+python -m aidev_ingest upload --dry-run            # verify locally, look in the bucket, write nothing
+python -m aidev_ingest upload                      # upload, verify in the bucket, delete the local copies
+python -m aidev_ingest upload --tables repository  # a subset
+python -m aidev_ingest verify-remote               # check the bucket against the manifest, no download
+```
+
+Uses Application Default Credentials (`gcloud auth application-default login`); no key
+file is read. For each table, in this order:
+
+1. Verify the local file again against the inventory. Bad bytes never go up.
+2. Look in the bucket. An object already there is accepted only if it carries the expected
+   SHA-256 (stored as object metadata); it is never replaced.
+3. Create the object with a "must not already exist" precondition (`if_generation_match=0`),
+   so Google refuses an overwrite, not just this code.
+4. Compare the md5 the bucket reports with the local file's.
+5. Only then delete the local file.
+
+Objects land at `raw/aidev/<commit>/<table>.parquet`. Each run that changes anything also
+writes a copy of the manifest to `raw/aidev/<commit>/_manifests/<timestamp>.json`, a new object
+every time and never a replacement; the newest name is the current state. If a run dies
+before writing its snapshot, the next run writes it, and `verify-remote` says so until then.
+
+The bucket cannot take an object back: retention blocks deleting it, and the job account has no
+delete role. That is why nothing is uploaded unverified and why `--dry-run` comes first.
+
+The `sha256` stored on each object is metadata this tool wrote, so it is a statement of what
+was uploaded, not independent proof. The independent checks are the object's size and the md5
+that Google computes itself, compared with the local file's before anything is deleted.
+
+Every step is safe to repeat. A run that dies, or loses its connection partway through a large
+file, leaves no half-written object and has deleted nothing it had not verified; run the same
+command again and it continues. Chunks are 8 MiB and retries last 15 minutes, so a brief
+outage is absorbed; a longer one ends with a short message, not a traceback.
+
+A table can be **held** (`hold_upload` in `pin.py`): `upload` skips it and says why, and
+`--allow-held <table>` releases it deliberately. `pr_review_comments` is held because its
+`diff_hunk` column holds source-code snippets from repositories with mixed licences.
+
 `closure` reports, for the AIDev-pop tables that have a `pr_id`, how many rows
 point at a PR that is not in `pull_request`. It reports on the data and never
 stops a download; the dataset card says these tables are pop-only, and this
@@ -114,9 +158,9 @@ network tests download the two smallest tables for real.
 
 ## Not here yet
 
-- Uploading the verified files to Google Cloud Storage, then deleting the local
-  copies once the upload is verified.
 - `pr_commit_details`: copied without `patch`, in pieces, because of its size.
 - Deciding how to treat `diff_hunk` in `pr_review_comments`, which holds snippets
-  of source code, before that table is uploaded anywhere.
+  of source code. It is held back from upload until then.
+- Proving that the download service account itself cannot overwrite an object. The
+  precondition and the tests cover this code; the account's IAM is checked when a job runs as it.
 - Validation and the unified PR table.
