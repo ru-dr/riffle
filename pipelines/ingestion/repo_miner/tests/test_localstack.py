@@ -166,3 +166,19 @@ def test_env_numbers_that_a_timer_cannot_take_fall_back(monkeypatch):
     for bad in ("inf", "1e30", "-inf", "nan"):
         monkeypatch.setenv("RIFFLE_HEARTBEAT_S", bad)
         assert runlog._env_float("RIFFLE_HEARTBEAT_S", 120.0) == 120.0
+
+
+def test_a_miner_started_in_the_background_still_honours_stop():
+    """`cmd &` in a script leaves SIGINT ignored; the miner puts its handler back so Stop and ctrl+c work."""
+    import signal
+    code = ("import signal, runlog;"
+            "print(signal.getsignal(signal.SIGINT) == signal.SIG_IGN);"
+            "runlog.honour_sigint();"
+            "print(signal.getsignal(signal.SIGINT) == signal.default_int_handler)")
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run([sys.executable, "-c", code], cwd=here, capture_output=True, text=True, timeout=30,
+                       preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+    assert r.stdout.split() == ["True", "True"], r.stderr
+    r = subprocess.run([sys.executable, "-c", "import signal, runlog; before = signal.getsignal(signal.SIGINT); runlog.honour_sigint(); print(before == signal.getsignal(signal.SIGINT))"],
+                       cwd=here, capture_output=True, text=True, timeout=30)
+    assert r.stdout.split() == ["True"]                          # a normally started miner is left alone

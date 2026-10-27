@@ -1876,6 +1876,7 @@ def main():
 
 def run():
     """Entry point: main(), with a Stop ending the batch quietly."""
+    runlog.honour_sigint()
     try:
         main()
     except KeyboardInterrupt:

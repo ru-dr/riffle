@@ -42,6 +42,18 @@ SLOW_PR_S = 300.0
 STALL_S = 300.0
 
 
+def honour_sigint() -> None:
+    """Stop is SIGINT (the TUI's Stop, ctrl+c, `kill -INT`). A miner started in the background of a non-interactive
+    shell (`cmd &`, or nohup in a script) inherits SIGINT as ignored, and Python then never installs its KeyboardInterrupt
+    handler, so Stop would do nothing. Put the handler back. A miner that was started normally is untouched."""
+    import signal
+    try:
+        if signal.getsignal(signal.SIGINT) == signal.SIG_IGN:
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+    except (ValueError, OSError):                       # not the main thread, or no such signal: leave it
+        pass
+
+
 def _env_float(name: str, default: float, low: float = 1.0, high: float = 86400.0) -> float:
     """A number between `low` and `high` (a day) from the environment; anything else (empty, text, nan, inf, too
     small or too big for a timer) is the default, never an error."""

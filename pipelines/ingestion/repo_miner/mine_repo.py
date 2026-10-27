@@ -1817,6 +1817,7 @@ def _infer_owner_name(repo: str):
 
 
 def main():
+    runlog.honour_sigint()
     config.stop_on_break()
     ap = argparse.ArgumentParser(description="Extract Riffle v1 features from a clone.")
     ap.add_argument("--repo", default=None, help="path to local clone (required unless --llm-test)")
