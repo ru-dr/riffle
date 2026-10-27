@@ -1,0 +1,6 @@
+# Everything `dvc repro` and the tests need. Install from pipelines/data_pipeline:
+#   python -m pip install -r requirements.txt
+-e ../ingestion/aidev      # the pinned AIDev download, verify and inventory code
+dvc[gs]>=3.50,<4           # stages and the GCS remote
+PyYAML>=6
+pytest>=8

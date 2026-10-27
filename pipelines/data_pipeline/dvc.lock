@@ -1,8 +1,12 @@
 schema: '2.0'
 stages:
   acquire:
-    cmd: python -m aidev_ingest download --tables pull_request,repository --out 
-      data/raw
+    cmd: python -m scripts.acquire
+    deps:
+    - path: scripts/acquire.py
+      hash: md5
+      md5: 77816e11aae83f56d90e47c8b22fe4f0
+      size: 4775
     params:
       params.yaml:
         aidev.commit: b37f9fd1613cfec55886105bb76721918d015dc7
@@ -10,6 +14,6 @@ stages:
     outs:
     - path: data/raw/b37f9fd1613cfec55886105bb76721918d015dc7
       hash: md5
-      md5: 17334ccfc663c2cee3a82b0be272cf67.dir
-      size: 363578281
+      md5: 911aaddfae589abc1b6572a4a1afeeb2.dir
+      size: 363577822
       nfiles: 3
