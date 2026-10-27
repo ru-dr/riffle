@@ -1,0 +1,15 @@
+schema: '2.0'
+stages:
+  acquire:
+    cmd: python -m aidev_ingest download --tables pull_request,repository --out 
+      data/raw
+    params:
+      params.yaml:
+        aidev.commit: b37f9fd1613cfec55886105bb76721918d015dc7
+        aidev.tables: pull_request,repository
+    outs:
+    - path: data/raw/b37f9fd1613cfec55886105bb76721918d015dc7
+      hash: md5
+      md5: 17334ccfc663c2cee3a82b0be272cf67.dir
+      size: 363578281
+      nfiles: 3

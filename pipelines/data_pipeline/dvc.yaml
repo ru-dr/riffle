@@ -1,0 +1,9 @@
+stages:
+  acquire:
+    desc: Download the pinned AIDev tables from Hugging Face and verify each by SHA-256
+    cmd: python -m aidev_ingest download --tables ${aidev.tables} --out data/raw
+    params:
+      - aidev.commit
+      - aidev.tables
+    outs:
+      - data/raw/${aidev.commit}

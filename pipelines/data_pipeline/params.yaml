@@ -1,0 +1,3 @@
+aidev:
+  commit: b37f9fd1613cfec55886105bb76721918d015dc7
+  tables: pull_request,repository
