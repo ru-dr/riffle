@@ -35,3 +35,16 @@ snapshots, rescales each PR's weights to add up to 1, never offers outcome, id o
 metadata columns as inputs (read from the contract), and refuses snapshots that no
 longer match their dataset (`check_fresh=False` to skip). Run
 `python -m pytest pipelines/training/tests`.
+
+## Slice report
+
+`slices.py` shows label balance per slice of the dataset table, to find groups the model would learn badly
+(author association, bot or AI-agent author, domain, repo, PR size quartile). Per slice it gives rows, merged
+rate, observed `label_bad` rows, the bad rate over those rows only (null when none are observed) and label
+coverage, and flags slices that are `small` or `thin_labels`. It never counts an unobserved label as not bad.
+
+```bash
+python pipelines/training/slices.py dataset_merged.parquet --out slices.csv [--strict]
+```
+
+`--strict` exits 1 when a slice is flagged. Slice columns and thresholds are arguments, not repository rules.
