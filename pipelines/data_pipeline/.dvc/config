@@ -1,2 +1,2 @@
-[core]
-    remote = gcs
+# The remote's URL and name are kept out of the repository (they would reveal a bucket name).
+# Each person adds their own in .dvc/config.local; see README, 'Two ways to get the data'.

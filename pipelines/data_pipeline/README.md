@@ -70,9 +70,10 @@ dvc pull data/sample/features.parquet.dvc        # needs access to the DVC remot
 python -m scripts.slices --processed data/sample --reports reports_sample
 ```
 
-Without remote access, make the sample from a full run instead: `python -m scripts.make_sample`. It is
-deterministic, so you get the same file. Until you do one or the other, `dvc status` on a fresh clone lists the
-sample as "not in cache"; that is expected.
+Without remote access, make the sample from a full run instead: `python -m scripts.make_sample`. In our clean-clone
+test it produced a file byte-identical to the tracked one, so `dvc status` accepts it; run
+`dvc commit data/sample/features.parquet.dvc` to add it to your cache. Until you do one or the other, `dvc status`
+on a fresh clone lists the sample as "not in cache"; that is expected.
 
 ### Settings
 
@@ -136,23 +137,28 @@ so nothing downstream reruns.
 **Checked on a fresh clone** (a new virtual environment, no cache, no remote, none of the local files): `pip install`
 and all tests passed, and `dvc repro` ran every stage. The features table, the cleaned table, the quarantine file and
 every report, including `bias_report.md` and `slices_metrics.json`, came out with hashes identical to the committed
-`dvc.lock`, and a second `dvc repro` skipped every stage.
+`dvc.lock` (26 of its 27 entries; the 27th is the `data/raw` folder explained above), and a second `dvc repro` skipped
+every stage. That test ran on one Windows machine, with the same package versions as the original run. The model inputs
+include floating-point columns (`log_stars`, `log_forks`), and floating-point results can differ in the last bit between
+processors or library builds. On other hardware a hash may therefore differ even though the values agree to about 1e-15;
+we have not tested that.
 
 ### Two ways to get the data
 
 1. **Anyone, no remote:** `dvc repro` downloads from Hugging Face and verifies every file against the pinned
    checksums. This is the supported path for a fresh clone.
-2. **With a remote:** the project uses a Google Cloud Storage remote named `gcs`. Its URL is not in the repository,
-   so the bucket name stays private. To use your own bucket:
+2. **With a remote:** the project's own outputs are stored in a Google Cloud Storage bucket. The repository names no
+   remote, so the bucket name stays private, and `.dvc/config` is empty. To use a bucket of your own:
 
    ```bash
-   dvc remote modify --local gcs url gs://<your-bucket>/dvc
+   dvc remote add --local -d gcs gs://<your-bucket>/dvc
    gcloud auth application-default login
-   dvc pull            # restores every tracked output without recomputing
-   dvc push            # uploads new outputs
+   dvc push            # uploads the outputs of your last run
+   dvc pull            # restores tracked outputs without recomputing
    ```
 
-   `--local` writes to `.dvc/config.local`, which git ignores.
+   `--local` writes to `.dvc/config.local`, which git ignores, and `-d` makes the remote the default. Without a remote,
+   `dvc pull` and `dvc push` stop with "no remote provided"; everything else still works.
 
 ## Airflow
 
@@ -228,12 +234,15 @@ validate and preprocess run in parallel, text columns are no longer loaded where
 | `ModuleNotFoundError: aidev_ingest` | install from this folder: `python -m pip install -r requirements.txt` |
 | `dvc: command not found` | activate the virtual environment |
 | `... is inside a git repository and is not ignored` | the downloader refuses to write raw data where git could commit it; keep `data/raw` in `.gitignore` |
-| `dvc pull` fails with a remote or credentials error | you have no access to the project's bucket; use `dvc repro`, or set your own remote as above |
+| `dvc pull` says "no remote provided" | no remote is configured: use `dvc repro`, or add your own as above |
+| `dvc pull` or `dvc push` fails with a credentials or permission error | the bucket is not yours to read or write: use `dvc repro`, or your own bucket |
 | download is slow or rate limited | set `HF_TOKEN` to a free Hugging Face token |
 
 ## Known limits
 
 - The slice and bias results come from one time split and one run, with no confidence intervals.
+- Hashes of the Parquet files were identical across two clean environments on one machine; they may differ in the last
+  bit of the floating-point columns on other hardware (see "Same bytes on every machine").
 - Slack and email alerts are tested with fakes; delivery to a real webhook or mail server has not been tried.
 - Tested on Windows with Docker Desktop. Linux and macOS paths follow the same commands but have not been run by hand;
   CI runs the tests and `dvc dag` on Linux.
