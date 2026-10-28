@@ -240,9 +240,11 @@ accuracy. The full process, numbers, trade-offs and limits are in [`docs/bias_an
 
 ## Performance
 
-[`docs/bottleneck_analysis.md`](docs/bottleneck_analysis.md) has the per-task Airflow timings, what was slow, and what changed:
-validate and preprocess run in parallel, text columns are no longer loaded where only their length matters (peak memory of
-`validate` fell from 5.6 GB to 1.7 GB), and the whole run took about a third less time.
+[`docs/bottleneck_analysis.md`](docs/bottleneck_analysis.md) has the per-task Airflow timings for every run we measured, what
+was slow, and what changed. The optimisation that worked was memory: text columns are no longer loaded where only their length
+matters, so peak memory of `validate` fell from 5.6 GB to 1.7 GB and the cleaned table from 351 MB to 15 MB. Running `validate`
+and `preprocess` in parallel was **not** reliably faster on our machine (one pair of runs favoured it, a later pair went the
+other way), and `slices` is now the longest task.
 
 ## Troubleshooting
 

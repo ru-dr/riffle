@@ -1,34 +1,66 @@
 # Pipeline bottleneck analysis
 
 How long each stage takes in Airflow, what held the pipeline back, and what was changed. All
-numbers come from real runs of the two DAGs in `dags/riffle_data_pipeline.py` on a laptop with
+numbers come from real runs of the two DAGs in `dags/riffle_data_pipeline.py`, on a laptop with
 Docker Desktop (8.2 GB memory limit, `LocalExecutor`), on the pinned AIDev revision
-(`pull_request` 361,296 rows and `repository` 25,402 rows).
+(`pull_request` 361,296 rows and `repository` 25,402 rows). The timings are the task start and end
+times Airflow records, which is the data its Gantt chart draws. No screenshots are included.
 
-## How to see the Gantt chart
+To look at the Gantt chart yourself: Airflow UI (http://localhost:8080) > the DAG > pick a run >
+the Gantt view.
 
-Airflow UI (http://localhost:8080) > the DAG > pick a run > **Gantt**. Compare these two runs:
+## The short version
 
-| DAG | Run | What it shows |
-| --- | --- | --- |
-| `riffle_data_pipeline_sequential` | `manual__2026-10-27T05:37:05` | the baseline: one task after another |
-| `riffle_data_pipeline` | `manual__2026-10-27T05:38:07` | `validate` and `preprocess` side by side |
+- **Memory was the real constraint, and fixing it was the optimisation that worked.** Peak memory of
+  `validate` fell from 5.6 GB to 1.7 GB and the cleaned table from 351 MB to 15 MB, with identical
+  outputs.
+- **Running `validate` and `preprocess` in parallel gave no reliable speed-up.** One pair of runs
+  favoured it and a later pair went the other way (table below). We kept both DAGs; the parallel one is
+  not proven faster.
+- **`slices` is now the longest task**, about 36 to 39 s and more than half of a run.
+- **A failed task used to leave the run marked as a success.** That is fixed.
 
-## Per-task timings (after the fixes below)
+## Runs we measured
 
-Seconds from the start of the run. One run of each, so expect a few seconds of variation.
+Seconds. "Tasks" is how many tasks the DAG had at the time: `slices` was added later, so the first pair
+has five.
 
-| Task | Sequential: start, end, took | Parallel: start, end, took |
-| --- | --- | --- |
-| `acquire` | 0.0, 13.9, 13.9 | 0.0, 6.9, 6.9 |
-| `validate` | 14.7, 31.9, 17.2 | 7.5, 30.0, 22.5 |
-| `preprocess` | 33.2, 44.8, 11.5 | 7.5, 21.2, 13.7 |
-| `features` | 45.8, 50.0, 4.2 | 30.6, 34.7, 4.1 |
-| `alert_on_anomalies` | 33.3, 33.7, 0.4 | 30.6, 31.0, 0.4 |
-| **Whole run** | **52.6** | **35.0** (33 % shorter) |
+| Run | Tasks | `acquire` | `validate` | `preprocess` | `features` | `slices` | Whole run |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| sequential (earlier) | 5 | 13.9 | 17.2 | 11.5 | 4.2 | | **52.6** |
+| parallel (earlier) | 5 | 6.9 | 22.5 | 13.7 | 4.1 | | **35.0** |
+| sequential (later) | 6 | 5.8 | 10.9 | 8.6 | 3.3 | 36.1 | **67.2** |
+| parallel (later, first run after a restart) | 6 | 24.5 | 29.2 | 18.0 | 4.9 | 39.4 | **101.0** |
+| parallel (later, second run) | 6 | 15.9 | 28.0 | 17.6 | 5.5 | 38.4 | **91.4** |
 
-The critical path of the parallel DAG is `acquire` > `validate` > `features`. `preprocess` finishes
-about 9 seconds before `validate` and then waits, so it is not the bottleneck.
+In the "later" sequential run, `alert_on_anomalies` also took 7.4 s instead of the usual under 1 s,
+because an email setting pointed at a mail server that was switched off. That setting is removed and it
+does not touch the other tasks.
+
+## How to read those numbers
+
+The two things being compared are the **phase where `validate` and `preprocess` both run**. Run one
+after the other they take the sum of their times; run together, the longer of the two.
+
+| Pair | Sequential (sum) | Parallel (longer one) | Result |
+| --- | --- | --- | --- |
+| earlier | 17.2 + 11.5 = 28.7 s | 22.5 s | parallel about 6 s better |
+| later | 10.9 + 8.6 = 19.5 s | 28.0 s | parallel about 8 s worse |
+
+The sign flips. When the two tasks run side by side, each is slower than it is alone (`validate` took
+28.0 s beside `preprocess` against 10.9 s in the sequential run), which fits two heavy tasks competing for
+the same CPU and disk inside Docker. That explanation is an inference from the slower task times: we did not
+profile it, and we did not record how many CPUs Docker had.
+
+Run-to-run noise is also large, and it is as big as the effect. `acquire`, which does the same work every
+time (re-checking the SHA-256 of a 362 MB file), ranged from 5.8 s to 24.5 s across these runs. The runs
+were not controlled, and the laptop was under memory pressure at times. The "earlier" pair's totals differ by
+17.6 s, and 7.0 s of that is `acquire` alone (13.9 s against 6.9 s), a task that is not part of the comparison.
+So the 33 % shorter total that an earlier version of this document reported should not be read as the
+effect of running in parallel.
+
+**What we can say:** on this machine, parallelising these two tasks is not a dependable win. It may help on a
+machine with spare CPU and disk, or if the tasks run on separate workers, but we have not shown that.
 
 ## What we found, in the order we found it
 
@@ -43,9 +75,9 @@ stage, alone, inside the container:
 | `preprocess` | 3,256 MB | 21 s |
 | `features` | 2,453 MB | 13 s |
 
-Run together, `validate` and `preprocess` need about 8.9 GB, more than the 8.2 GB limit. Memory,
-not CPU, was what limited parallelism. Most of it was text nobody needed: the stages loaded every
-pull request body to ask only whether it was null, or how long it was.
+Run together, `validate` and `preprocess` need about 8.9 GB, more than the 8.2 GB limit. Most of it was
+text nobody needed: the stages loaded every pull request body to ask only whether it was null, or how
+long it was.
 
 ### 2. A failed task did not fail the run
 
@@ -59,34 +91,37 @@ the run was **failed**, and the failure alert fired with the right task and reas
 ### 3. Adding the model made `slices` the longest stage
 
 A sixth task, `slices` (the baseline model and the per-group metrics, `docs/bias_analysis.md`),
-runs after `features`. In a full run of the parallel DAG in the container it took 38.5 s, against
-24.6 s for `validate`, and the whole run finished in about 88 s. It is now the longest stage and
-sits on the critical path (`acquire` > `validate` > `features` > `slices`). The earlier tables
-above were measured before it existed, so they do not include it.
+runs after `features`. It took 36.1 to 39.4 s in the runs above, against 10.9 to 29.2 s for `validate`. It
+sits on the critical path (`acquire` > `validate` > `features` > `slices`) in both DAGs, so shortening
+`validate` or `preprocess` can no longer shorten a run by much.
 
-## Optimisations applied
+## Optimisations that worked
+
+These were measured with each stage run alone, inside the container, which avoids the contention above.
 
 | Change | Effect |
 | --- | --- |
-| `validate` reads the free-text columns cut to their first character, batch by batch (`data_io.py`) | peak memory 5,627 > 1,680 MB; 33 > 15 s alone |
+| `validate` reads the free-text columns cut to their first character, batch by batch (`data_io.py`) | peak memory 5,627 > 1,680 MB; 33 > 15 s |
 | `preprocess` computes title and body lengths and does not carry the text forward | `pull_requests_clean.parquet` 351 > 15 MB |
-| `features` reads those lengths instead of the text | peak memory 2,453 > 453 MB; 13 > 3 s alone |
-| `validate` and `preprocess` run in parallel (they only read the raw data) | whole run 52.6 > 35.0 s |
+| `features` reads those lengths instead of the text | peak memory 2,453 > 453 MB; 13 > 3 s |
 | `validate` and `preprocess` depend on the two Parquet files, not the raw folder | a re-download no longer reruns them: the folder also holds `manifest.json` with a download timestamp, so its hash changed every time |
 
 The outputs did not change: the same 332,404 feature rows, the same label rate (0.7424) and the
 same quarantined rows.
 
+## Tried, with no reliable gain
+
+- **Running `validate` and `preprocess` in parallel** (the `riffle_data_pipeline` DAG). See above. It does
+  not need more memory than the machine has any more, but it is not dependably faster.
+
 ## What is still slow, and what we did not do
 
-- **`validate` is the critical path** (15 s alone, 22 s beside `preprocess`). Most of it is Great
-  Expectations computing about 100 metrics per table. Validating a sample would be faster but would
-  miss rare bad rows, so we did not do it.
-- **`acquire` takes 7 to 14 s when there is nothing to download.** It re-checks the SHA-256 of the
+- **`slices` (36 to 39 s)** is the biggest target. It fits three models and a threshold optimiser; we did
+  not try to speed it up.
+- **`validate` is the next largest** (15 s alone). Most of it is Great Expectations computing about 100
+  metrics per table. Validating a sample would be faster but would miss rare bad rows, so we did not do it.
+- **`acquire` takes 6 to 25 s when there is nothing to download.** It re-checks the SHA-256 of the
   362 MB file on every run. That is deliberate (a run proves its input is intact), but it could be
-  skipped when size and modification time are unchanged.
-- **Parallel is slower per task than alone** (`validate` 22.5 s beside `preprocess`, 15 s alone):
-  both compete for the same disk and CPU.
-- **One run each.** The two DAGs were run once after the fixes. Variation between runs (for
-  example `acquire` at 6.9 s and 13.9 s) is about as large as some of the differences above, so
-  treat the 33 % as an estimate, not a benchmark.
+  skipped when size and modification time are unchanged. It is also the noisiest task.
+- **Few, uncontrolled runs.** Each configuration was run once or twice. A proper comparison would repeat
+  each several times on a quiet machine and report the spread.
