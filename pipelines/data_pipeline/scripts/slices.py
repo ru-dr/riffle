@@ -290,8 +290,8 @@ def run(processed: Path, reports: Path, settings: dict[str, Any]) -> dict[str, A
         raise FileNotFoundError(f"{path} does not exist; run the features stage first")
     result = run_analysis(pd.read_parquet(path), settings)
     reports.mkdir(parents=True, exist_ok=True)
-    (reports / "slices_metrics.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (reports / "bias_report.md").write_text(render_report(result), encoding="utf-8")
+    (reports / "slices_metrics.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    (reports / "bias_report.md").write_text(render_report(result), encoding="utf-8", newline="\n")
     for name in VARIANTS:
         o = result["overall"][name]
         log.info("%-12s accuracy %s  tpr %s  fpr %s", name, o["accuracy"], o["tpr"], o["fpr"])

@@ -95,7 +95,7 @@ def run(frames: dict[str, pd.DataFrame], processed: Path, reports: Path) -> dict
     reports.mkdir(parents=True, exist_ok=True)
     clean_df.to_parquet(processed / "pull_requests_clean.parquet", index=False)
     quarantine.to_parquet(processed / "quarantine.parquet", index=False)
-    (reports / "preprocess.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (reports / "preprocess.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     log.info("preprocess: %d in, %d clean, %d quarantined", result["rows_in"], result["rows_clean"], result["rows_quarantined"])
     for reason, count in result["quarantined_by_reason"].items():
         log.warning("quarantined %d: %s", count, reason)

@@ -1,0 +1,4 @@
+# DVC hashes file bytes, so a Windows checkout with CRLF would hash differently from Linux's.
+# Keep every text file LF here.
+* text=auto eol=lf
+*.parquet binary

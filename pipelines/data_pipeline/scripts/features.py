@@ -105,7 +105,7 @@ def run(processed: Path, reports: Path, test_fraction: float) -> dict[str, Any]:
     features, summary = build(pd.read_parquet(path), test_fraction)
     features.to_parquet(processed / "features.parquet", index=False)
     reports.mkdir(parents=True, exist_ok=True)
-    (reports / "features.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (reports / "features.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     log.info("features: %d rows (%d train, %d test), merged rate %s, cutoff %s", summary["rows"], summary["train"],
              summary["test"], summary["merged_rate"], summary["split_cutoff"])
     return summary

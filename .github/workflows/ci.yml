@@ -138,3 +138,29 @@ jobs:
 
       - run: terraform validate
         working-directory: infra/terraform/store-vm
+
+  # The assignment data pipeline (pipelines/data_pipeline): acquire, validate, preprocess, features
+  # and slices. It installs from the pipeline's own requirements.txt, so this job also proves that
+  # file works on a clean machine. Offline: `dvc repro` would download 364 MB from Hugging Face, so
+  # it only checks that dvc.yaml parses. The DAG structure tests need Airflow and skip themselves
+  # here; they run inside the Airflow image (see infra/docker/airflow/README.md).
+  data-pipeline:
+    name: data-pipeline
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pipelines/data_pipeline
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: dvc.yaml and params.yaml are valid
+        run: dvc dag
+
+      - name: Pipeline tests (offline)
+        run: python -m pytest tests -q
