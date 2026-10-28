@@ -111,7 +111,8 @@ def profile(df: pd.DataFrame) -> dict[str, Any]:
     for name in df.columns:
         series = df[name]
         info: dict[str, Any] = {"dtype": str(series.dtype), "null_rate": round(float(series.isna().mean()), 6)}
-        info["unique"] = int(series.nunique())
+        if name not in PRIVATE_COLUMNS:  # these arrive cut to one character, so a distinct count would be wrong
+            info["unique"] = int(series.nunique())
         if types.is_bool_dtype(series):
             info["true_rate"] = round(float(series.mean()), 6)
         elif types.is_numeric_dtype(series):
@@ -122,7 +123,7 @@ def profile(df: pd.DataFrame) -> dict[str, Any]:
                 median=float(series.median()),
                 std=round(float(series.std()), 4),
             )
-        elif info["unique"] <= 50 and name not in PRIVATE_COLUMNS:
+        elif name not in PRIVATE_COLUMNS and info["unique"] <= 50:
             info["top_values"] = {str(k): int(v) for k, v in series.value_counts().head(10).items()}
         columns[name] = info
     return {"rows": int(len(df)), "columns": columns}
@@ -191,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("logging to %s", log_path)
     try:
         params = load_params(args.params)
-        frames = data_io.load_raw(args.raw, params["commit"])
+        frames = data_io.load_raw(args.raw, params["commit"], text=False)
         return run(frames, args.reports, params["iqr_factor"], params["min_rows"])
     except (data_io.MissingTable, ValueError, OSError, yaml.YAMLError) as error:
         log.error("validate failed: %s", error)

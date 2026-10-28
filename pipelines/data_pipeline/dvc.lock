@@ -14,33 +14,37 @@ stages:
     outs:
     - path: data/raw/b37f9fd1613cfec55886105bb76721918d015dc7
       hash: md5
-      md5: 911aaddfae589abc1b6572a4a1afeeb2.dir
+      md5: b1c17f5b60f0d25ab8e388d554e7001f.dir
       size: 363577822
       nfiles: 3
   validate:
     cmd: python -m scripts.validate
     deps:
-    - path: data/raw/b37f9fd1613cfec55886105bb76721918d015dc7
+    - path: 
+        data/raw/b37f9fd1613cfec55886105bb76721918d015dc7/pull_request.parquet
       hash: md5
-      md5: 911aaddfae589abc1b6572a4a1afeeb2.dir
-      size: 363577822
-      nfiles: 3
+      md5: cf596e0e410376f7bc382c00c9412d74
+      size: 362078556
+    - path: data/raw/b37f9fd1613cfec55886105bb76721918d015dc7/repository.parquet
+      hash: md5
+      md5: 04989406cc11924edf329bab5dad6fb8
+      size: 1496533
     - path: scripts/anomalies.py
       hash: md5
       md5: 9c02ef4e99a0ec99ab4dc5d4f35d0114
       size: 8515
     - path: scripts/data_io.py
       hash: md5
-      md5: 94c44657af9b7fc2c710c26ba03a3ea4
-      size: 751
+      md5: 64e134630fa2db68344418300370c8ef
+      size: 2234
     - path: scripts/schema.py
       hash: md5
       md5: b4d6009432023d6a0406a2f82e279b71
       size: 1791
     - path: scripts/validate.py
       hash: md5
-      md5: 071652b379f6f1f783e51ed5cb79aaf2
-      size: 9534
+      md5: bf1a732ddad310f3d9a0a90e490fa544
+      size: 9458
     params:
       params.yaml:
         aidev.commit: b37f9fd1613cfec55886105bb76721918d015dc7
@@ -55,8 +59,8 @@ stages:
       size: 910
     - path: reports/schema_stats.json
       hash: md5
-      md5: 4e8a2f0d878c71b533c9402a6431a81f
-      size: 4165
+      md5: 13dd6cc283edce5eae090675cef5fe31
+      size: 4085
     - path: reports/validation.json
       hash: md5
       md5: ccd42eb530f4dfeedfe5e402679770ad
@@ -64,31 +68,35 @@ stages:
   preprocess:
     cmd: python -m scripts.preprocess
     deps:
-    - path: data/raw/b37f9fd1613cfec55886105bb76721918d015dc7
+    - path: 
+        data/raw/b37f9fd1613cfec55886105bb76721918d015dc7/pull_request.parquet
       hash: md5
-      md5: 911aaddfae589abc1b6572a4a1afeeb2.dir
-      size: 363577822
-      nfiles: 3
+      md5: cf596e0e410376f7bc382c00c9412d74
+      size: 362078556
+    - path: data/raw/b37f9fd1613cfec55886105bb76721918d015dc7/repository.parquet
+      hash: md5
+      md5: 04989406cc11924edf329bab5dad6fb8
+      size: 1496533
     - path: scripts/anomalies.py
       hash: md5
       md5: 9c02ef4e99a0ec99ab4dc5d4f35d0114
       size: 8515
     - path: scripts/data_io.py
       hash: md5
-      md5: 94c44657af9b7fc2c710c26ba03a3ea4
-      size: 751
+      md5: 64e134630fa2db68344418300370c8ef
+      size: 2234
     - path: scripts/preprocess.py
       hash: md5
-      md5: 5cd98f5265a2bc4a20d77fa4644e369f
-      size: 5840
+      md5: 1e88f8127b98996cbf7d4f3b5e5a3c4e
+      size: 6209
     params:
       params.yaml:
         aidev.commit: b37f9fd1613cfec55886105bb76721918d015dc7
     outs:
     - path: data/processed/pull_requests_clean.parquet
       hash: md5
-      md5: ce4cc0a29b815938d53f03656fe27f28
-      size: 350683841
+      md5: 8178590fbca6e94846e03b83c1268349
+      size: 15440199
     - path: data/processed/quarantine.parquet
       hash: md5
       md5: 9f9e14f62dfd7b068e5bcede483fd981
@@ -102,12 +110,12 @@ stages:
     deps:
     - path: data/processed/pull_requests_clean.parquet
       hash: md5
-      md5: ce4cc0a29b815938d53f03656fe27f28
-      size: 350683841
+      md5: 8178590fbca6e94846e03b83c1268349
+      size: 15440199
     - path: scripts/features.py
       hash: md5
-      md5: 592d0d54d5914039f18d25154e705679
-      size: 6453
+      md5: b182423f6853b76c4bcbe2a15d31920d
+      size: 6383
     params:
       params.yaml:
         features.test_fraction: 0.2

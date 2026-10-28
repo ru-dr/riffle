@@ -9,8 +9,8 @@ Outputs in data/processed/ and reports/:
 
 Nothing is silently dropped: a row either lands in the clean table or in quarantine with a
 reason. Nulls stay null (an open pull request has no closed_at); filling them for a model is
-the features stage's job. Usernames and URLs are not carried forward, so they stay in the raw
-layer only.
+the features stage's job. Usernames and URLs are not carried forward, and neither is the text
+of titles and bodies, only their lengths, so free text stays in the raw layer only.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ log = logging.getLogger("preprocess")
 TIME_COLUMNS = ("created_at", "closed_at", "merged_at")
 REPO_COLUMNS = {"id": "repo_id", "full_name": "repo_name", "language": "language", "license": "license",
                 "is_forked": "is_forked", "forks": "forks", "stars": "stars"}
-CLEAN_COLUMNS = ["id", "number", "repo_id", "repo_name", "agent", "state", "title", "body", *TIME_COLUMNS,
-                 "language", "license", "is_forked", "forks", "stars"]
+CLEAN_COLUMNS = ["id", "number", "repo_id", "repo_name", "agent", "state", "title_chars", "title_words",
+                 "body_chars", *TIME_COLUMNS, "language", "license", "is_forked", "forks", "stars"]
 QUARANTINE_COLUMNS = ["id", "number", "repo_id", "state", *TIME_COLUMNS, "reason"]
 
 
@@ -63,7 +63,11 @@ def clean(frames: dict[str, pd.DataFrame]) -> tuple[pd.DataFrame, pd.DataFrame]:
     good = pr.loc[~bad].copy()
     for column in TIME_COLUMNS:
         good[column] = pd.to_datetime(good[column], utc=True)
-    good["title"] = good["title"].str.strip()
+    # Lengths, not text. A missing body is 0 characters; "no body" and "an empty body" are the same to a model.
+    title = good["title"].fillna("").str.strip()
+    good["title_chars"] = title.str.len()
+    good["title_words"] = title.str.split().str.len()
+    good["body_chars"] = good["body"].fillna("").str.len()
     repo_part = repo[list(REPO_COLUMNS)].rename(columns=REPO_COLUMNS)
     joined = good.merge(repo_part, on="repo_id", how="left", validate="many_to_one")
     return joined[CLEAN_COLUMNS].reset_index(drop=True), quarantine

@@ -13,7 +13,8 @@ stages:
     desc: Check schema and statistics with Great Expectations and look for anomalies
     cmd: python -m scripts.validate
     deps:
-      - data/raw/${aidev.commit}
+      - data/raw/${aidev.commit}/pull_request.parquet
+      - data/raw/${aidev.commit}/repository.parquet
       - scripts/validate.py
       - scripts/anomalies.py
       - scripts/schema.py
@@ -30,7 +31,8 @@ stages:
     desc: Clean and join the tables; set contradictory rows aside with a reason
     cmd: python -m scripts.preprocess
     deps:
-      - data/raw/${aidev.commit}
+      - data/raw/${aidev.commit}/pull_request.parquet
+      - data/raw/${aidev.commit}/repository.parquet
       - scripts/preprocess.py
       - scripts/anomalies.py
       - scripts/data_io.py

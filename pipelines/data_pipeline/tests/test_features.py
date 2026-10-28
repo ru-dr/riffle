@@ -53,10 +53,10 @@ def test_missing_language_and_license_become_unknown_not_zero(clean):
         assert first.iloc[0]["language"] == "unknown" and first.iloc[0]["license_family"] == "unknown"
 
 
-def test_a_missing_body_is_zero_characters_with_a_flag(clean):
+def test_no_body_is_zero_characters_with_a_flag(clean):
     clean = clean.copy()
     target = clean.index[clean["state"] == "closed"][0]
-    clean.loc[target, "body"] = None
+    clean.loc[target, "body_chars"] = 0
     out, _ = features.build(clean, 0.2)
     row = out[out["id"] == clean.loc[target, "id"]].iloc[0]
     assert row["body_chars"] == 0 and row["has_body"] == 0

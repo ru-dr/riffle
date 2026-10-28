@@ -71,11 +71,23 @@ def test_quarantine_holds_ids_and_dates_only():
     assert "user" not in quarantine.columns and "title" not in quarantine.columns
 
 
-def test_titles_are_trimmed():
+def test_text_becomes_lengths_and_the_text_itself_is_not_kept():
     frames = good_frames()
-    frames["pull_request"].loc[0, "title"] = "  padded  "
+    frames["pull_request"].loc[0, ["title", "body"]] = ["  two words  ", "12345"]
+    frames["pull_request"].loc[1, ["title", "body"]] = ["x", None]
     clean, _ = preprocess.clean(frames)
-    assert clean.loc[clean["id"] == 1000, "title"].iloc[0] == "padded"
+    assert not {"title", "body"} & set(clean.columns)
+    first = clean.loc[clean["id"] == 1000].iloc[0]
+    assert (first["title_chars"], first["title_words"], first["body_chars"]) == (9, 2, 5)  # the title is trimmed first
+    assert clean.loc[clean["id"] == 1001, "body_chars"].iloc[0] == 0  # a missing body is 0 characters
+
+
+def test_a_missing_title_is_zero_length_not_a_crash():
+    frames = good_frames()
+    frames["pull_request"].loc[2, "title"] = None
+    clean, _ = preprocess.clean(frames)
+    row = clean.loc[clean["id"] == 1002].iloc[0]
+    assert row["title_chars"] == 0 and row["title_words"] == 0
 
 
 def test_an_empty_table_gives_empty_outputs():

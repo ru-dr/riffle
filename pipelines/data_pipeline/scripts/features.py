@@ -70,10 +70,8 @@ def build(clean: pd.DataFrame, test_fraction: float) -> tuple[pd.DataFrame, dict
     out["stars"], out["forks"] = closed["stars"], closed["forks"]
     out["log_stars"], out["log_forks"] = np.log1p(closed["stars"]), np.log1p(closed["forks"])
 
-    title, body = closed["title"].fillna(""), closed["body"].fillna("")
     out["pr_number"] = closed["number"]
-    out["title_chars"], out["title_words"] = title.str.len(), title.str.split().str.len()
-    out["body_chars"] = body.str.len()
+    out["title_chars"], out["title_words"], out["body_chars"] = closed["title_chars"], closed["title_words"], closed["body_chars"]
     out["has_body"] = (out["body_chars"] > 0).astype(int)
     out["hour_utc"] = closed["created_at"].dt.hour
     out["weekday"] = closed["created_at"].dt.day_of_week
