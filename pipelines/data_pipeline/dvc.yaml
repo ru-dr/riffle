@@ -53,3 +53,20 @@ stages:
     outs:
       - data/processed/features.parquet
       - reports/features.json
+  slices:
+    desc: Fit a baseline model, score it for each group of pull requests, and test two ways to narrow the gaps
+    cmd: python -m scripts.slices
+    deps:
+      - data/processed/features.parquet
+      - scripts/slices.py
+    params:
+      - slices.min_group_size
+      - slices.validation_fraction
+      - slices.top_languages
+      - slices.mitigate_on
+    outs:
+      - reports/bias_report.md:
+          cache: false
+    metrics:
+      - reports/slices_metrics.json:
+          cache: false

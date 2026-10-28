@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "dags"))
 
 import riffle_data_pipeline as module  # noqa: E402
 
-STAGES = {"acquire", "validate", "preprocess", "features"}
+STAGES = {"acquire", "validate", "preprocess", "features", "slices"}
 
 
 def edges(dag):
@@ -34,7 +34,7 @@ def test_parallel_dag_runs_validate_and_preprocess_side_by_side():
     assert ("acquire", "validate") in found and ("acquire", "preprocess") in found
     assert ("validate", "preprocess") not in found
     assert {("preprocess", "features"), ("validate", "features")} <= found  # features need validated data
-    assert ("validate", "alert_on_anomalies") in found
+    assert ("validate", "alert_on_anomalies") in found and ("features", "slices") in found
 
 
 def test_sequential_dag_is_a_chain():

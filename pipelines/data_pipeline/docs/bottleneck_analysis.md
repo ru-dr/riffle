@@ -56,6 +56,14 @@ also means features are never built from data that did not pass its checks. Test
 failure (an impossible row-count minimum): `validate` failed, `features` became `upstream_failed`,
 the run was **failed**, and the failure alert fired with the right task and reason.
 
+### 3. Adding the model made `slices` the longest stage
+
+A sixth task, `slices` (the baseline model and the per-group metrics, `docs/bias_analysis.md`),
+runs after `features`. In a full run of the parallel DAG in the container it took 38.5 s, against
+24.6 s for `validate`, and the whole run finished in about 88 s. It is now the longest stage and
+sits on the critical path (`acquire` > `validate` > `features` > `slices`). The earlier tables
+above were measured before it existed, so they do not include it.
+
 ## Optimisations applied
 
 | Change | Effect |

@@ -8,3 +8,8 @@ validation:
     repository: 20000
 features:
   test_fraction: 0.2
+slices:
+  min_group_size: 500
+  validation_fraction: 0.15
+  top_languages: 10
+  mitigate_on: agent

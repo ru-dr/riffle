@@ -6,4 +6,6 @@ PyYAML>=6
 pandas>=2.2
 pyarrow>=14
 great-expectations>=1.3,<2   # schema and statistics checks
+scikit-learn>=1.4          # the baseline model
+fairlearn>=0.10            # per-group metrics and the threshold fix
 pytest>=8

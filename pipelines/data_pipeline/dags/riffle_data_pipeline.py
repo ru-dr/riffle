@@ -1,4 +1,4 @@
-"""The data pipeline as Airflow DAGs: acquire, validate, preprocess, features, and an alert on anomalies.
+"""The data pipeline as Airflow DAGs: acquire, validate, preprocess, features, slices, and an alert on anomalies.
 
 Each task runs the same `python -m scripts.<stage>` command DVC runs (`dvc repro` is the
 reproducible path on a laptop; Airflow is the scheduled one). The stages run in a separate
@@ -50,7 +50,7 @@ def stage(name: str, **kwargs) -> BashOperator:
 def build(dag_id: str, parallel: bool, schedule: str | None) -> DAG:
     with DAG(
         dag_id=dag_id,
-        description="AIDev: acquire, validate, preprocess, features, alert",
+        description="AIDev: acquire, validate, preprocess, features, slices, alert",
         schedule=schedule,
         start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
         catchup=False,
@@ -68,6 +68,7 @@ def build(dag_id: str, parallel: bool, schedule: str | None) -> DAG:
         validate = stage("validate")
         preprocess = stage("preprocess")
         features = stage("features")
+        slices = stage("slices")
 
         @task(task_id="alert_on_anomalies", trigger_rule="all_done")
         def alert_on_anomalies() -> int:
@@ -93,7 +94,7 @@ def build(dag_id: str, parallel: bool, schedule: str | None) -> DAG:
             validate >> preprocess
         # Features are only built from data that passed validation. This also makes a failed validate
         # fail the run: Airflow judges a run by its last tasks, and a skipped last task counts as failed.
-        [validate, preprocess] >> features
+        [validate, preprocess] >> features >> slices
         validate >> alert
     return dag
 

@@ -128,3 +128,29 @@ stages:
       hash: md5
       md5: 3cdbcff829d7268bb1346a731f7c5fc2
       size: 158
+  slices:
+    cmd: python -m scripts.slices
+    deps:
+    - path: data/processed/features.parquet
+      hash: md5
+      md5: 4d7972a93fe425941dbb2b513e6a4449
+      size: 10073677
+    - path: scripts/slices.py
+      hash: md5
+      md5: dc4346faa72b3e556c8652b958aff12a
+      size: 16644
+    params:
+      params.yaml:
+        slices.min_group_size: 500
+        slices.mitigate_on: agent
+        slices.top_languages: 10
+        slices.validation_fraction: 0.15
+    outs:
+    - path: reports/bias_report.md
+      hash: md5
+      md5: d5d495254c1c49d0df46ae837fa9d1b2
+      size: 5831
+    - path: reports/slices_metrics.json
+      hash: md5
+      md5: 056df356286c5fdbc37b92c112718948
+      size: 28952
