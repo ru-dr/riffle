@@ -849,6 +849,26 @@ Run on one repo that also appears in ApacheJIT and check that your Kamei metrics
 (NF, Entropy, NDEV, …) roughly match the published values for overlapping
 commits. If they do, the miner is correct; then scale to ~30 repos.
 
+## Mining progress across PCs and the data pipeline report
+
+**`store_report.py`** draws how much each PC has mined and what is pending, from the team store (ADR 0015):
+
+```bash
+python store_report.py                          # store_report.html
+python store_report.py --figures report/figures # also the charts as PDF files (needs matplotlib)
+```
+
+It needs `RIFFLE_SYNC_URL` and a read token (`RIFFLE_READ_TOKEN`) in `.env`. With the lead's `RIFFLE_ADMIN_TOKEN` it
+also lists the PCs that have never uploaded, as fully pending. It is read-only and downloads no tables. *Planned* is each
+PC's share of the split plan, *mined* is the rows written, and *pending* is planned minus mined. The miner keeps only the
+closed PRs inside its window, so the final total ends below the plan.
+
+**`report/`** holds the course report on the data pipeline: `riffle_data_pipeline_report.tex`, its PDF and `figures/`
+(including `make_flow.py`, which draws the miner flow diagrams). It covers the miner, the Airflow DAG, DVC, the dashboards
+(TUI, web view, big picture, team store), the slice report and how to reproduce a run. Build it with `pdflatex`, twice,
+from `report/`. The read token for the team store is left out of this copy; the teaching assistant has it with the
+submission. Do not commit a token to this repository.
+
 ## Module map
 
 ```
@@ -874,6 +894,8 @@ merge_shards.py  join the PCs' files after checking manifests and consistency.py
 sync.py          send a PC's output to the team store (RIFFLE_SYNC_URL, ADR 0015)
 join.py          join a split with the lead's code: writes .env and checks it
 runlog.py        structured run trace (logs/run-*.trace.jsonl); trace_report.py summarises it
+store_report.py  mined and pending per PC from the team store (HTML or PDF charts; read token, admin token optional)
+report/          the data pipeline report (LaTeX source, PDF, figures); see "Data pipeline report"
 ```
 
 Also not listed above: `flaky.py`, `maintainers.py`, `scope.py`, `health.py`, `progress.py`,
