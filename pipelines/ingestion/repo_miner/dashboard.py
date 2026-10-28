@@ -681,10 +681,10 @@ function render(s){
   $("pbar").style.width = p * 100 + "%";
   const h = $("headline"); h.replaceChildren();
   if (s.prs && s.prs.includes("/")) {
-    const [d, t] = s.prs.split("/");
+    const [d, t] = s.prs.replace(/,/g, "").split("/");
     h.append(Number(d).toLocaleString() + " ", el("span", "of", "of " + (t === "?" ? "?" : Number(t).toLocaleString()) + " PRs"));
   } else h.textContent = state === "idle" ? "Waiting for a run" : "Starting";
-  $("lede").textContent = s.prs ? [ (p * 100).toFixed(p < 0.1 ? 1 : 0) + "% mined", s.repos && "repositories " + s.repos, s.rate, s.eta && "about " + s.eta + " left" ].filter(Boolean).join(" · ")
+  $("lede").textContent = s.prs ? [ (p * 100).toFixed(p < 0.1 ? 1 : 0) + "% mined", s.rate, s.eta && "about " + s.eta + " left" ].filter(Boolean).join(" · ")
                                 : "Start a batch in the TUI. This page follows it live.";
   setText("elapsed", s.elapsed); setText("eta", s.eta); setText("rate", s.rate);
   setText("repos", s.repos); setText("llm", s.llm); setText("lat", s.llm_latency ? "average " + s.llm_latency + " per call" : null);
@@ -714,7 +714,7 @@ function render(s){
   meter("plan_t", ses ? ses.pct / 100 : 0, ses ? (ses.pct >= 90 ? "bad" : ses.pct >= 70 ? "warn" : null) : null);
   const rows = s.rows || [];
   tabs(rows);
-  $("rcount").textContent = rows.length ? rows.length + " repositories" : "";
+  $("rcount").textContent = rows.length ? rows.length + (rows.length === 1 ? " repository" : " repositories") : "";
   renderRows(rows);
   renderLog();
   const lf = s.log_path ? s.log_path.split("/").pop() : "miner.log";
@@ -829,8 +829,10 @@ function renderBig(){
   const stale = !lastOk || Date.now() - lastOk > 15000;
   const st = s.state || "idle";
   let word = "WAITING", cls = "";
-  if (stale && lastOk) { word = "OFFLINE"; cls = "bad"; }
+  const ph = st === "running" ? s.phase : null;        // the TUI names what the run is doing: RATE LIMITED, TIMELINES, MINING...
+  if (stale && lastOk) { word = "NO CONNECTION"; cls = "bad"; }
   else if (s.breaker || /killed|exit|failed|breaker/.test(st)) { word = "STOPPED: ERROR"; cls = "bad"; }
+  else if (ph) { word = ph.word; cls = ph.level; }
   else if (s.llm_paused) { word = "LLM PAUSED"; cls = "warn"; }
   else if (st === "running" && s.assembly && s.assembly.state === "running") { word = "ASSEMBLING"; cls = "run"; }
   else if (st === "running") { word = "MINING"; cls = "run"; }
@@ -843,7 +845,7 @@ function renderBig(){
   $("bg_pct").classList.toggle("idle", !s.prs);
   const bar = $("bg_bar"); bar.classList.toggle("bad", cls === "bad"); bar.classList.toggle("warn", cls === "warn");
   bar.firstChild.style.width = (p * 100) + "%";
-  if (s.prs && s.prs.includes("/")) { const [d, t] = s.prs.split("/");
+  if (s.prs && s.prs.includes("/")) { const [d, t] = s.prs.replace(/,/g, "").split("/");
     $("bg_prs").textContent = Number(d).toLocaleString() + "/" + (t === "?" ? "?" : Number(t).toLocaleString()); }
   else $("bg_prs").textContent = "—";
   $("bg_eta").textContent = s.eta || (st === "finished" ? "done" : "—");
@@ -852,7 +854,7 @@ function renderBig(){
   const rows = s.rows || [];
   const cur = rows.find(r => r.status === "active" || r.status === "warn");
   const asmOn = s.assembly && s.assembly.state === "running";
-  $("bg_now_lbl").textContent = asmOn ? "Now building" : "Now mining";
+  $("bg_now_lbl").textContent = asmOn ? "Now building" : !ph || ph.word === "MINING" ? "Now mining" : ph.level === "warn" ? "Now stuck on" : "Now on";
   $("bg_repo").textContent = asmOn ? "snapshot tables" : cur ? cur.name + (cur.total ? " · " + Number(cur.done).toLocaleString() + "/" + Number(cur.total).toLocaleString() : "") : "—";
   $("bg_repos").textContent = s.repos || "—";
   const res = s.resources || {};
@@ -862,6 +864,7 @@ function renderBig(){
   const log = s.log || [];
   const flag = [...log].reverse().find(l => /\[health\].* FLAG /.test(l.text));
   const alert = s.breaker ? ["Breaker: " + s.breaker, "bad"]
+    : ph && ph.detail && ph.level !== "run" ? [ph.detail, ph.level === "bad" ? "bad" : ""]
     : s.llm_paused ? [s.llm_paused, ""]
     : res.level === "bad" ? ["Memory critical: " + (res.free || "") + " free", "bad"]
     : res.level === "warn" ? ["Memory low: " + (res.free || "") + " free", ""]
@@ -874,8 +877,17 @@ function renderBig(){
   while (box.children.length > 1 && box.firstChild.getBoundingClientRect().top < top - 1) box.firstChild.remove();
   const ago = lastOk ? Math.round((Date.now() - lastOk) / 1000) : null;
   const seen = $("bg_seen");
-  seen.textContent = ago === null ? "connecting" : stale ? "OFFLINE: no update for " + ago + "s" : "updated " + ago + "s ago";
+  seen.textContent = ago === null ? "connecting" : stale ? "NO CONNECTION: the miner's window sent nothing for " + ago + "s" : "updated " + ago + "s ago";
   seen.classList.toggle("off", Boolean(stale && lastOk));
+  fitVals();
+}
+/* a number too wide for its column shrinks to fit instead of ending in an ellipsis (24,509/89,176 stays whole) */
+function fitVals(){
+  for (const v of document.querySelectorAll("#big .val, #big .alert")) {
+    v.style.fontSize = "";
+    let px = parseFloat(getComputedStyle(v).fontSize);
+    while (v.scrollWidth > v.clientWidth + 1 && px > 11) { px -= 1; v.style.fontSize = px + "px"; }
+  }
 }
 $("b_big").onclick = () => bigToggle(true);
 if (window.matchMedia("(hover: none) and (pointer: coarse)").matches) {

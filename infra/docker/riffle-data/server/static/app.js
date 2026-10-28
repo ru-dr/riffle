@@ -36,6 +36,10 @@
     if (reason === "stopped" || reason === "batch aborted") return ["stopped", "amber"];
     return age < LIVE_S ? ["mining", "green"] : ["silent", "red"];
   }
+  function rateWait(run) {                                                  // seconds left of a GitHub quota wait the PC reported, or 0
+    var u = run.status.rate_wait_until ? Date.parse(run.status.rate_wait_until) : 0;
+    return u > Date.now() ? Math.round((u - Date.now()) / 1000) : 0;
+  }
   function tag(text, color) { return el("span", "tag " + (color || ""), text); }
   function cell(v, dash) {
     var td = h("td");
@@ -160,11 +164,11 @@
   function bvRender() {
     if (!BV.on || !BV.root) return;
     var f = BV.f, m = BV.model || { word: "CONNECTING", cls: "", kpis: [], headers: [], rows: [], alert: ["", ""] };
-    var stale = BV.lastOk && Date.now() - BV.lastOk > 3 * POLL_MS + 5000, word = stale ? "OFFLINE" : m.word, cls = stale ? "bad" : m.cls;
+    var stale = BV.lastOk && Date.now() - BV.lastOk > 3 * POLL_MS + 5000, word = stale ? "NO CONNECTION" : m.word, cls = stale ? "bad" : m.cls;
     f.state.textContent = word; f.state.className = "tag bstate " + ({ run: "green", warn: "amber", bad: "red", done: "blue" }[cls] || "");
     f.clock.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     var ago = BV.lastOk ? Math.round((Date.now() - BV.lastOk) / 1000) : null;
-    f.seen.textContent = ago === null ? "connecting" : stale ? "OFFLINE · no update for " + ago + " s" : "updated " + ago + " s ago";
+    f.seen.textContent = ago === null ? "connecting" : stale ? "NO CONNECTION · this page got nothing for " + ago + " s" : "updated " + ago + " s ago";
     f.kpis.replaceChildren(); f.kpis.style.gridTemplateColumns = "repeat(" + Math.max(1, (m.kpis || []).length) + ",1fr)";
     (m.kpis || []).forEach(function (k) { f.kpis.append(stat(k.l, k.v, k.h, k.c)); });
     var a = (m.alert || [""])[0]; f.alert.textContent = a; f.alert.className = "rule balert" + ((m.alert || [])[1] === "bad" ? " bad" : "") + (a ? "" : " none");
@@ -181,12 +185,19 @@
         return td;
       } }) : el("div", "empty", "Nothing to show yet.");
     f.table.replaceChildren(tbl);
+    bvFit();
     var tb = f.table.querySelector("tbody"), cutN = 0;
     if (tb) {                                                             // whole rows only: the healthy ones drop off the end
       var foot = f.hint.parentNode.getBoundingClientRect().height, limit = function () { return BV.root.getBoundingClientRect().bottom - foot - 2; };
       while (tb.children.length > 1 && tb.lastChild.getBoundingClientRect().bottom > limit()) { tb.lastChild.remove(); cutN++; }
       if (cutN) f.table.append(el("div", "bmore", "+ " + cutN + " more PC" + (cutN === 1 ? "" : "s") + " not shown"));
     }
+  }
+  function bvFit() {                                                     // a number too wide for its box shrinks instead of being cut off
+    BV.root.querySelectorAll(".bkpis .stat .v").forEach(function (v) {
+      v.style.fontSize = ""; var px = parseFloat(getComputedStyle(v).fontSize);
+      while (v.scrollWidth > v.clientWidth + 1 && px > 12) { px -= 1; v.style.fontSize = px + "px"; }
+    });
   }
   setInterval(bvRender, 1000);
   function bvFeed(kind) {
@@ -206,13 +217,14 @@
     }
     runs.forEach(function (r) { got += share(r); });
     var frac = total ? got / total : 0, word = "WAITING", cls = "";
-    if (n) { if (active) { word = "MINING"; cls = "run"; } else if (count("done") === n) { word = "FINISHED"; cls = "done"; } else if (count("silent")) { word = "OFFLINE"; cls = "bad"; } else if (count("stopped")) { word = "STOPPED"; cls = "warn"; } else word = "IDLE"; }
+    var limited = runs.filter(function (r, i) { return st[i] === "mining" && rateWait(r); }).length;
+    if (n) { if (active && limited === active) { word = "RATE LIMITED"; cls = "warn"; } else if (active) { word = "MINING"; cls = "run"; } else if (count("done") === n) { word = "FINISHED"; cls = "done"; } else if (count("silent")) { word = "NO SIGNAL"; cls = "bad"; } else if (count("stopped")) { word = "STOPPED"; cls = "warn"; } else word = "IDLE"; }
     var starts = runs.map(function (r) { return Date.parse(r.status.started_at || ""); }).filter(function (t) { return t > 0; }), elapsed = starts.length ? now - Math.min.apply(null, starts) / 1000 : null;
     var blocksOf = {}, rate = null;
     if (act && act.pcs) { rate = 0; act.pcs.forEach(function (p) { blocksOf[p.pc] = p; rate += p.blocks.slice(-4).reduce(function (a, b) { return a + (b[1] || 0); }, 0) / 60; }); }    // the last hour of 15-minute blocks
     var eta = word === "FINISHED" ? "done" : active && frac > 0.005 && elapsed ? "~" + span(elapsed * (1 - frac) / frac) : "—";
     var silent = runs.filter(function (r, i) { return st[i] === "silent"; });
-    var alert = failed ? [failed + " repo" + (failed === 1 ? "" : "s") + " failed", "bad"] : silent.length ? [silent.map(function (r) { return r.pc.replace(/-.*/, ""); }).join(", ") + " offline · last seen " + ago(silent[0].updated), ""] : ["", ""];
+    var alert = failed ? [failed + " repo" + (failed === 1 ? "" : "s") + " failed", "bad"] : silent.length ? [silent.map(function (r) { return r.pc.replace(/-.*/, ""); }).join(", ") + " no signal · last seen " + ago(silent[0].updated), ""] : ["", ""];
     return { word: word, cls: cls, alert: alert,
       kpis: [{ l: "Progress", v: n ? (100 * frac).toFixed(frac < 0.1 ? 1 : 0) + "%" : "—", h: "of all repositories" }, { l: "PRs mined", v: sum("prs_done").toLocaleString(), h: rate == null ? (sum("prs_total") ? "of about " + sum("prs_total").toLocaleString() : "rows written") : rate.toFixed(rate < 10 ? 1 : 0) + " PRs per minute" },
              { l: "Repositories", v: sum("repos_done") + " / " + total, h: failed ? failed + " failed" : "none failed" }, { l: "PCs mining", v: active + " / " + n, h: count("done") + " finished" },
@@ -220,8 +232,9 @@
       headers: ["PC", "State", "Progress", "PRs mined", "PRs/min", "Now mining", "Last 24 hours"],
       rows: runs.map(function (r, i) {
         var s = st[i], c = r.status, p = blocksOf[r.pc], wait = c.rate_wait_until && Date.parse(c.rate_wait_until) > Date.now() ? "  · waiting for GitHub until " + new Date(c.rate_wait_until).toTimeString().slice(0, 5) : "", cur = c.current && s === "mining" ? c.current + (((c.repos || {})[c.current] || {}).selected ? "  " + (c.repos[c.current].rows || 0) + "/" + c.repos[c.current].selected : "") + wait : s === "done" ? "finished" : "last seen " + ago(r.updated);
-        return { cls: s === "silent" ? "bad" : s === "stopped" ? "warn" : s === "done" ? "done" : "run",
-          vals: [r.pc.replace(/-.*/, ""), s === "silent" ? "offline" : s, { bar: c.repos_total ? share(r) / c.repos_total : 0, t: (c.repos_done || 0) + "/" + (c.repos_total || 0) + " repos" }, c.prs_done || 0,
+        var lim = s === "mining" ? rateWait(r) : 0;
+        return { cls: s === "silent" ? "bad" : s === "stopped" || lim ? "warn" : s === "done" ? "done" : "run",
+          vals: [r.pc.replace(/-.*/, ""), s === "silent" ? "no signal" : lim ? "rate limited" : s, { bar: c.repos_total ? share(r) / c.repos_total : 0, t: (c.repos_done || 0) + "/" + (c.repos_total || 0) + " repos" }, c.prs_done || 0,
                  p ? p.blocks.slice(-4).reduce(function (a, b) { return a + (b[1] || 0); }, 0) / 60 : null, cur, p ? { upt: p.blocks.map(function (b) { return b[0]; }) } : ""] };
       }) };
   }
@@ -860,6 +873,20 @@
     if (!n) box.append(h("span", "cap", "no flags: the miner's defaults"));
     d.append(box); return d;
   }
+  /* run tracking: is the miner's trace reaching Loki, and where to open Grafana and Airflow */
+  function drawTracking(d) {
+    var off = !d.enabled, ok = d.ready && !d.last_error, lag = d.queue || 0;
+    $("#trackkpis").replaceChildren(
+      stat("Loki", off ? "not set up" : ok ? "receiving" : d.ready ? "errors" : "not answering", off ? "set RIFFLE_LOKI_URL on the store" : d.url, off ? "warn" : ok ? "good" : "bad"),
+      stat("Lines sent", (d.lines || 0).toLocaleString(), (d.batches || 0).toLocaleString() + " pushes since the store started"),
+      stat("Waiting", lag.toLocaleString(), d.dropped ? d.dropped + " dropped (queue full)" : "in the queue", d.dropped ? "bad" : lag > 50 ? "warn" : ""),
+      stat("Last push", d.last_ok ? ago(d.last_ok) : "never", d.last_error || "no error", d.last_error ? "bad" : ""));
+    var links = [];
+    if (d.grafana) links.push(el("a", "btn", "Open Grafana")), links[links.length - 1].href = d.grafana;
+    if (d.airflow) links.push(el("a", "btn", "Open Airflow")), links[links.length - 1].href = d.airflow;
+    links.forEach(function (a) { a.target = "_blank"; a.rel = "noopener"; });
+    $("#tracklinks").replaceChildren(el("div", "row", links.length ? links : [el("span", "mut", "No Grafana or Airflow address is set (RIFFLE_GRAFANA_URL, RIFFLE_AIRFLOW_URL). They listen on the VM only; open them through the SSH tunnel.")]));
+  }
   /* storage: sizes of what the store holds, the VM disk, and an estimate (never the data) */
   function mb(n) { return bytes(n); }
   function drawStorage(d) {
@@ -884,7 +911,7 @@
     function chip(n, v) { if (v === null || v === undefined || v === "") return; chips.push([n, String(v)]); }
     function sw(b) { return b ? "on" : "off"; }
     if (st) {
-      chip("LLM", st.llm ? "on" : "off"); chip("model", st.llm_model); chip("backend", st.llm_backend); chip("scope", st.llm_scope); chip("llm concurrency", st.llm_concurrency);
+      chip("LLM", st.llm ? "on" : "off"); if (st.live_tracking !== undefined) chip("live tracking", sw(st.live_tracking)); chip("model", st.llm_model); chip("backend", st.llm_backend); chip("scope", st.llm_scope); chip("llm concurrency", st.llm_concurrency);
       chip("SZZ", sw(st.szz)); chip("CI history", sw(st.ci_history)); chip("scanners", sw(st.scanners)); chip("workers", st.workers);
       chip("max PRs", st.full_repo ? "all (full repo)" : st.max_prs == null ? "no cap" : st.max_prs); chip("cap on", st.cap_on);
       chip("window", st.window_from || st.window_to ? (st.window_from || "…") + " → " + (st.window_to || "…") : ""); chip("domain", st.only_domain); chip("repos file", st.repos_file); chip("shard", st.shard);
@@ -1118,6 +1145,7 @@
       return call("GET", "overview").then(function (d) {
         BV.latest.admin = d; bvFeed("admin");
         call("GET", "storage").then(drawStorage).catch(function () { /* the rest of the page does not depend on it */ });
+        call("GET", "tracking").then(drawTracking).catch(function () { /* nor on this */ });
         var soon = Date.now() / 1000 + 3 * 86400;
         $("#kpis").replaceChildren(
           stat("PC tokens", String(d.pcs.length), d.splits.length + " split" + (d.splits.length === 1 ? "" : "s")),

@@ -102,9 +102,11 @@ def test_a_record_from_another_version_does_not_block_a_remine(tmp_path, monkeyp
 def test_rows_from_a_newer_miner_are_not_auto_remined(tmp_path):
     pytest.importorskip("pandas")
     out = str(tmp_path / "d.jsonl")
-    _rows(out, [_row("a/newer", 1, "7.0.2"), _row("b/same", 1, bd.__version__), _row("c/older", 1, "6.13.3")])
+    major, minor, patch = (int(x) for x in bd.__version__.split("."))
+    ahead = f"{major}.{minor}.{patch + 1}"                    # one patch ahead of whatever is running
+    _rows(out, [_row("a/newer", 1, ahead), _row("b/same", 1, bd.__version__), _row("c/older", 1, "6.13.3")])
     newer = bd._mined_by_newer(out)
-    assert newer == {"a/newer": "7.0.2"}
+    assert newer == {"a/newer": ahead}
 
 
 def test_version_keys_compare_patch_levels():

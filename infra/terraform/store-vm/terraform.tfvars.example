@@ -1,0 +1,9 @@
+project = "riffle-data-miner"
+bucket  = "riffle-data-miner-mined"
+
+# machine_type   = "e2-standard-4"
+# domain         = ""          # blank: <address>.sslip.io
+# repo_ref       = "main"
+# enable_logs    = true
+# enable_airflow = true
+# airflow_users  = ["lead:admin", "ops:viewer"]

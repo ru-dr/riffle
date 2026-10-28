@@ -57,9 +57,10 @@ def test_a_resume_names_the_repo_the_pr_count_and_the_timeline_cost(tmp_path, ca
     found = bd._redo_report(out, cache, ["facebook/react", "other/clean"])
     text = capsys.readouterr().out
     assert set(found) == {"facebook/react"}
-    assert "4,403 of its 4,403 checkpointed PRs were mined by miner 6.13" in text
-    assert "every timeline is read again" in text and "2 are in the cache" in text
-    assert "--skip-big" in text and "Do not edit the repos file" in text
+    assert "4,403 of its 4,403 checkpointed PRs were mined by miner 6.13" in text and "they are kept" in text
+    assert "it is kept" in text and "2 timelines are cached" in text
+    assert "[version]" in text and "[redo]" not in text and "they are mined again" not in text and "fetched again" not in text
+    assert "Re-mine repos" in text and "--remine-repo" in text            # the only way a repo is mined again
 
 
 def test_a_current_checkpoint_and_selection_say_nothing(tmp_path, capsys):

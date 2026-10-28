@@ -18,6 +18,7 @@ x-airflow-common: &airflow-common
   image: riffle-airflow:${AIRFLOW_VERSION:-3.3.2}-local
   pull_policy: never
   restart: unless-stopped
+  mem_limit: ${AIRFLOW_MEM_LIMIT:-6g}   # if Airflow runs out of memory, it is Airflow that is killed, never the store beside it
   user: "${AIRFLOW_UID:-50000}:0"
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -40,8 +41,24 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/auth/passwords.json
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    # Every sensor poke of the riffle_miner DAG is a task process (a few hundred MB). Left at Airflow's 32 at once,
+    # a run with several repos can use all of a small VM's memory; this keeps a cap, and the rest wait their turn.
+    AIRFLOW__CORE__PARALLELISM: ${AIRFLOW_PARALLELISM:-12}
+    # riffle_miner reads the store's run traces and merges the PCs' tables (small, no mining).
+    RIFFLE_BUCKET: ${RIFFLE_BUCKET:-}
+    RIFFLE_CONTRACTS_DIR: /opt/riffle/contracts
   volumes:
     - ../../../pipelines/dags:/opt/airflow/dags:ro
+    - ../../../pipelines/ingestion:/opt/riffle/ingestion:ro
+    - ../../../contracts:/opt/riffle/contracts:ro
+    # the store's files (riffle-data's store-data volume)
+    - type: volume
+      source: riffle-data_store-data
+      target: /opt/riffle/store
+      read_only: true
+      volume:
+        subpath: store          # the uploaded files only; tokens.json and the index stay out of reach
+    - riffle-work:/opt/riffle/work
     - airflow-logs:/opt/airflow/logs
     - airflow-auth:/opt/airflow/auth
   depends_on: &airflow-depends
@@ -129,3 +146,7 @@ volumes:
   postgres-data:
   airflow-logs:
   airflow-auth:
+  riffle-work:
+  # created by riffle-data's own Compose project; start that first (name set by RIFFLE_STORE_VOLUME)
+  riffle-data_store-data:
+    external: true

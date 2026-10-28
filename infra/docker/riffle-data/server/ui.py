@@ -64,6 +64,10 @@ BODIES = {
 <div class="editbody" id="se-body"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">PC tokens</div><h2>Every machine that may upload</h2></div></section>
 <section><div id="pcs"></div></section>
+<section class="rule section"><div class="shead"><div class="cap">Run tracking</div><h2>Where the run logs go</h2>
+<p>The miner's own trace is the one log. This store keeps the file, and forwards each new line to Loki; the log search and Grafana read it from there. Airflow draws each miner stage from the same files.</p></div></section>
+<section class="rule grid g4" id="trackkpis"></section>
+<section><div id="tracklinks"></div></section>
 <section class="rule section"><div class="shead"><div class="cap">Storage</div><h2>What the store holds</h2>
 <p>Sizes only: this page cannot read the data. The cost is an estimate (stored GB times a list price); the VM and its disk are billed separately.</p></div></section>
 <section class="rule grid g4" id="storkpis"></section>

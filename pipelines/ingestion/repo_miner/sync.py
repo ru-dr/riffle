@@ -69,6 +69,17 @@ def settings() -> tuple[str, str] | None:
     return (url, token) if url and token else None
 
 
+def mirror_settings() -> tuple[str, str] | None:
+    """(base_url, token) of an optional second store, RIFFLE_MIRROR_URL and RIFFLE_MIRROR_TOKEN: it gets a copy of
+    everything the first store gets (a PC that runs its own Loki and Airflow while it reports to the team's store).
+    None when unset, insecure, or the same as the first; a failing copy never touches the first store's sync."""
+    url = (os.environ.get("RIFFLE_MIRROR_URL") or "").strip().rstrip("/")
+    token = (os.environ.get("RIFFLE_MIRROR_TOKEN") or "").strip()
+    if not url or not token or not _secure_url(url):
+        return None
+    return None if (url, token) == settings() else (url, token)
+
+
 class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
     """Follow a redirect only within the same host and never downgrade to http: the bearer token must not
     follow a redirect to another origin."""
@@ -127,8 +138,10 @@ def _load_state(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
+        if not isinstance(data, dict):
+            return {}
+        return {k: v for k, v in data.items() if isinstance(v, dict)}      # a store entry of the wrong shape is dropped, not trusted
+    except (OSError, ValueError):                                          # ValueError: bad JSON and bad UTF-8 alike
         return {}
 
 
@@ -192,27 +205,102 @@ def _sha256(path: str, n: int) -> str:
     return h.hexdigest()
 
 
-def _put(url: str, token: str, key: str, body, size: int, sha256: str | None, timeout: float) -> None:
+def _put(url: str, token: str, key: str, body, size: int, sha256: str | None, timeout: float,
+         extra: dict | None = None) -> None:
     """PUT one object. `body` is bytes or an open file; raises on any failure."""
     req = urllib.request.Request(
         f"{url}/v1/files/{urllib.parse.quote(key)}", data=body, method="PUT",
         headers={"Authorization": f"Bearer {token}", "Content-Length": str(size),
                  "Content-Type": "application/octet-stream",
-                 **({"X-Content-SHA256": sha256} if sha256 else {})})
+                 **({"X-Content-SHA256": sha256} if sha256 else {}), **(extra or {})})
     with _OPENER.open(req, timeout=timeout) as r:
         r.read()
+
+
+# --- live trace upload --------------------------------------------------------------------
+# A run trace grows by lines. Sending only the new complete lines (the store appends them and forwards them to Loki)
+# keeps a 10 s upload cheap however long the run has been going. Only to a store that says it understands (`append` in
+# /v1/whoami), and any surprise (409, an older store, a changed file) falls back to the whole-file PUT, which is
+# always right. Nothing here can fail a sync.
+APPEND_CHUNK = 4 * 1024 ** 2
+_APPEND_CAP: dict[str, tuple[float, bool]] = {}
+
+
+def _is_trace(rel: str) -> bool:
+    return rel.startswith("logs/") and rel.endswith(".trace.jsonl")
+
+
+def _store_appends(url: str, token: str) -> bool:
+    now = time.monotonic()
+    hit = _APPEND_CAP.get(url)
+    if hit and now - hit[0] < (300 if hit[1] else 30):      # a "no" (the store was still warming up) is asked again soon
+        return hit[1]
+    try:
+        ok = bool(_get_json(url, token, "/v1/whoami", 5.0, 64 * 1024).get("append"))
+    except _NET_ERRORS + (AttributeError, TypeError):
+        ok = False                                          # an older store, an error page, a reply that is not an object
+    _APPEND_CAP[url] = (now, ok)
+    return ok
+
+
+def _file_id(fh) -> str | None:
+    """A fingerprint of a file's first 256 bytes, once it has that many (a trace's first lines never change)."""
+    fh.seek(0)
+    head = fh.read(256)
+    fh.seek(0)
+    return hashlib.sha256(head).hexdigest()[:16] if len(head) == 256 else None
+
+
+def _identity(path: str) -> str | None:
+    try:
+        with open(path, "rb") as fh:
+            return _file_id(fh)
+    except OSError:
+        return None
+
+
+def _append_trace(url: str, token: str, key: str, path: str, size: int, state: dict, dirty: dict,
+                  sig: list, deadline: float) -> str:
+    """"sent", "nothing" (no complete new line yet) or "fallback" (send the whole file)."""
+    off = state.get(key + "#off")
+    if not isinstance(off, int) or off < 0 or off > size:
+        return "fallback"                                   # never appended to, or the file was replaced: one whole PUT first
+    with open(path, "rb") as fh:
+        want = state.get(key + "#id")
+        if want and _file_id(fh) != want:                   # a different file under the same name: never splice it onto the old one
+            return "fallback"
+        fh.seek(off)
+        data = fh.read(min(size - off, APPEND_CHUNK))
+    cut = data.rfind(b"\n") + 1
+    if not cut:
+        return "nothing"
+    data = data[:cut]
+    try:
+        _put(url, token, key, data, len(data), hashlib.sha256(data).hexdigest(),
+             min(CONNECT_S + len(data) / 2e6, max(1.0, deadline - time.monotonic())), {"X-Append-Offset": str(off)})
+    except urllib.error.HTTPError as e:
+        if e.code in (400, 409, 411, 413, 422):
+            return "fallback"
+        raise
+    state[key + "#off"] = dirty[key + "#off"] = off + cut
+    ident = _identity(path)
+    if ident:
+        state[key + "#id"] = dirty[key + "#id"] = ident
+    if off + cut == size:
+        state[key] = dirty[key] = sig
+    return "sent"
 
 
 def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
          logs: list[str] | None = None, state_path: str = STATE_FILE,
          budget_s: float | None = None, repos: set[str] | None = None,
-         max_bytes: int | None = None) -> dict:
+         max_bytes: int | None = None, cfg: tuple[str, str] | None = None, only_logs: bool = False) -> dict:
     """Send what changed since the last sync under `prefix` (`<miner_version>/<split>`),
     then `run.json` (`status` plus host and time). Returns
     {"sent", "skipped", "failed", "stopped"}; never raises. `max_bytes` leaves out files bigger than
     that (a heartbeat must not start an upload its time budget cannot finish: it would be cut off
     and begin again from zero every time); they go at a repo's end and on Stop."""
-    cfg = settings()
+    cfg = cfg or settings()
     result = {"sent": 0, "skipped": 0, "failed": [], "stopped": None}
     deferred = 0                                            # files left out for size (max_bytes): not sent, not unchanged
     if not cfg:
@@ -232,6 +320,8 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
     dirty: dict = {store_key: {}}
     try:
         files = collect(out, health_dir, logs, repos)
+        if only_logs:                                       # the quick live beat: the trace and the log, not the tables
+            files = [f for f in files if f[1].startswith("logs/")]
         files.sort(key=lambda f: os.path.getsize(f[0]) if os.path.isfile(f[0]) else 0)   # small first: logs and health never starve behind a big table
     except Exception as e:                                  # noqa: BLE001
         print(f"[sync] could not list files: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
@@ -248,6 +338,19 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
         if state.get(key) == sig:
             result["skipped"] += 1
             continue
+        if _is_trace(rel):
+            try:
+                how = (_append_trace(url, token, key, path, st.st_size, state, dirty[store_key], sig, deadline)
+                       if _store_appends(url, token) else "fallback")
+            except Exception:                               # noqa: BLE001  (the live upload is an extra: the whole-file path below is the real one)
+                how = "fallback"
+            if how == "sent":
+                result["sent"] += 1
+                _save_state(state_path, dirty)
+                continue
+            if how == "nothing":
+                result["skipped"] += 1
+                continue
         if max_bytes is not None and st.st_size > max_bytes:
             result["skipped"] += 1
             deferred += 1
@@ -266,6 +369,11 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
                      min(CONNECT_S + st.st_size / 2e6, left))
             state[key] = sig
             dirty[store_key][key] = sig
+            if _is_trace(rel):                          # later syncs append from here
+                state[key + "#off"] = dirty[store_key][key + "#off"] = st.st_size
+                ident = _identity(path)
+                if ident:
+                    state[key + "#id"] = dirty[store_key][key + "#id"] = ident
             result["sent"] += 1
             _save_state(state_path, dirty)              # a Stop mid-sync must not forget what already went
         except urllib.error.HTTPError as e:
@@ -348,10 +456,10 @@ def fetch_split(url: str, token: str, timeout: float = 15.0) -> dict | None:
         return None
 
 
-def put_status(prefix: str, status: dict) -> bool:
+def put_status(prefix: str, status: dict, cfg: tuple[str, str] | None = None) -> bool:
     """Send only run.json (no files): the cheap heartbeat between syncs, so the
     store's per-PC progress is never hours stale during a long repo. Never raises."""
-    cfg = settings()
+    cfg = cfg or settings()
     if not cfg:
         return False
     doc = dict(status, host=socket.gethostname(),

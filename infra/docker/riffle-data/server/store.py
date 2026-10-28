@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import threading
 import time
 import tempfile
 import shutil
@@ -34,10 +35,16 @@ class Store:
         os.makedirs(self.root, exist_ok=True)
         os.makedirs(self.cache, exist_ok=True)
         self.bucket_name = bucket
+        self._key_locks = [threading.Lock() for _ in range(64)]
         self._bucket = None
         if bucket:
             from google.cloud import storage                # the VM's service account; no key file
             self._bucket = storage.Client().bucket(bucket)
+
+    def lock_for(self, key: str) -> threading.Lock:
+        """One lock per key (64 shared locks, so two keys may share one): held around anything that changes a stored
+        file or its index row, so an append and a whole-file upload of the same trace cannot interleave."""
+        return self._key_locks[hash(key) % len(self._key_locks)]
 
     def local_path(self, key: str) -> str:
         return os.path.join(self.root, *key.split("/"))
@@ -51,8 +58,29 @@ class Store:
             dest = self.local_path(key)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.move(tmp_path, dest)
+            try:
+                os.chmod(dest, 0o644)                       # other containers (Airflow) read the volume read-only
+            except OSError:
+                pass                                        # an odd filesystem must not fail an upload
         else:
             os.remove(tmp_path)
+
+    def append(self, key: str, offset: int, data: bytes) -> tuple[bool, int]:
+        """Add `data` to the end of a mirrored file, only if the file is exactly `offset` bytes long now.
+        (True, new size) or (False, current size). The bucket copy is brought up to date by `mirror`."""
+        dest = self.local_path(key)
+        have = os.path.getsize(dest) if os.path.isfile(dest) else 0
+        if have != offset:
+            return False, have
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "ab") as fh:
+            fh.write(data)
+        return True, have + len(data)
+
+    def mirror(self, key: str) -> None:
+        """Copy the local file to the bucket (appends only touch the disk until this runs)."""
+        if self._bucket is not None and os.path.isfile(self.local_path(key)):
+            self._bucket.blob(key).upload_from_filename(self.local_path(key))
 
     def fetch(self, key: str) -> str | None:
         """A local path for the file: the mirrored copy, or a download from the bucket into

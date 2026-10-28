@@ -87,7 +87,7 @@ def write_env(path: str, values: dict[str, str]) -> None:
 SHAPING = ("repos_file", "only_domain", "max_prs", "min_age_days", "window_from", "window_to", "cap_on",
            "lead_in_days", "full_repo", "llm", "llm_scope", "close_reason_llm", "llm_model", "llm_sample_pct",
            "max_unmerged", "merge_outcome", "llm_max_diff_chars", "llm_diff_context", "llm_backend", "max_files_deep",
-           "declared_labels", "szz", "ci_history", "snapshots", "auto_remine",
+           "declared_labels", "szz", "ci_history", "snapshots", "auto_remine", "live_tracking",
            "no_api_contract", "no_scanners", "no_review_history", "pr_discovery", "split_by", "shard")
 
 

@@ -37,6 +37,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import backup
 import index as index_mod
+import loki as loki_mod
 import store as store_mod
 import tables
 import tokens
@@ -48,6 +49,8 @@ WORD = re.compile(r"^[A-Za-z0-9._-]{1,80}\Z")
 MAX_FILE = int(os.environ.get("RIFFLE_MAX_FILE_BYTES", 2 * 1024 ** 3))
 TRUST_PROXY = os.environ.get("RIFFLE_TRUST_PROXY") == "1"
 SEARCH_MAX_HITS = 300
+MAX_APPEND = 8 * 1024 ** 2                                  # one live trace append (a few seconds of lines) is far smaller
+MIRROR_EVERY_S = 300                                        # appended traces reach the bucket this often, and when a run ends
 SEARCH_MAX_BYTES = 400 * 1024 ** 2
 SEARCH_BUDGET_S = 5.0
 SEARCH_LINE = 2000                                          # characters of a log line a pattern is tried on
@@ -144,6 +147,53 @@ class Service:
         self._run_lock = threading.Lock()
         self.data_cache = DataCache(DATA_TTL_S)
         os.makedirs(self.spool, exist_ok=True)
+        self.loki = loki_mod.LokiSink(os.environ.get("RIFFLE_LOKI_URL"), self.index,
+                                      os.environ.get("RIFFLE_GRAFANA_URL", ""), os.environ.get("RIFFLE_AIRFLOW_URL", ""),
+                                      path_for=self.store.local_path)
+        self._unmirrored: dict[str, int] = {}               # appended traces the bucket may not have: key -> a version that grows on every append
+        self._mirror_lock = threading.Lock()
+        if self.loki.enabled:                               # what Loki missed while it, or this service, was down
+            threading.Thread(target=self._loki_backfill, name="loki-backfill", daemon=True).start()
+        if bucket:
+            threading.Thread(target=self._mirror_loop, name="trace-mirror", daemon=True).start()
+
+    def _loki_backfill(self) -> None:
+        try:
+            for f in self.index.files(like="%/logs/%"):
+                self.loki.catch_up(f["key"], self.store.local_path(f["key"]))
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    def _mark_unmirrored(self) -> None:
+        """After a restart the in-memory dirty set is empty: mark every local trace whose bucket copy has another size."""
+        try:
+            remote = {b.name: b.size for b in self.store._bucket.list_blobs(match_glob="*/logs/*.trace.jsonl")}
+            for f in self.index.files(like="%/logs/%"):
+                if f["key"].endswith(".trace.jsonl") and remote.get(f["key"]) != f["size"]:
+                    with self._mirror_lock:
+                        self._unmirrored[f["key"]] = self._unmirrored.get(f["key"], 0) + 1
+        except Exception:                                   # noqa: BLE001  (the next append marks it anyway)
+            pass
+
+    def _mirror_loop(self) -> None:
+        self._mark_unmirrored()
+        self.mirror_pending()
+        while True:
+            time.sleep(MIRROR_EVERY_S)
+            self.mirror_pending()
+
+    def mirror_pending(self, prefix: str | None = None) -> None:
+        """Bring the bucket's copy of appended traces up to date (all of them, or those under `prefix`)."""
+        with self._mirror_lock:
+            todo = [(k, v) for k, v in self._unmirrored.items() if prefix is None or k.startswith(prefix)]
+        for key, version in todo:
+            try:
+                self.store.mirror(key)
+                with self._mirror_lock:
+                    if self._unmirrored.get(key) == version:      # an append that landed during the upload keeps it dirty
+                        del self._unmirrored[key]
+            except Exception:                               # noqa: BLE001  (kept for the next round)
+                pass
 
     def tokens_changed(self) -> None:
         backup.push(self.store, self.tokens_path)
@@ -297,6 +347,34 @@ class Service:
         return {"days": days, "step": step, "start": start, "end": end, "now": now, "pcs": out}
 
     # -- uploads ---------------------------------------------------------
+    def append(self, pc: str, key: str, rfile, length: int, want_sha: str | None, offset: int) -> tuple[int, str]:
+        """Add a few new trace lines to the end of a stored trace (the miner's live upload). 409 says the file's
+        real size, and the miner then sends the whole file instead."""
+        if not valid_key(key) or not loki_mod.is_trace(f"{pc}/{key}"):
+            return 400, "only run traces can be appended to"
+        if length < 0 or offset < 0:
+            return 400, "bad length or offset"
+        if length > MAX_APPEND:
+            return 413, "too large to append"
+        body = rfile.read(length)
+        if len(body) != length:
+            return 400, "body shorter than Content-Length"
+        if want_sha and want_sha.lower() != hashlib.sha256(body).hexdigest():
+            return 422, "sha256 mismatch"
+        full = f"{pc}/{key}"
+        with self.store.lock_for(full):                     # the size check, the write and the index row are one step
+            try:
+                ok, size = self.store.append(full, offset, body)
+            except (NotADirectoryError, IsADirectoryError, FileExistsError):
+                return 409, "a file and a directory would share this path"
+            if not ok:
+                return 409, f"offset {size}"
+            self.index.put_file(full, pc, size, None)
+            with self._mirror_lock:
+                self._unmirrored[full] = self._unmirrored.get(full, 0) + 1
+        self.loki.catch_up(full, self.store.local_path(full))
+        return 200, "ok"
+
     def put(self, pc: str, key: str, rfile, length: int, want_sha: str | None) -> tuple[int, str]:
         if not valid_key(key):
             return 400, "bad key"
@@ -340,11 +418,25 @@ class Service:
                     return 400, "run.json must be a JSON object (at most 1 MB)"
             if status is not None and status.get("reason") == "batch done" and not tables.finished(status):
                 status["reason"], status["reason_wanted"] = "batch incomplete", "batch done"   # a partial upload is never finished
+            ended = None
             with self._run_lock if status is not None else contextlib.nullcontext():          # two run.json PUTs: the last to land wins in the file and the index alike
-                self.store.put(full, tmp)
-                self.index.put_file(full, pc, length, h.hexdigest())
+                with self.store.lock_for(full):                 # not while an append to the same key is half done
+                    self.store.put(full, tmp)
+                    self.index.put_file(full, pc, length, h.hexdigest())
+                    if loki_mod.is_trace(full):
+                        with self._mirror_lock:
+                            self._unmirrored.pop(full, None)    # a whole-file upload already reached the bucket
+                        if self.index.loki_offset(full) > length:    # replaced by a shorter file: Loki's offset no longer applies
+                            self.index.reset_loki_offset(full)
+                            self.loki.forget(full)
                 if status is not None:
                     self.index.put_run(pc, key[: -len("/run.json")], status)
+                    if status.get("reason") in ("batch done", "batch aborted", "stopped"):
+                        ended = f"{pc}/{key[: -len('run.json')]}"
+            if ended:
+                self.mirror_pending(ended)                      # the run ended: its traces go to the bucket now (outside the lock: it is slow)
+            if loki_mod.is_trace(full):
+                self.loki.catch_up(full, self.store.local_path(full))
         except OSError as e:
             if os.path.exists(tmp):
                 os.remove(tmp)
@@ -362,6 +454,17 @@ class Service:
         if regex and (len(q) > 200 or NESTED_QUANTIFIER.search(q)):
             return [], "bad regex: that pattern can take for ever on a long line (a repeat inside a repeat); simplify it"
         level = level if level in views.LEVEL_CHOICES else ""
+        if self.loki.enabled and level in ("", "error", "warn", "info", "debug"):
+            try:                                            # Loki holds every trace line; the files are the fallback
+                lv = {"": "", "error": "ERROR", "warn": "WARN", "info": "INFO", "debug": "DEBUG"}[level]
+                if level == "warn":
+                    hits = [h for h in self.loki.search(q, pc, regex, "", SEARCH_MAX_HITS * 2) if views.level_ok(h["text"], "warn")][:SEARCH_MAX_HITS]
+                else:
+                    hits = self.loki.search(q, pc, regex, lv, SEARCH_MAX_HITS)
+                if hits:                                        # nothing from Loki falls through: the plain run logs (*.log) and
+                    return hits, "From Loki." + (f" Showing the first {SEARCH_MAX_HITS} matches." if len(hits) >= SEARCH_MAX_HITS else "")   # traces older than Loki keeps are only in the files
+            except Exception:                               # noqa: BLE001
+                pass
         try:
             pat = re.compile(q if regex else re.escape(q), re.I) if q else None      # no text: every line of the chosen level
         except re.error as e:
@@ -605,7 +708,14 @@ def make_handler(svc: Service):
             if info["split"] and (len(parts) < 2 or parts[1] != info["split"]):
                 return self._reject(403, f"this token is for split {info['split']}; this run's split is "
                                          f"{parts[1] if len(parts) > 1 else '?'}")
-            code, msg = svc.put(who[1], key, self.rfile, length, self.headers.get("X-Content-SHA256"))
+            at = self.headers.get("X-Append-Offset")
+            if at is not None:
+                try:
+                    code, msg = svc.append(who[1], key, self.rfile, length, self.headers.get("X-Content-SHA256"), int(at))
+                except ValueError:
+                    code, msg = 400, "bad X-Append-Offset"
+            else:
+                code, msg = svc.put(who[1], key, self.rfile, length, self.headers.get("X-Content-SHA256"))
             if code != 200:
                 self.close_connection = True                # the body may not have been read
             self._send(code, msg)
@@ -791,13 +901,17 @@ def make_handler(svc: Service):
                         return self._json({"error": "too many failed attempts"}, 429)
                     svc.throttle.fail(self.client(), self._token())
                     return self._json({"error": "token not accepted (wrong, revoked or expired)"}, 401)
-                return self._json(info)
+                return self._json(dict(info, append=True))      # append: this store takes X-Append-Offset uploads of run traces
             if path == "/v1/split":
                 return self._split_info()
             if path == "/v1/admin/pcs":
                 return self._admin_pcs()
             if path == "/v1/admin/overview":
                 return self._admin_overview()
+            if path == "/v1/admin/tracking":
+                if self._admin():
+                    return self._json(dict(svc.loki.status(), append=True))
+                return
             if path == "/v1/admin/storage":
                 if self._admin():
                     return self._json(svc.storage())

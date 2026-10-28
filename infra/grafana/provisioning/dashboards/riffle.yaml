@@ -1,0 +1,10 @@
+# Grafana reads this at start-up and loads every dashboard .json file in this folder.
+# Read by infra/compose.logging.yaml, mounted at /etc/grafana/provisioning.
+apiVersion: 1
+
+providers:
+  - name: riffle
+    type: file
+    editable: false
+    options:
+      path: /etc/grafana/provisioning/dashboards

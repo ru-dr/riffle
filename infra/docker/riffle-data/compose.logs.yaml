@@ -1,0 +1,24 @@
+# Lets the team store forward the miners' run traces to Loki (ADR 0017), added only when you ask for it:
+#
+#   cd infra && docker compose -f compose.logging.yaml up -d loki grafana     # Loki and Grafana: infra/loki, infra/grafana
+#   cd docker/riffle-data && docker compose -f compose.yaml -f compose.logs.yaml up -d
+#   (on a VM with HTTPS: add --profile public)
+#
+# There is one Loki and one Grafana, the logging stack in infra/. This file only joins the store to that stack's
+# network and tells the store where Loki is. The miner's trace is the only log: the store keeps the file and pushes
+# each new line to Loki (server/loki.py). Do not also point Alloy's drop folder (RIFFLE_LOGS_DIR) at a miner's
+# logs folder: every line would arrive twice. Start the logging stack first, or Compose cannot find its network.
+
+services:
+  riffle-data:
+    networks: [default, logging]
+    environment:
+      RIFFLE_LOKI_URL: http://loki:3100
+      # links on the admin page (the store never fetches them)
+      RIFFLE_GRAFANA_URL: ${RIFFLE_GRAFANA_URL:-http://localhost:3000}
+      RIFFLE_AIRFLOW_URL: ${RIFFLE_AIRFLOW_URL:-http://localhost:8080}
+
+networks:
+  logging:
+    name: riffle-logging_default
+    external: true

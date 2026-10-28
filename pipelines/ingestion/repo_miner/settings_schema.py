@@ -25,6 +25,7 @@ GROUPS = [
     {"id": "llm", "title": "LLM flags", "note": "The optional explainer-side labels. A different model, scope or limit changes llm_* columns."},
     {"id": "features", "title": "Feature groups", "note": "Switch whole groups of columns off. Off means the columns are null, not zero."},
     {"id": "remine", "title": "Re-mining", "note": "Off by default. A re-mine drops a repo's finished rows before it mines them again."},
+    {"id": "tracking", "title": "Run tracking", "note": "How closely the team follows a run. Changes no rows, only how often the trace reaches the store."},
     {"id": "locked", "title": "Split and files", "note": "Fixed for this split: changing them moves repos between PCs or renames files, and PCs could overlap or lose rows. Plan a new split from the miner's TUI instead."},
 ]
 
@@ -58,6 +59,7 @@ META = {
     "no_api_contract": ("features", "API contract diff", "flag", {"invert": True}),
     "no_review_history": ("features", "Review history", "flag", {"invert": True}),
     "auto_remine": ("remine", "Re-mine stale repos at start", "bool", {}),
+    "live_tracking": ("tracking", "Live run tracking", "bool", {}),
     "repos_file": ("locked", "Repos file", "text", {"locked": True}),
     "only_domain": ("locked", "Only this domain", "text", {"locked": True}),
     "split_by": ("locked", "Split balances by", "choice", {"locked": True}),
@@ -69,6 +71,7 @@ META = {
 
 # plain-language help where the parser's text is aimed at someone typing flags
 HELP = {
+    "live_tracking": "Every PC uploads its run trace to the store every 10 seconds instead of every 15 minutes, so the store's log search, Loki and Airflow follow the run as it goes. It adds a small upload per PC and changes no row.",
     "auto_remine": "At start, drop and mine again any repo this PC finished with an older miner or with blame failing. Leave it off to keep finished rows as they are.",
     "ci_history": "Reads every workflow run back to 2019 for the CI-fail rate. Hours on a big repo, and it uses the GitHub quota.",
     "szz": "Finds the commits that introduced bugs later fixed. Slow; cached after the first run.",

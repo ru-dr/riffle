@@ -1,0 +1,726 @@
+{
+  "schema_version": 1,
+  "repo_id": "hao-li/AIDev",
+  "revision": "b37f9fd1613cfec55886105bb76721918d015dc7",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "size": 2504,
+      "lfs_sha256": null,
+      "blob_id": "bed0738c7eeb449bca98b5d2f33c89a1ee56349a"
+    },
+    {
+      "path": ".gitignore",
+      "size": 29,
+      "lfs_sha256": null,
+      "blob_id": "770f11eb23c58a2fa2ccd37d1da3427292e4e4aa"
+    },
+    {
+      "path": "AIDev_new_figure.png",
+      "size": 282065,
+      "lfs_sha256": "0edf4642e3e89d49de7e69c31e324cc85092006852e344a4e21da596b3020564",
+      "blob_id": "66cdc825ebbd68c9517092b45584d555292739af"
+    },
+    {
+      "path": "AIDev_new_table.png",
+      "size": 109444,
+      "lfs_sha256": "b04e4b7e7aff25f305880ff968ed36f10b400f47f8391d2839546eb13b5f53cb",
+      "blob_id": "19d9599c273f4cc433f2c001d5954dc36e58e63e"
+    },
+    {
+      "path": "README.md",
+      "size": 20675,
+      "lfs_sha256": null,
+      "blob_id": "57428494ba0c370f367ef57398036101a3416f98"
+    },
+    {
+      "path": "aidev_logo.png",
+      "size": 4143285,
+      "lfs_sha256": "557f3e868ecd2894ea49e38c3d8fcb316f992d0b42ea0c974d42960e01be36a2",
+      "blob_id": "10e43da6c0bc872b279184db313bd328f1728ee1"
+    },
+    {
+      "path": "all_pull_request.parquet",
+      "size": 6730346702,
+      "lfs_sha256": "135f06b55ae010023557f051f35be815ac41574e26e51d8a35161bf5a6fb08e7",
+      "blob_id": "070a88952a930b996a96585e801bd2b206d335e2",
+      "table": "all_pull_request",
+      "parquet": {
+        "rows": 7685281,
+        "row_groups": 39,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "number",
+            "type": "int64"
+          },
+          {
+            "name": "title",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "type": "string"
+          },
+          {
+            "name": "agent",
+            "type": "string"
+          },
+          {
+            "name": "user_id",
+            "type": "int64"
+          },
+          {
+            "name": "user",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "string"
+          },
+          {
+            "name": "closed_at",
+            "type": "string"
+          },
+          {
+            "name": "merged_at",
+            "type": "string"
+          },
+          {
+            "name": "repo_id",
+            "type": "double"
+          },
+          {
+            "name": "repo_url",
+            "type": "string"
+          },
+          {
+            "name": "html_url",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "all_repository.parquet",
+      "size": 58452322,
+      "lfs_sha256": "ed4dce3ec60e82c64efae8a30b019c597fd3e26e2efb5e5601ef612f45de2700",
+      "blob_id": "5f6ade62a88c2bb41e39341d8b0749e1ce9ad8b6",
+      "table": "all_repository",
+      "parquet": {
+        "rows": 957209,
+        "row_groups": 5,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "url",
+            "type": "string"
+          },
+          {
+            "name": "license",
+            "type": "string"
+          },
+          {
+            "name": "full_name",
+            "type": "string"
+          },
+          {
+            "name": "is_forked",
+            "type": "bool"
+          },
+          {
+            "name": "language",
+            "type": "string"
+          },
+          {
+            "name": "forks",
+            "type": "double"
+          },
+          {
+            "name": "stars",
+            "type": "double"
+          }
+        ]
+      }
+    },
+    {
+      "path": "all_user.parquet",
+      "size": 13646451,
+      "lfs_sha256": "d56df8653b59cccae68677dd7a07fd53f987ebeb0fd96ba065d1c9a456a9d6e1",
+      "blob_id": "4834ae0a326ecb68bdba75669b3153c0513a16f3",
+      "table": "all_user",
+      "parquet": {
+        "rows": 399962,
+        "row_groups": 2,
+        "columns": [
+          {
+            "name": "id",
+            "type": "double"
+          },
+          {
+            "name": "login",
+            "type": "string"
+          },
+          {
+            "name": "followers",
+            "type": "double"
+          },
+          {
+            "name": "following",
+            "type": "double"
+          },
+          {
+            "name": "created_at",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "issue.parquet",
+      "size": 74957881,
+      "lfs_sha256": "fc45ba381ca3566a88ffce91272dd0a37eba3fa31e681a333ef2ded85e9c3a30",
+      "blob_id": "bd2516cc77a4b2e07e509b9aa731a05080fc1fdc",
+      "table": "issue",
+      "parquet": {
+        "rows": 72664,
+        "row_groups": 1,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "number",
+            "type": "int64"
+          },
+          {
+            "name": "title",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "type": "string"
+          },
+          {
+            "name": "user",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "string"
+          },
+          {
+            "name": "closed_at",
+            "type": "string"
+          },
+          {
+            "name": "html_url",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "pr_comments.parquet",
+      "size": 690491134,
+      "lfs_sha256": "d7795bf9b41e881ddbed1d66667959b5f10042f06c2bba5e1e41c734df3a90a3",
+      "blob_id": "e5851f3b9e7f00327dd5576a2fed97c6442622ac",
+      "table": "pr_comments",
+      "parquet": {
+        "rows": 676098,
+        "row_groups": 4,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "pr_id",
+            "type": "int64"
+          },
+          {
+            "name": "user",
+            "type": "string"
+          },
+          {
+            "name": "user_id",
+            "type": "int64"
+          },
+          {
+            "name": "user_type",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "pr_commit_details.parquet",
+      "size": 12449618050,
+      "lfs_sha256": "feec2f74de1ea7a43d7b2a07daac54e02ddac4cf83808cc0f6c296ff5c95cb51",
+      "blob_id": "9de59cdbee730ea60c31a75f9681a00dacfa5b8e",
+      "table": "pr_commit_details",
+      "parquet": {
+        "rows": 12116310,
+        "row_groups": 61,
+        "columns": [
+          {
+            "name": "sha",
+            "type": "string"
+          },
+          {
+            "name": "pr_id",
+            "type": "int64"
+          },
+          {
+            "name": "author",
+            "type": "string"
+          },
+          {
+            "name": "committer",
+            "type": "string"
+          },
+          {
+            "name": "message",
+            "type": "string"
+          },
+          {
+            "name": "commit_stats_total",
+            "type": "int64"
+          },
+          {
+            "name": "commit_stats_additions",
+            "type": "int64"
+          },
+          {
+            "name": "commit_stats_deletions",
+            "type": "int64"
+          },
+          {
+            "name": "filename",
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "type": "string"
+          },
+          {
+            "name": "additions",
+            "type": "double"
+          },
+          {
+            "name": "deletions",
+            "type": "double"
+          },
+          {
+            "name": "changes",
+            "type": "double"
+          },
+          {
+            "name": "patch",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "pr_commits.parquet",
+      "size": 341101690,
+      "lfs_sha256": "381add099897bded6281b1968cc128646a6c6e223cb529d253f1cbd6b585bd21",
+      "blob_id": "f20d44ccda509c33b83366b5c6dbe20fa28e0862",
+      "table": "pr_commits",
+      "parquet": {
+        "rows": 1718829,
+        "row_groups": 9,
+        "columns": [
+          {
+            "name": "sha",
+            "type": "string"
+          },
+          {
+            "name": "pr_id",
+            "type": "int64"
+          },
+          {
+            "name": "author",
+            "type": "string"
+          },
+          {
+            "name": "committer",
+            "type": "string"
+          },
+          {
+            "name": "message",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "pr_review_comments.parquet",
+      "size": 326309123,
+      "lfs_sha256": "40c164f9bc8c7837bd501d19de62b65b46035842a8132a77560c087a896d7b61",
+      "blob_id": "1d388af1122f4f90b42d9302669512bb4b9d4c94",
+      "table": "pr_review_comments",
+      "parquet": {
+        "rows": 291248,
+        "row_groups": 2,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "pull_request_review_id",
+            "type": "int64"
+          },
+          {
+            "name": "user",
+            "type": "string"
+          },
+          {
+            "name": "user_type",
+            "type": "string"
+          },
+          {
+            "name": "diff_hunk",
+            "type": "string"
+          },
+          {
+            "name": "path",
+            "type": "string"
+          },
+          {
+            "name": "position",
+            "type": "int64"
+          },
+          {
+            "name": "original_position",
+            "type": "int64"
+          },
+          {
+            "name": "commit_id",
+            "type": "string"
+          },
+          {
+            "name": "original_commit_id",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "type": "string"
+          },
+          {
+            "name": "pull_request_url",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "string"
+          },
+          {
+            "name": "updated_at",
+            "type": "string"
+          },
+          {
+            "name": "in_reply_to_id",
+            "type": "double"
+          }
+        ]
+      }
+    },
+    {
+      "path": "pr_reviews.parquet",
+      "size": 212297906,
+      "lfs_sha256": "e825557fb4913129dea6d76f61c2ba903eb54b26a372945258d25b4fa7a7a67b",
+      "blob_id": "8ad345d8ad40d97097c6dd2ebede3c38aca60135",
+      "table": "pr_reviews",
+      "parquet": {
+        "rows": 541831,
+        "row_groups": 3,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "pr_id",
+            "type": "int64"
+          },
+          {
+            "name": "pull_request_review_id",
+            "type": "int64"
+          },
+          {
+            "name": "user",
+            "type": "string"
+          },
+          {
+            "name": "user_type",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "submitted_at",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "pr_timeline.parquet",
+      "size": 1100479400,
+      "lfs_sha256": "12baa3224361a2cadb6e55a12e2a35e43ff2bc4e450473fcc53d676b3d49ea15",
+      "blob_id": "cffc04a3f901922dd399cc642bbea565c6cae037",
+      "table": "pr_timeline",
+      "parquet": {
+        "rows": 6515552,
+        "row_groups": 33,
+        "columns": [
+          {
+            "name": "pr_id",
+            "type": "int64"
+          },
+          {
+            "name": "event",
+            "type": "string"
+          },
+          {
+            "name": "commit_id",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "string"
+          },
+          {
+            "name": "actor",
+            "type": "string"
+          },
+          {
+            "name": "assignee",
+            "type": "string"
+          },
+          {
+            "name": "label",
+            "type": "string"
+          },
+          {
+            "name": "message",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "pull_request.parquet",
+      "size": 362078556,
+      "lfs_sha256": "a9341e2ef692ae4220830b046da228000becc623a1591c5634728d78c331c32b",
+      "blob_id": "269d007073ccd5acf6e8d52034cff7bd6bfdae22",
+      "table": "pull_request",
+      "parquet": {
+        "rows": 361296,
+        "row_groups": 2,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "number",
+            "type": "int64"
+          },
+          {
+            "name": "title",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "type": "string"
+          },
+          {
+            "name": "agent",
+            "type": "string"
+          },
+          {
+            "name": "user_id",
+            "type": "int64"
+          },
+          {
+            "name": "user",
+            "type": "string"
+          },
+          {
+            "name": "state",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "string"
+          },
+          {
+            "name": "closed_at",
+            "type": "string"
+          },
+          {
+            "name": "merged_at",
+            "type": "string"
+          },
+          {
+            "name": "repo_id",
+            "type": "int64"
+          },
+          {
+            "name": "repo_url",
+            "type": "string"
+          },
+          {
+            "name": "html_url",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "related_issue.parquet",
+      "size": 1264494,
+      "lfs_sha256": "16a22395a2572b29345888c76aba4c39e98dc1cf79b54685a521451c469e7aef",
+      "blob_id": "230ccf3e028e68d6a21e0f56b9110db7bb6b4498",
+      "table": "related_issue",
+      "parquet": {
+        "rows": 100050,
+        "row_groups": 1,
+        "columns": [
+          {
+            "name": "pr_id",
+            "type": "int64"
+          },
+          {
+            "name": "issue_id",
+            "type": "int64"
+          },
+          {
+            "name": "source",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    {
+      "path": "repository.parquet",
+      "size": 1496533,
+      "lfs_sha256": "1c84f195fd9813c4bb2c1f2436a9dde71329348f23b5ddd7b92f66125e626f3d",
+      "blob_id": "144a5755518a310ea0a9d35a0fa620bfdd3b8777",
+      "table": "repository",
+      "parquet": {
+        "rows": 25402,
+        "row_groups": 1,
+        "columns": [
+          {
+            "name": "id",
+            "type": "int64"
+          },
+          {
+            "name": "url",
+            "type": "string"
+          },
+          {
+            "name": "license",
+            "type": "string"
+          },
+          {
+            "name": "full_name",
+            "type": "string"
+          },
+          {
+            "name": "is_forked",
+            "type": "bool"
+          },
+          {
+            "name": "language",
+            "type": "string"
+          },
+          {
+            "name": "forks",
+            "type": "int64"
+          },
+          {
+            "name": "stars",
+            "type": "int64"
+          }
+        ]
+      }
+    },
+    {
+      "path": "scripts/README.md",
+      "size": 4850,
+      "lfs_sha256": null,
+      "blob_id": "d819dc81d665132011d8d4267fa4f9c7b55b88b8"
+    },
+    {
+      "path": "scripts/dataset_overview.py",
+      "size": 11158,
+      "lfs_sha256": null,
+      "blob_id": "60b6e8ec4423b1d034933f62701098d0e46b7f35"
+    },
+    {
+      "path": "scripts/language_usage.py",
+      "size": 9146,
+      "lfs_sha256": null,
+      "blob_id": "4f478627159294cd79ec8455c1a6c8f8ea7a07c3"
+    },
+    {
+      "path": "scripts/load_aidev.py",
+      "size": 15993,
+      "lfs_sha256": null,
+      "blob_id": "f1694c36ace2066365b46c103185920db38af4e9"
+    },
+    {
+      "path": "scripts/productivity.py",
+      "size": 17049,
+      "lfs_sha256": null,
+      "blob_id": "212d61ff311b4c329ff28e556b586cd078c6fc3a"
+    },
+    {
+      "path": "scripts/requirements.txt",
+      "size": 294,
+      "lfs_sha256": null,
+      "blob_id": "cc2f11da5317ca0e4408f05ce7867162d67d5fa4"
+    }
+  ],
+  "meta": {
+    "generated_at": "2026-10-26T01:31:53Z",
+    "tool_version": "0.1.0",
+    "huggingface_hub": "2.3.0",
+    "pyarrow": "26.0.0"
+  }
+}

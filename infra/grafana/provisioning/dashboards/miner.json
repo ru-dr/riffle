@@ -1,0 +1,36 @@
+{
+  "uid": "riffle-miner",
+  "title": "Riffle miner",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      { "name": "pc", "type": "query", "label": "PC", "includeAll": true, "multi": true, "allValue": ".+",
+        "datasource": { "type": "loki", "uid": "loki" }, "query": { "label": "pc", "type": 1, "stream": "{job=\"riffle-miner\"}" }, "refresh": 2 },
+      { "name": "split", "type": "query", "label": "Split", "includeAll": true, "multi": false, "allValue": ".+",
+        "datasource": { "type": "loki", "uid": "loki" }, "query": { "label": "split", "type": 1, "stream": "{job=\"riffle-miner\"}" }, "refresh": 2 }
+    ]
+  },
+  "panels": [
+    { "id": 1, "type": "timeseries", "title": "Seconds per miner stage (sum of finished stages)", "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [ { "refId": "A", "legendFormat": "{{miner_stage}}",
+        "expr": "sum by (miner_stage) (sum_over_time({job=\"riffle-miner\", pc=~\"$pc\", split=~\"$split\", component=\"stage\"} | json | msg=\"done\" | unwrap dur_s [$__interval]))" } ] },
+    { "id": 2, "type": "timeseries", "title": "PRs mined per hour, by PC", "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [ { "refId": "A", "legendFormat": "{{pc}}",
+        "expr": "sum by (pc) (count_over_time({job=\"riffle-miner\", pc=~\"$pc\", split=~\"$split\", component=\"pr\"} | json | msg=\"done\" [1h]))" } ] },
+    { "id": 3, "type": "timeseries", "title": "Warnings and errors", "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [ { "refId": "A", "legendFormat": "{{lvl}} {{component}}",
+        "expr": "sum by (lvl, component) (count_over_time({job=\"riffle-miner\", pc=~\"$pc\", split=~\"$split\", lvl=~\"WARN|ERROR\"} [$__interval]))" } ] },
+    { "id": 4, "type": "logs", "title": "Errors and stalls", "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [ { "refId": "A", "expr": "{job=\"riffle-miner\", pc=~\"$pc\", split=~\"$split\", lvl=~\"WARN|ERROR\"}" } ] },
+    { "id": 5, "type": "logs", "title": "Stage start and done", "gridPos": { "h": 10, "w": 24, "x": 0, "y": 17 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [ { "refId": "A", "expr": "{job=\"riffle-miner\", pc=~\"$pc\", split=~\"$split\", component=\"stage\"}" } ] }
+  ]
+}
