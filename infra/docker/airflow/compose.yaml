@@ -157,6 +157,22 @@ services:
     <<: *airflow-common
     command: triggerer
 
+  # Optional: a local mail catcher for trying the pipeline's email alerts without a real mail account.
+  # It accepts any message on port 1025 (inside the Compose network only) and shows it in a web page.
+  # Start it with: docker compose --profile mail up -d
+  # Then set RIFFLE_SMTP_HOST=mailpit and RIFFLE_SMTP_PORT=1025 in .env (see .env.example).
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    profiles: ["mail"]
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_BIND_ADDR:-127.0.0.1}:${MAILPIT_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres-data:
   airflow-logs:

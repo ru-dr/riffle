@@ -194,7 +194,25 @@ The DAG structure tests need Airflow, so they run in the container:
   | `RIFFLE_SMTP_HOST`, `RIFFLE_SMTP_PORT`, `RIFFLE_SMTP_USER`, `RIFFLE_SMTP_PASSWORD` | the mail server (STARTTLS) |
   | `RIFFLE_ALERT_FROM`, `RIFFLE_ALERT_TO` | sender, and comma-separated recipients |
 
-  For Airflow, put them in `infra/docker/airflow/.env` (gitignored); Compose passes them through.
+  For Airflow, put them in `infra/docker/airflow/.env` (gitignored); Compose passes them through. Email uses STARTTLS
+  whenever the server offers it, and a password is never sent without it.
+
+- **Try email alerts with no real account:** the Airflow stack has an optional [Mailpit](https://mailpit.axllent.org)
+  service, a local mail catcher with a web page. From `infra/docker/airflow`:
+
+  ```bash
+  docker compose --profile mail up -d
+  # put these four lines in .env, then `docker compose --profile mail up -d` again so Airflow picks them up:
+  #   RIFFLE_SMTP_HOST=mailpit
+  #   RIFFLE_SMTP_PORT=1025
+  #   RIFFLE_ALERT_FROM=alerts@pipeline.test
+  #   RIFFLE_ALERT_TO=me@pipeline.test
+  ```
+
+  Open http://localhost:8025 to read what arrives. We checked it end to end: with an impossible `validation.min_rows`
+  in `params.yaml`, `riffle_data_pipeline_sequential` failed at `validate`, skipped everything after it, and Mailpit
+  received two emails, one for the failed task and one listing the three anomaly warnings. Slack has only been tested
+  with fakes, because a webhook cannot be faked the same way.
 
 ## Data quality
 
@@ -231,6 +249,7 @@ validate and preprocess run in parallel, text columns are no longer loaded where
 | Symptom | Cause and fix |
 | --- | --- |
 | a task exits with code -9 in Airflow | out of memory: give Docker 8 GB or more |
+| `dvc status` lists `features.parquet` or `data/raw` as modified after an Airflow run | Airflow runs the stages in a Linux container on the same folders, and floating-point results can differ in the last bit from your machine's (and `manifest.json` has a new timestamp); `dvc repro` restores the outputs |
 | `ModuleNotFoundError: aidev_ingest` | install from this folder: `python -m pip install -r requirements.txt` |
 | `dvc: command not found` | activate the virtual environment |
 | `... is inside a git repository and is not ignored` | the downloader refuses to write raw data where git could commit it; keep `data/raw` in `.gitignore` |
@@ -243,6 +262,7 @@ validate and preprocess run in parallel, text columns are no longer loaded where
 - The slice and bias results come from one time split and one run, with no confidence intervals.
 - Hashes of the Parquet files were identical across two clean environments on one machine; they may differ in the last
   bit of the floating-point columns on other hardware (see "Same bytes on every machine").
-- Slack and email alerts are tested with fakes; delivery to a real webhook or mail server has not been tried.
+- Email delivery is tested against Mailpit, a real SMTP server, but not against a real provider. Slack is tested only
+  with fakes; a real webhook has not been tried.
 - Tested on Windows with Docker Desktop. Linux and macOS paths follow the same commands but have not been run by hand;
   CI runs the tests and `dvc dag` on Linux.

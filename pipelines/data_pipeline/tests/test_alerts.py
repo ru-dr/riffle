@@ -79,6 +79,8 @@ def test_email_uses_starttls_login_and_sends(monkeypatch):
         def __init__(self, host, port, timeout): calls.append(("connect", host, port))
         def __enter__(self): return self
         def __exit__(self, *a): return False
+        def ehlo(self): pass
+        def has_extn(self, name): return True
         def starttls(self): calls.append(("starttls",))
         def login(self, user, password): calls.append(("login", user))
         def send_message(self, message): calls.append(("send", message["To"], message["Subject"]))
@@ -118,3 +120,45 @@ def test_failure_callback_survives_an_empty_context(monkeypatch):
     monkeypatch.setattr(alerts, "send_alert", lambda subject, body, env=None: sent.append(subject))
     alerts.failure_callback({})
     assert sent == ["Airflow task failed: unknown dag.unknown task"]
+
+
+def _server_without_starttls(calls):
+    class PlainSMTP:
+        def __init__(self, host, port, timeout): calls.append(("connect", host, port))
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def ehlo(self): pass
+        def has_extn(self, name): return False
+        def starttls(self): calls.append(("starttls",))
+        def login(self, user, password): calls.append(("login", user))
+        def send_message(self, message): calls.append(("send", message["To"]))
+
+    return PlainSMTP
+
+
+def test_a_server_without_starttls_and_without_a_login_is_used_as_is(monkeypatch):
+    calls = []
+    monkeypatch.setattr(alerts.smtplib, "SMTP", _server_without_starttls(calls))
+    env = {"RIFFLE_SMTP_HOST": "mailpit", "RIFFLE_SMTP_PORT": "1025", "RIFFLE_ALERT_FROM": "a@example.com", "RIFFLE_ALERT_TO": "b@example.com"}
+    assert alerts.send_alert("s", "b", env=env) == ["email"]
+    assert calls == [("connect", "mailpit", 1025), ("send", "b@example.com")]
+
+
+def test_a_password_is_never_sent_to_a_server_that_does_not_offer_starttls(monkeypatch, caplog):
+    calls = []
+    monkeypatch.setattr(alerts.smtplib, "SMTP", _server_without_starttls(calls))
+    env = {"RIFFLE_SMTP_HOST": "m", "RIFFLE_SMTP_USER": "u", "RIFFLE_SMTP_PASSWORD": "hunter2-password",
+           "RIFFLE_ALERT_FROM": "a@example.com", "RIFFLE_ALERT_TO": "b@example.com"}
+    assert alerts.send_alert("s", "b", env=env) == []
+    assert ("login", "u") not in calls and not any(c[0] == "send" for c in calls)
+    assert "email alert failed" in caplog.text and "hunter2-password" not in caplog.text
+
+
+def test_starttls_is_used_when_offered_even_with_no_login(monkeypatch):
+    calls = []
+    plain = _server_without_starttls(calls)
+    plain.has_extn = lambda self, name: True
+    monkeypatch.setattr(alerts.smtplib, "SMTP", plain)
+    env = {"RIFFLE_SMTP_HOST": "m", "RIFFLE_ALERT_FROM": "a@example.com", "RIFFLE_ALERT_TO": "b@example.com"}
+    assert alerts.send_alert("s", "b", env=env) == ["email"]
+    assert ("starttls",) in calls

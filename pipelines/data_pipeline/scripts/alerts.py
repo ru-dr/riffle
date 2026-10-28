@@ -5,8 +5,11 @@ Compose reads (see infra/docker/airflow/.env.example); when none is set, an aler
 
   RIFFLE_SLACK_WEBHOOK_URL                            an incoming-webhook URL
   RIFFLE_SMTP_HOST, RIFFLE_SMTP_PORT (587),
-  RIFFLE_SMTP_USER, RIFFLE_SMTP_PASSWORD              the mail server (STARTTLS)
+  RIFFLE_SMTP_USER, RIFFLE_SMTP_PASSWORD              the mail server (STARTTLS when offered)
   RIFFLE_ALERT_FROM, RIFFLE_ALERT_TO                  sender and comma-separated recipients
+
+STARTTLS is used whenever the server offers it. A server that does not (a local mail catcher such as
+Mailpit) is only used when no SMTP user is set, so a password is never sent unencrypted.
 
 Only the standard library is used, so the Airflow image needs no provider package. A failure
 to send is logged and never raised: an alert that breaks the pipeline would be worse than none.
@@ -59,7 +62,14 @@ def _email(subject: str, body: str, env: dict[str, str]) -> None:
     message["To"] = env["RIFFLE_ALERT_TO"]
     message.set_content(body)
     with smtplib.SMTP(env["RIFFLE_SMTP_HOST"], int(env.get("RIFFLE_SMTP_PORT") or 587), timeout=TIMEOUT_SECONDS) as smtp:
-        smtp.starttls()
+        smtp.ehlo()
+        if smtp.has_extn("starttls"):
+            smtp.starttls()
+            smtp.ehlo()
+        elif env.get("RIFFLE_SMTP_USER"):
+            # A password must never cross the network in the clear. Plain SMTP is only for a server that
+            # needs no login, such as a local mail catcher like Mailpit.
+            raise smtplib.SMTPNotSupportedError("the server does not offer STARTTLS; refusing to send a password without it")
         if env.get("RIFFLE_SMTP_USER"):
             smtp.login(env["RIFFLE_SMTP_USER"], env.get("RIFFLE_SMTP_PASSWORD", ""))
         smtp.send_message(message)
