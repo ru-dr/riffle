@@ -333,6 +333,40 @@ def _szz_worker_init(flags, ignore_revs) -> None:
     gitio.set_blame_settings(flags, ignore_revs)
 
 
+class _StoppablePool(ProcessPoolExecutor):
+    """On an exception (a Stop is KeyboardInterrupt) the plain `with` waits for every queued
+    blame, minutes when blames time out and the reason a Stop looked ignored. This one drops the
+    queue and kills the workers instead."""
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            _abort_pool(self)
+            return False
+        return super().__exit__(exc_type, exc, tb)
+
+
+def _abort_pool(pool) -> None:
+    """Stop a ProcessPoolExecutor now: cancel queued work and terminate the workers, whose
+    in-flight git blame is killed with them. Their results are not wanted."""
+    if pool is None:
+        return
+    procs = list((getattr(pool, "_processes", None) or {}).values())
+    try:
+        pool.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        pass
+    for p in procs:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+    for p in procs:
+        try:
+            p.join(timeout=5)
+        except Exception:
+            pass
+
+
 def build_szz_index(repo: str, st: config.Settings,
                     cache_path: str | None = None,
                     on_progress=None,
@@ -458,7 +492,7 @@ def build_szz_index(repo: str, st: config.Settings,
                 ck.flush()
         try:
             workers = max(1, min(st.workers, len(todo)))
-            with ProcessPoolExecutor(
+            with _StoppablePool(
                     max_workers=workers, initializer=_szz_worker_init,
                     initargs=gitio.blame_settings()) as pool:
                 # a bounded number of tasks in flight, topped up as they finish,
@@ -474,7 +508,11 @@ def build_szz_index(repo: str, st: config.Settings,
 
                 def _finished():
                     while pending:
-                        ready, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        # a timeout, so a Stop is seen: on Windows an untimed wait() cannot be
+                        # interrupted by ctrl+c / CTRL_BREAK until a task finishes
+                        ready, _ = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
+                        if not ready:
+                            continue
                         for f in ready:
                             pending.discard(f)
                         _top_up()
@@ -546,7 +584,8 @@ def _szz_fix_bugs(repo: str, sha: str, parent: str,
     modifies, at the fix's parent. Per path, so a checkpoint can keep each
     (fix commit, path) result whatever later runs ask for. Also returns how
     many blames ran and failed, so the parent can warn instead of failing
-    silently."""
+    silently. A path whose blame failed is left out of the result: an empty
+    list would be stored as "no bug-introducing commit" and never retried."""
     before = gitio.blame_stats()
     by_path: dict[str, list[str]] = {}
     old_by_path = gitio.deleted_or_modified_lines_many(repo, parent, sha, paths)
@@ -557,6 +596,8 @@ def _szz_fix_bugs(repo: str, sha: str, parent: str,
         bugs: list[str] = []
         if old_lines:
             blame = gitio.blame_lines(repo, parent, base_path, old_lines)
+            if not blame and gitio.blame_failed():
+                continue      # unobserved: not stored, so a later run blames this path again
             for ln in old_lines:
                 bl = blame.get(ln)
                 if bl and bl.orig_commit and bl.orig_commit not in bugs:

@@ -941,6 +941,7 @@ def blame_file(repo: str, sha: str, path: str) -> dict[int, BlameLine]:
     key = (repo, sha, path)
     hit = _BLAME_CACHE.get(key)
     if hit is not None:
+        _BLAME_TL.failed = False
         return hit
     result = _blame(repo, sha, path, [])
     if result:
@@ -963,11 +964,26 @@ def set_blame_settings(flags: list[str], ignore_revs: str | None) -> None:
     _BLAME_FLAGS = list(flags)
     _BLAME_IGNORE_REVS = ignore_revs
     blame_file.cache_clear()
+    _BLAME_TIMED_OUT.clear()
 
 
 # Blame failures used to vanish into an empty result, which silently emptied
 # line features and SZZ labels. Count them, and warn once per process.
 _BLAME_STATS = {"calls": 0, "fails": 0, "absent": 0, "timeouts": 0, "first_error": None}
+
+# Whether the last blame on this thread failed (timeout or git error), so a caller can tell a
+# failed blame (unobserved: null) from an empty one (a measured zero). Reset by every call.
+_BLAME_TL = threading.local()
+# (repo, path, ranged) whose blame timed out (a ranged blame is cheap where a whole-file one is not): a huge generated file times out every time, so the
+# next PR touching it fails at once instead of waiting out the limit again (a PR of eight
+# bundles once took 966 s). Per process, so a new run tries again.
+_BLAME_TIMED_OUT: set[tuple[str, str, bool]] = set()
+
+
+def blame_failed() -> bool:
+    """True when the last blame_file/blame_lines call on this thread failed. An empty result with
+    this False is a real one (no such file, empty file)."""
+    return bool(getattr(_BLAME_TL, "failed", False))
 
 
 def _note_blame_failure(path: str, stderr: str) -> None:
@@ -1036,6 +1052,11 @@ def _blame(repo: str, sha: str, path: str,
         cmd += ["-L", f"{start},{end}"]
     cmd += [sha, "--", path]
     _check_stop()
+    _BLAME_TL.failed = False
+    if (repo, path, bool(ranges)) in _BLAME_TIMED_OUT:
+        _BLAME_TL.failed = True
+        _BLAME_STATS["fails"] += 1
+        return {}
     limit = blame_timeout()
     _BLAME_STATS["calls"] += 1
     try:
@@ -1048,6 +1069,8 @@ def _blame(repo: str, sha: str, path: str,
         # unobserved, like any failed blame; {} for a ranged call too, so the
         # caller does not retry the whole file and wait out a second timeout
         _BLAME_STATS["timeouts"] += 1
+        _BLAME_TIMED_OUT.add((repo, path, bool(ranges)))
+        _BLAME_TL.failed = True
         _note_blame_failure(path, f"timed out after {limit:.0f}s")
         return {}
     if out.returncode != 0:
@@ -1057,6 +1080,7 @@ def _blame(repo: str, sha: str, path: str,
             # is exactly what an empty result means. No full-blame retry.
             _BLAME_STATS["absent"] += 1
             return {}
+        _BLAME_TL.failed = True
         _note_blame_failure(path, out.stderr)
         return None if ranges else {}
     result: dict[int, BlameLine] = {}
