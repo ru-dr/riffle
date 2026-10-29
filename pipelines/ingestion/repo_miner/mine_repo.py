@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 from collections import defaultdict, deque, Counter
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 
 import config
@@ -1684,7 +1684,14 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         _fill()
         while inflight:
             i, pr, fut = inflight.popleft()
-            kind, r, err, secs, waited = fut.result()
+            while True:
+                # timed, so a Stop is seen: on Windows an untimed result() cannot be interrupted
+                # by ctrl+c / CTRL_BREAK until the PR finishes (a slow blame: minutes)
+                try:
+                    kind, r, err, secs, waited = fut.result(timeout=1.0)
+                    break
+                except FutureTimeoutError:
+                    continue
             _fill()
             num = pr.get("number")
             if kind == "stop":

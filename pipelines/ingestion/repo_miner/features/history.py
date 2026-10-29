@@ -857,6 +857,7 @@ def per_file_features(repo: str, base: str, path: str, idx: dict,
     # abandoned_lines_share. The blame call is cached (gitio.blame_file), so
     # sharing it with the Source-3 line features costs nothing extra.
     blame = gitio.blame_file(repo, base, lp)
+    blame_unobserved = not blame and gitio.blame_failed()
     # bots own no lines worth reporting: ownership is among people
     line_authors = [bl.author_email for bl in blame.values()
                     if not _is_bot_email(bl.author_email)]
@@ -872,6 +873,9 @@ def per_file_features(repo: str, base: str, path: str, idx: dict,
             if la and (base_time - la).days > 180:
                 abandoned_lines += cnt
         abandoned_share = abandoned_lines / total_lines
+    elif blame_unobserved:
+        # the blame timed out or errored: unobserved, so null, never a measured zero
+        top_share, minor, abandoned_share = None, None, None
     else:
         # binary/empty/unblameable file: no line ownership to report
         top_share, minor, abandoned_share = 0.0, 0, 0.0
@@ -902,9 +906,9 @@ def per_file_features(repo: str, base: str, path: str, idx: dict,
         "NUC": n,                                   # unique prior changes
         "NDEV": len({a for a in idx["file_authors"].get(lp, set()) if not _is_bot_email(a)}),
         "file_complexity_ccn": ccn,
-        "file_top_author_share": round(top_share, 4),
+        "file_top_author_share": None if top_share is None else round(top_share, 4),
         "file_minor_contributor_count": minor,
-        "abandoned_lines_share": round(abandoned_share, 4),
+        "abandoned_lines_share": None if abandoned_share is None else round(abandoned_share, 4),
         "_last_change_days": last_change_days,      # internal, for AGE
         "_loc": blob.loc or 0,                      # for LT / hotspot
     }
