@@ -9,6 +9,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config  # noqa: E402
 import gitio  # noqa: E402
 import health  # noqa: E402
 import labels  # noqa: E402
@@ -138,3 +139,21 @@ def test_health_without_the_exemption_keeps_the_old_answer():
     key = next(iter(FLAG_SCHEMA))
     h = health.check([{key: True}, {key: None}], in_llm_scope=lambda r: True)
     assert h["stats"]["llm_rows"] == 2 and h["stats"]["llm_missing_share"] == 0.5
+
+
+# ---- a failed blame is unobserved, not a measured zero ----------------------------
+
+
+def test_timed_out_blame_is_null_and_not_stored_by_szz(monkeypatch, tmp_path):
+    from features import line_history
+    repo = str(tmp_path)
+    monkeypatch.setattr(gitio, "_blame", lambda *a, **k: (setattr(gitio._BLAME_TL, "failed", True), {})[1])
+    monkeypatch.setattr(gitio, "deleted_or_modified_lines", lambda *a, **k: [3])
+    out = line_history.per_file_line_features(
+        repo, "b", "h", "f.py", "a@x", {"base_time": None}, config.Settings())
+    assert all(v is None for v in out.values())
+    monkeypatch.setattr(gitio, "deleted_or_modified_lines_many", lambda *a, **k: {"f.py": [3]})
+    monkeypatch.setattr(gitio, "rename_map", lambda *a, **k: {})
+    monkeypatch.setattr(gitio, "blame_lines", lambda *a, **k: (setattr(gitio._BLAME_TL, "failed", True), {})[1])
+    _sha, by_path, _c, _f = labels._szz_fix_bugs(repo, "s", "p", ["f.py"])
+    assert by_path == {}

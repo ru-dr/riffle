@@ -33,6 +33,11 @@ def per_file_line_features(repo: str, base: str, head: str, path: str,
     base_time = idx["base_time"]
     mod_lines = gitio.deleted_or_modified_lines(repo, base, head, path, old_path)
     blame = gitio.blame_file(repo, base, lp)
+    if mod_lines and not blame and gitio.blame_failed():
+        # a blame that timed out or errored is unobserved, not "no authors": null, never 0
+        return {k: None for k in ("mod_line_age_days_min", "mod_line_age_days_median",
+                                  "mod_lines_distinct_authors", "mod_lines_self_authored_share",
+                                  "mod_lines_prior_fix_share", "hunk_fix_proximity")}
     if not mod_lines or not blame:
         return {
             "mod_line_age_days_min": None, "mod_line_age_days_median": None,
