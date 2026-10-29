@@ -542,6 +542,36 @@ def assemble(dataset_rows: list[dict], raw_root: str, st: config.Settings) -> tu
     return snaps, commits
 
 
+def _table_repos(path: str) -> set[str]:
+    """Lower-cased `repo` values of a table (.parquet or .jsonl); empty when it is missing or unreadable."""
+    if not os.path.isfile(path):
+        return set()
+    try:
+        if path.endswith(".parquet"):
+            import pyarrow.parquet as pq
+            return {str(r).lower() for r in pq.read_table(path, columns=["repo"]).column("repo").to_pylist() if r}
+        return {str(r["repo"]).lower() for r in cap.read_jsonl(path) if r.get("repo")}
+    except Exception:                                       # noqa: BLE001  (a damaged table counts as missing: it is rebuilt)
+        return set()
+
+
+def uncompiled_repos(done: set[str], raw_root: str, out: str, commits_out: str) -> list[str]:
+    """Finished repos (lower-cased owner/name) whose captures are on disk but that have no rows in the snapshot
+    table or the commit-feature table, so they can be compiled without mining again. A repo with no capture
+    (mined with --no-snapshots, or before captures existed) cannot be compiled and is not listed."""
+    if not done or not os.path.isdir(raw_root):
+        return []
+    have = _table_repos(out) & _table_repos(commits_out)
+    folders = {f.lower(): f for f in os.listdir(raw_root)}
+    missing = []
+    for repo in sorted(done - have):
+        folder = folders.get(repo.replace("/", "_"))
+        path = os.path.join(raw_root, folder, cap.CAPTURE_FILE) if folder else ""
+        if path and os.path.isfile(path) and os.path.getsize(path) > 0:
+            missing.append(repo)
+    return missing
+
+
 def assemble_files(dataset: str, raw_root: str, out: str, commits_out: str,
                    st: config.Settings | None = None) -> dict:
     """Read the mined dataset and the captures under raw_root, write the two
