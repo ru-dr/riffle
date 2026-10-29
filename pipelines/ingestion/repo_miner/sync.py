@@ -48,6 +48,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(HERE, ".sync_state.json")
 DEFAULT_BUDGET_S = 120.0
 CONNECT_S = 30.0
+FORCE_RESEND = "7.2.1"                  # change it to make every PC send all its files once more (the first full sync after it)
+FORCE_KEY = "#force_resend"
 MAX_FILE_BYTES = 2 * 1024 ** 3          # the store's per-file limit; bigger files are skipped with a warning
 
 
@@ -318,6 +320,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
     store_key = f"{url}#{hashlib.sha256(token.encode()).hexdigest()[:12]}"
     state = all_state.setdefault(store_key, {})
     dirty: dict = {store_key: {}}
+    force = state.get(FORCE_KEY) != FORCE_RESEND and max_bytes is None and not only_logs   # only a full sync resends all and records it
     try:
         files = collect(out, health_dir, logs, repos)
         if only_logs:                                       # the quick live beat: the trace and the log, not the tables
@@ -335,7 +338,7 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
         except OSError:
             continue
         sig = [st.st_size, st.st_mtime_ns]
-        if state.get(key) == sig:
+        if state.get(key) == sig and not force:
             result["skipped"] += 1
             continue
         if _is_trace(rel):
@@ -398,6 +401,8 @@ def sync(out: str, prefix: str, status: dict, *, health_dir: str = "health",
             result["failed"].append(f"{rel} (local {type(e).__name__})")
             continue
 
+    if force and not result["failed"] and not result["stopped"] and not deferred:
+        state[FORCE_KEY] = dirty[store_key][FORCE_KEY] = FORCE_RESEND     # every file went once; later syncs are incremental again
     if result["stopped"] in (None, "out of time"):
         if status.get("reason") == "batch done" and (result["failed"] or result["stopped"] or deferred):
             # the store counts only "batch done" as a finished PC: never say it after a partial upload
