@@ -40,6 +40,17 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: ${AIRFLOW_USERS:?set AIRFLOW_USERS in .env}
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/auth/passwords.json
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    # Two DAG sources: the dags folder above, and the data pipeline's own dags/ folder.
+    AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST: '[{"name": "dags-folder", "classpath": "airflow.dag_processing.bundles.local.LocalDagBundle", "kwargs": {}}, {"name": "riffle-data-pipeline", "classpath": "airflow.dag_processing.bundles.local.LocalDagBundle", "kwargs": {"path": "/opt/riffle/data_pipeline/dags"}}]'
+    # Alert channels for the data pipeline. A key with no value passes the variable through from
+    # .env; leave them unset and alerts are only logged. See scripts/alerts.py.
+    RIFFLE_SLACK_WEBHOOK_URL:
+    RIFFLE_SMTP_HOST:
+    RIFFLE_SMTP_PORT:
+    RIFFLE_SMTP_USER:
+    RIFFLE_SMTP_PASSWORD:
+    RIFFLE_ALERT_FROM:
+    RIFFLE_ALERT_TO:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     # Every sensor poke of the riffle_miner DAG is a task process (a few hundred MB). Left at Airflow's 32 at once,
     # a run with several repos can use all of a small VM's memory; this keeps a cap, and the rest wait their turn.
@@ -59,6 +70,10 @@ x-airflow-common: &airflow-common
       volume:
         subpath: store          # the uploaded files only; tokens.json and the index stay out of reach
     - riffle-work:/opt/riffle/work
+    # The data pipeline writes data/, logs/ and reports/ under its own folder, so it is not read-only.
+    # The AIDev package is on PYTHONPATH from here, not installed.
+    - ../../../pipelines/data_pipeline:/opt/riffle/data_pipeline
+    - ../../../pipelines/ingestion/aidev:/opt/riffle/aidev:ro
     - airflow-logs:/opt/airflow/logs
     - airflow-auth:/opt/airflow/auth
   depends_on: &airflow-depends
@@ -141,6 +156,22 @@ services:
   airflow-triggerer:
     <<: *airflow-common
     command: triggerer
+
+  # Optional: a local mail catcher for trying the pipeline's email alerts without a real mail account.
+  # It accepts any message on port 1025 (inside the Compose network only) and shows it in a web page.
+  # Start it with: docker compose --profile mail up -d
+  # Then set RIFFLE_SMTP_HOST=mailpit and RIFFLE_SMTP_PORT=1025 in .env (see .env.example).
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    profiles: ["mail"]
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_BIND_ADDR:-127.0.0.1}:${MAILPIT_PORT:-8025}:8025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres-data:

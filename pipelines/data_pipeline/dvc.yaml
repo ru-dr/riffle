@@ -1,0 +1,72 @@
+stages:
+  acquire:
+    desc: Download the pinned AIDev tables from Hugging Face and verify each by SHA-256
+    cmd: python -m scripts.acquire
+    deps:
+      - scripts/acquire.py
+    params:
+      - aidev.commit
+      - aidev.tables
+    outs:
+      - data/raw/${aidev.commit}
+  validate:
+    desc: Check schema and statistics with Great Expectations and look for anomalies
+    cmd: python -m scripts.validate
+    deps:
+      - data/raw/${aidev.commit}/pull_request.parquet
+      - data/raw/${aidev.commit}/repository.parquet
+      - scripts/validate.py
+      - scripts/anomalies.py
+      - scripts/schema.py
+      - scripts/data_io.py
+    params:
+      - aidev.commit
+      - validation.iqr_factor
+      - validation.min_rows
+    outs:
+      - reports/schema_stats.json
+      - reports/validation.json
+      - reports/anomalies.json
+  preprocess:
+    desc: Clean and join the tables; set contradictory rows aside with a reason
+    cmd: python -m scripts.preprocess
+    deps:
+      - data/raw/${aidev.commit}/pull_request.parquet
+      - data/raw/${aidev.commit}/repository.parquet
+      - scripts/preprocess.py
+      - scripts/anomalies.py
+      - scripts/data_io.py
+    params:
+      - aidev.commit
+    outs:
+      - data/processed/pull_requests_clean.parquet
+      - data/processed/quarantine.parquet
+      - reports/preprocess.json
+  features:
+    desc: One row per closed pull request, with the merged label and features known at creation
+    cmd: python -m scripts.features
+    deps:
+      - data/processed/pull_requests_clean.parquet
+      - scripts/features.py
+    params:
+      - features.test_fraction
+    outs:
+      - data/processed/features.parquet
+      - reports/features.json
+  slices:
+    desc: Fit a baseline model, score it for each group of pull requests, and test two ways to narrow the gaps
+    cmd: python -m scripts.slices
+    deps:
+      - data/processed/features.parquet
+      - scripts/slices.py
+    params:
+      - slices.min_group_size
+      - slices.validation_fraction
+      - slices.top_languages
+      - slices.mitigate_on
+    outs:
+      - reports/bias_report.md:
+          cache: false
+    metrics:
+      - reports/slices_metrics.json:
+          cache: false
