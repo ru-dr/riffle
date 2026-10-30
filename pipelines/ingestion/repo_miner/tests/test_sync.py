@@ -249,3 +249,20 @@ def test_status_counts_each_repo_only_its_own_checkpointed_rows(tmp_path, monkey
     assert st["repos"]["o/nuxt"] == {"state": "failed", "rows": 30}      # kept for the rerun, still counted
     assert "rows" not in st["repos"]["o/later"]
     assert st["prs_done"] == 34
+
+
+def test_one_forced_resend_for_a_new_version_then_incremental(store, run_dir):
+    _sync(run_dir)
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text())
+    for entries in state.values():                           # a PC that synced before this version: files recorded, no marker
+        entries.pop(sync.FORCE_KEY, None)
+    state_path.write_text(json.dumps(state))
+
+    Store.puts.clear()
+    assert _sync(run_dir, only_logs=True)["sent"] == 0       # a partial sync neither forces nor records it
+    r = _sync(run_dir)
+    assert r["sent"] >= 4 and "6.6.0/abc/data/dataset_pc1of2.jsonl" in Store.puts
+
+    Store.puts.clear()
+    assert _sync(run_dir)["sent"] == 0                       # marked: incremental again

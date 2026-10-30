@@ -1234,6 +1234,28 @@ def _write_shard_manifest(args, entries: list, ok: int, failed: list) -> None:
         print(f"[warn] could not write the shard manifest: {e}", flush=True)
 
 
+def _catch_up_snapshots(args, done_repos: dict) -> None:
+    """Before mining: compile the snapshot and commit-feature tables for repos that are already finished but
+    have none (an earlier batch that was stopped or ended before assembly), from their kept captures, with no
+    re-mining, and send them to the team store. Never fails the batch."""
+    if args.test or not args.snapshots or not args.assemble_snapshots or not done_repos:
+        return
+    try:
+        dataset = args.out if os.path.isfile(args.out) else os.path.splitext(args.out)[0] + ".jsonl"
+        out, commits_out = naming.snapshot_outs(dataset)
+        import snapshots
+        missing = snapshots.uncompiled_repos(set(done_repos), args.snapshot_root, out, commits_out)
+        if not missing:
+            return
+        print(f"[snapshots] {len(missing)} finished repos have captures but no snapshot or commit tables "
+              f"({', '.join(missing[:3])}{'...' if len(missing) > 3 else ''}); compiling them, no re-mine", flush=True)
+        runlog.info("snapshots", "catch-up", repos=missing)
+        _assemble_snapshots(args)
+        _sync_now("snapshots catch-up")
+    except Exception as e:                                  # noqa: BLE001
+        print(f"[snapshots] catch-up skipped ({type(e).__name__}: {e})", flush=True)
+
+
 def _assemble_snapshots(args) -> None:
     """Build the snapshot tables once every repo is mined (ADR 0010; snapshots.py).
     They need the finished at-open rows of the whole dataset, so this runs at the
@@ -1665,6 +1687,7 @@ def main():
     progress.emit("batch_start", repos=[f"{o}/{n}" for o, n, _ in entries], out=args.out)
     runlog.info("batch", "repos", repos=[f"{o}/{n}" for o, n, _ in entries])    # the Airflow DAG draws one chain per repo
     _sync_begin(entries, done_repos)
+    _catch_up_snapshots(args, done_repos)
     attempts = max(1, args.repo_retries + 1)
     ok, failed, skipped = 0, [], []
     if args.skip_big and not args.test:
