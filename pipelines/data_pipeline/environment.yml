@@ -1,0 +1,10 @@
+# conda env create -f environment.yml && conda activate riffle-data-pipeline
+# Run from pipelines/data_pipeline: the pip step installs ../ingestion/aidev from a relative path.
+name: riffle-data-pipeline
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.11,<3.14
+  - pip
+  - pip:
+      - -r requirements.txt

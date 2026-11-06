@@ -12,6 +12,12 @@ USER airflow
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
+# The data pipeline's stages run in their own virtualenv, so pandas and Great Expectations
+# cannot conflict with Airflow's dependencies (DAGs call /home/airflow/riffle-venv/bin/python).
+COPY requirements-pipeline.txt /tmp/requirements-pipeline.txt
+RUN python -m venv /home/airflow/riffle-venv \
+    && /home/airflow/riffle-venv/bin/pip install --no-cache-dir -r /tmp/requirements-pipeline.txt
+
 # Start-up helpers the Compose file calls: login-file validation and the
 # database URL. They are files, not inline YAML, so they can be linted and tested.
 COPY scripts/ /opt/airflow/scripts/

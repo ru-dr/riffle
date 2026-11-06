@@ -1,0 +1,3 @@
+/data/raw
+/logs/*
+!/logs/.gitkeep

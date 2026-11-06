@@ -1,0 +1,1113 @@
+{
+  "always_merged_accuracy": 0.7793,
+  "overall": {
+    "baseline": {
+      "accuracy": 0.6736,
+      "auc": 0.6721,
+      "fpr": 0.4722,
+      "selection_rate": 0.6613,
+      "tpr": 0.7149
+    },
+    "reweighed": {
+      "accuracy": 0.6141,
+      "auc": 0.6687,
+      "fpr": 0.3738,
+      "selection_rate": 0.5584,
+      "tpr": 0.6106
+    },
+    "thresholded": {
+      "accuracy": 0.5968,
+      "auc": null,
+      "fpr": 0.5453,
+      "selection_rate": 0.6168,
+      "tpr": 0.6371
+    }
+  },
+  "rows": {
+    "fit": 226034,
+    "test": 66481,
+    "validation": 39889
+  },
+  "settings": {
+    "features": [
+      "agent",
+      "language_group",
+      "license_family",
+      "log_stars",
+      "log_forks",
+      "log_pr_number",
+      "log_title_chars",
+      "log_body_chars",
+      "title_words",
+      "has_body",
+      "hour_utc",
+      "is_weekend",
+      "is_forked"
+    ],
+    "min_group_size": 500,
+    "mitigate_on": "agent",
+    "top_languages": 10,
+    "validation_fraction": 0.15
+  },
+  "slices": {
+    "agent": {
+      "baseline": {
+        "gaps": {
+          "accuracy": {
+            "best": "Claude_Code",
+            "gap": 0.4349,
+            "worst": "Cursor"
+          },
+          "auc": {
+            "best": "OpenAI_Codex",
+            "gap": 0.1504,
+            "worst": "Copilot"
+          },
+          "fpr": {
+            "best": "Cursor",
+            "gap": 0.5334,
+            "worst": "Claude_Code"
+          },
+          "tpr": {
+            "best": "Claude_Code",
+            "gap": 0.7633,
+            "worst": "Cursor"
+          }
+        },
+        "groups": {
+          "Claude_Code": {
+            "accuracy": 0.7598,
+            "auc": 0.6874,
+            "count": 45079,
+            "fpr": 0.6164,
+            "merge_rate": 0.7991,
+            "selection_rate": 0.8066,
+            "tpr": 0.8544
+          },
+          "Copilot": {
+            "accuracy": 0.3673,
+            "auc": 0.5708,
+            "count": 10745,
+            "fpr": 0.1312,
+            "merge_rate": 0.7454,
+            "selection_rate": 0.1795,
+            "tpr": 0.196
+          },
+          "Cursor": {
+            "accuracy": 0.3249,
+            "auc": 0.5761,
+            "count": 1745,
+            "fpr": 0.083,
+            "merge_rate": 0.7169,
+            "selection_rate": 0.0888,
+            "tpr": 0.0911
+          },
+          "Devin": {
+            "accuracy": 0.3168,
+            "auc": 0.4843,
+            "count": 464,
+            "fpr": 0.0153,
+            "merge_rate": 0.7177,
+            "selection_rate": 0.0431,
+            "tpr": 0.0541
+          },
+          "Google_Jules": {
+            "accuracy": 0.1558,
+            "auc": 0.797,
+            "count": 77,
+            "fpr": 0.0,
+            "merge_rate": 0.8701,
+            "selection_rate": 0.026,
+            "tpr": 0.0299
+          },
+          "OpenAI_Codex": {
+            "accuracy": 0.6996,
+            "auc": 0.7212,
+            "count": 8371,
+            "fpr": 0.42,
+            "merge_rate": 0.7318,
+            "selection_rate": 0.6567,
+            "tpr": 0.7434
+          }
+        },
+        "groups_too_small": [
+          "Devin",
+          "Google_Jules"
+        ]
+      },
+      "reweighed": {
+        "gaps": {
+          "accuracy": {
+            "best": "Claude_Code",
+            "gap": 0.1863,
+            "worst": "OpenAI_Codex"
+          },
+          "auc": {
+            "best": "OpenAI_Codex",
+            "gap": 0.1521,
+            "worst": "Copilot"
+          },
+          "fpr": {
+            "best": "OpenAI_Codex",
+            "gap": 0.4212,
+            "worst": "Copilot"
+          },
+          "tpr": {
+            "best": "Claude_Code",
+            "gap": 0.3559,
+            "worst": "OpenAI_Codex"
+          }
+        },
+        "groups": {
+          "Claude_Code": {
+            "accuracy": 0.6534,
+            "auc": 0.6886,
+            "count": 45079,
+            "fpr": 0.3944,
+            "merge_rate": 0.7991,
+            "selection_rate": 0.611,
+            "tpr": 0.6654
+          },
+          "Copilot": {
+            "accuracy": 0.5836,
+            "auc": 0.5687,
+            "count": 10745,
+            "fpr": 0.5241,
+            "merge_rate": 0.7454,
+            "selection_rate": 0.5959,
+            "tpr": 0.6204
+          },
+          "Cursor": {
+            "accuracy": 0.5393,
+            "auc": 0.5767,
+            "count": 1745,
+            "fpr": 0.4109,
+            "merge_rate": 0.7169,
+            "selection_rate": 0.4888,
+            "tpr": 0.5196
+          },
+          "Devin": {
+            "accuracy": 0.3922,
+            "auc": 0.4911,
+            "count": 464,
+            "fpr": 0.3282,
+            "merge_rate": 0.7177,
+            "selection_rate": 0.2953,
+            "tpr": 0.2823
+          },
+          "Google_Jules": {
+            "accuracy": 0.8442,
+            "auc": 0.797,
+            "count": 77,
+            "fpr": 0.2,
+            "merge_rate": 0.8701,
+            "selection_rate": 0.7662,
+            "tpr": 0.8507
+          },
+          "OpenAI_Codex": {
+            "accuracy": 0.4671,
+            "auc": 0.7208,
+            "count": 8371,
+            "fpr": 0.1029,
+            "merge_rate": 0.7318,
+            "selection_rate": 0.2541,
+            "tpr": 0.3095
+          }
+        },
+        "groups_too_small": [
+          "Devin",
+          "Google_Jules"
+        ]
+      },
+      "thresholded": {
+        "gaps": {
+          "accuracy": {
+            "best": "Cursor",
+            "gap": 0.0401,
+            "worst": "OpenAI_Codex"
+          },
+          "auc": {
+            "best": null,
+            "gap": null,
+            "worst": null
+          },
+          "fpr": {
+            "best": "Cursor",
+            "gap": 0.0449,
+            "worst": "OpenAI_Codex"
+          },
+          "tpr": {
+            "best": "Cursor",
+            "gap": 0.0423,
+            "worst": "OpenAI_Codex"
+          }
+        },
+        "groups": {
+          "Claude_Code": {
+            "accuracy": 0.6009,
+            "auc": null,
+            "count": 45079,
+            "fpr": 0.5359,
+            "merge_rate": 0.7991,
+            "selection_rate": 0.6154,
+            "tpr": 0.6353
+          },
+          "Copilot": {
+            "accuracy": 0.5989,
+            "auc": null,
+            "count": 10745,
+            "fpr": 0.553,
+            "merge_rate": 0.7454,
+            "selection_rate": 0.6259,
+            "tpr": 0.6508
+          },
+          "Cursor": {
+            "accuracy": 0.6092,
+            "auc": null,
+            "count": 1745,
+            "fpr": 0.5324,
+            "merge_rate": 0.7169,
+            "selection_rate": 0.6275,
+            "tpr": 0.6651
+          },
+          "Devin": {
+            "accuracy": 0.6013,
+            "auc": null,
+            "count": 464,
+            "fpr": 0.542,
+            "merge_rate": 0.7177,
+            "selection_rate": 0.625,
+            "tpr": 0.6577
+          },
+          "Google_Jules": {
+            "accuracy": 0.6234,
+            "auc": null,
+            "count": 77,
+            "fpr": 0.4,
+            "merge_rate": 0.8701,
+            "selection_rate": 0.5974,
+            "tpr": 0.6269
+          },
+          "OpenAI_Codex": {
+            "accuracy": 0.5691,
+            "auc": null,
+            "count": 8371,
+            "fpr": 0.5773,
+            "merge_rate": 0.7318,
+            "selection_rate": 0.6106,
+            "tpr": 0.6228
+          }
+        },
+        "groups_too_small": [
+          "Devin",
+          "Google_Jules"
+        ]
+      }
+    },
+    "language_group": {
+      "baseline": {
+        "gaps": {
+          "accuracy": {
+            "best": "HTML",
+            "gap": 0.2844,
+            "worst": "C++"
+          },
+          "auc": {
+            "best": "TypeScript",
+            "gap": 0.2217,
+            "worst": "HTML"
+          },
+          "fpr": {
+            "best": "C++",
+            "gap": 0.5751,
+            "worst": "HTML"
+          },
+          "tpr": {
+            "best": "HTML",
+            "gap": 0.4617,
+            "worst": "C++"
+          }
+        },
+        "groups": {
+          "C#": {
+            "accuracy": 0.6464,
+            "auc": 0.6532,
+            "count": 2545,
+            "fpr": 0.4397,
+            "merge_rate": 0.8436,
+            "selection_rate": 0.6275,
+            "tpr": 0.6623
+          },
+          "C++": {
+            "accuracy": 0.5447,
+            "auc": 0.6029,
+            "count": 2161,
+            "fpr": 0.3522,
+            "merge_rate": 0.7136,
+            "selection_rate": 0.46,
+            "tpr": 0.5032
+          },
+          "Go": {
+            "accuracy": 0.6475,
+            "auc": 0.6434,
+            "count": 7044,
+            "fpr": 0.6031,
+            "merge_rate": 0.7818,
+            "selection_rate": 0.6925,
+            "tpr": 0.7175
+          },
+          "HTML": {
+            "accuracy": 0.8291,
+            "auc": 0.5025,
+            "count": 1445,
+            "fpr": 0.9273,
+            "merge_rate": 0.8478,
+            "selection_rate": 0.9592,
+            "tpr": 0.9649
+          },
+          "Java": {
+            "accuracy": 0.6608,
+            "auc": 0.6015,
+            "count": 1757,
+            "fpr": 0.5824,
+            "merge_rate": 0.7997,
+            "selection_rate": 0.6938,
+            "tpr": 0.7217
+          },
+          "JavaScript": {
+            "accuracy": 0.6191,
+            "auc": 0.6232,
+            "count": 2494,
+            "fpr": 0.4645,
+            "merge_rate": 0.7626,
+            "selection_rate": 0.6022,
+            "tpr": 0.6451
+          },
+          "Python": {
+            "accuracy": 0.6946,
+            "auc": 0.6644,
+            "count": 11549,
+            "fpr": 0.5014,
+            "merge_rate": 0.7558,
+            "selection_rate": 0.6953,
+            "tpr": 0.7579
+          },
+          "Rust": {
+            "accuracy": 0.6692,
+            "auc": 0.6493,
+            "count": 5747,
+            "fpr": 0.568,
+            "merge_rate": 0.7926,
+            "selection_rate": 0.6974,
+            "tpr": 0.7313
+          },
+          "Scheme": {
+            "accuracy": 1.0,
+            "auc": null,
+            "count": 2,
+            "fpr": null,
+            "merge_rate": 1.0,
+            "selection_rate": 1.0,
+            "tpr": 1.0
+          },
+          "TypeScript": {
+            "accuracy": 0.6866,
+            "auc": 0.7242,
+            "count": 22395,
+            "fpr": 0.3683,
+            "merge_rate": 0.7744,
+            "selection_rate": 0.6272,
+            "tpr": 0.7026
+          },
+          "other": {
+            "accuracy": 0.6686,
+            "auc": 0.6437,
+            "count": 8896,
+            "fpr": 0.488,
+            "merge_rate": 0.8037,
+            "selection_rate": 0.6639,
+            "tpr": 0.7069
+          },
+          "unknown": {
+            "accuracy": 0.6726,
+            "auc": 0.5872,
+            "count": 446,
+            "fpr": 0.8333,
+            "merge_rate": 0.6771,
+            "selection_rate": 0.8879,
+            "tpr": 0.9139
+          }
+        },
+        "groups_too_small": [
+          "Scheme",
+          "unknown"
+        ]
+      },
+      "reweighed": {
+        "gaps": {
+          "accuracy": {
+            "best": "HTML",
+            "gap": 0.3693,
+            "worst": "C++"
+          },
+          "auc": {
+            "best": "TypeScript",
+            "gap": 0.2252,
+            "worst": "HTML"
+          },
+          "fpr": {
+            "best": "C++",
+            "gap": 0.7197,
+            "worst": "HTML"
+          },
+          "tpr": {
+            "best": "HTML",
+            "gap": 0.6438,
+            "worst": "C++"
+          }
+        },
+        "groups": {
+          "C#": {
+            "accuracy": 0.71,
+            "auc": 0.5908,
+            "count": 2545,
+            "fpr": 0.6935,
+            "merge_rate": 0.8436,
+            "selection_rate": 0.7705,
+            "tpr": 0.7848
+          },
+          "C++": {
+            "accuracy": 0.4729,
+            "auc": 0.5962,
+            "count": 2161,
+            "fpr": 0.1712,
+            "merge_rate": 0.7136,
+            "selection_rate": 0.2846,
+            "tpr": 0.3301
+          },
+          "Go": {
+            "accuracy": 0.6696,
+            "auc": 0.6851,
+            "count": 7044,
+            "fpr": 0.4203,
+            "merge_rate": 0.7818,
+            "selection_rate": 0.6349,
+            "tpr": 0.6948
+          },
+          "HTML": {
+            "accuracy": 0.8422,
+            "auc": 0.491,
+            "count": 1445,
+            "fpr": 0.8909,
+            "merge_rate": 0.8478,
+            "selection_rate": 0.9612,
+            "tpr": 0.9739
+          },
+          "Java": {
+            "accuracy": 0.6232,
+            "auc": 0.5699,
+            "count": 1757,
+            "fpr": 0.5966,
+            "merge_rate": 0.7997,
+            "selection_rate": 0.6619,
+            "tpr": 0.6783
+          },
+          "JavaScript": {
+            "accuracy": 0.5886,
+            "auc": 0.6227,
+            "count": 2494,
+            "fpr": 0.3716,
+            "merge_rate": 0.7626,
+            "selection_rate": 0.5277,
+            "tpr": 0.5762
+          },
+          "Python": {
+            "accuracy": 0.6314,
+            "auc": 0.6647,
+            "count": 11549,
+            "fpr": 0.4046,
+            "merge_rate": 0.7558,
+            "selection_rate": 0.5848,
+            "tpr": 0.643
+          },
+          "Rust": {
+            "accuracy": 0.6363,
+            "auc": 0.6464,
+            "count": 5747,
+            "fpr": 0.4253,
+            "merge_rate": 0.7926,
+            "selection_rate": 0.6054,
+            "tpr": 0.6525
+          },
+          "Scheme": {
+            "accuracy": 1.0,
+            "auc": null,
+            "count": 2,
+            "fpr": null,
+            "merge_rate": 1.0,
+            "selection_rate": 1.0,
+            "tpr": 1.0
+          },
+          "TypeScript": {
+            "accuracy": 0.6035,
+            "auc": 0.7162,
+            "count": 22395,
+            "fpr": 0.2919,
+            "merge_rate": 0.7744,
+            "selection_rate": 0.5096,
+            "tpr": 0.573
+          },
+          "other": {
+            "accuracy": 0.5301,
+            "auc": 0.6208,
+            "count": 8896,
+            "fpr": 0.354,
+            "merge_rate": 0.8037,
+            "selection_rate": 0.4728,
+            "tpr": 0.5018
+          },
+          "unknown": {
+            "accuracy": 0.7085,
+            "auc": 0.7235,
+            "count": 446,
+            "fpr": 0.625,
+            "merge_rate": 0.6771,
+            "selection_rate": 0.7892,
+            "tpr": 0.8675
+          }
+        },
+        "groups_too_small": [
+          "Scheme",
+          "unknown"
+        ]
+      },
+      "thresholded": {
+        "gaps": {
+          "accuracy": {
+            "best": "C#",
+            "gap": 0.1575,
+            "worst": "C++"
+          },
+          "auc": {
+            "best": null,
+            "gap": null,
+            "worst": null
+          },
+          "fpr": {
+            "best": "C++",
+            "gap": 0.3143,
+            "worst": "HTML"
+          },
+          "tpr": {
+            "best": "C#",
+            "gap": 0.261,
+            "worst": "C++"
+          }
+        },
+        "groups": {
+          "C#": {
+            "accuracy": 0.6629,
+            "auc": null,
+            "count": 2545,
+            "fpr": 0.6985,
+            "merge_rate": 0.8436,
+            "selection_rate": 0.725,
+            "tpr": 0.7299
+          },
+          "C++": {
+            "accuracy": 0.5053,
+            "auc": null,
+            "count": 2161,
+            "fpr": 0.4039,
+            "merge_rate": 0.7136,
+            "selection_rate": 0.4503,
+            "tpr": 0.4689
+          },
+          "Go": {
+            "accuracy": 0.6134,
+            "auc": null,
+            "count": 7044,
+            "fpr": 0.6506,
+            "merge_rate": 0.7818,
+            "selection_rate": 0.6792,
+            "tpr": 0.6871
+          },
+          "HTML": {
+            "accuracy": 0.654,
+            "auc": null,
+            "count": 1445,
+            "fpr": 0.7182,
+            "merge_rate": 0.8478,
+            "selection_rate": 0.7204,
+            "tpr": 0.7208
+          },
+          "Java": {
+            "accuracy": 0.634,
+            "auc": null,
+            "count": 1757,
+            "fpr": 0.6648,
+            "merge_rate": 0.7997,
+            "selection_rate": 0.7001,
+            "tpr": 0.7089
+          },
+          "JavaScript": {
+            "accuracy": 0.577,
+            "auc": null,
+            "count": 2494,
+            "fpr": 0.5389,
+            "merge_rate": 0.7626,
+            "selection_rate": 0.5954,
+            "tpr": 0.613
+          },
+          "Python": {
+            "accuracy": 0.5912,
+            "auc": null,
+            "count": 11549,
+            "fpr": 0.545,
+            "merge_rate": 0.7558,
+            "selection_rate": 0.6132,
+            "tpr": 0.6352
+          },
+          "Rust": {
+            "accuracy": 0.585,
+            "auc": null,
+            "count": 5747,
+            "fpr": 0.6015,
+            "merge_rate": 0.7926,
+            "selection_rate": 0.6271,
+            "tpr": 0.6338
+          },
+          "Scheme": {
+            "accuracy": 1.0,
+            "auc": null,
+            "count": 2,
+            "fpr": null,
+            "merge_rate": 1.0,
+            "selection_rate": 1.0,
+            "tpr": 1.0
+          },
+          "TypeScript": {
+            "accuracy": 0.5934,
+            "auc": null,
+            "count": 22395,
+            "fpr": 0.4948,
+            "merge_rate": 0.7744,
+            "selection_rate": 0.591,
+            "tpr": 0.6191
+          },
+          "other": {
+            "accuracy": 0.5962,
+            "auc": null,
+            "count": 8896,
+            "fpr": 0.5218,
+            "merge_rate": 0.8037,
+            "selection_rate": 0.6048,
+            "tpr": 0.625
+          },
+          "unknown": {
+            "accuracy": 0.6614,
+            "auc": null,
+            "count": 446,
+            "fpr": 0.6736,
+            "merge_rate": 0.6771,
+            "selection_rate": 0.7735,
+            "tpr": 0.8212
+          }
+        },
+        "groups_too_small": [
+          "Scheme",
+          "unknown"
+        ]
+      }
+    },
+    "license_family": {
+      "baseline": {
+        "gaps": {
+          "accuracy": {
+            "best": "unknown",
+            "gap": 0.0914,
+            "worst": "copyleft"
+          },
+          "auc": {
+            "best": "permissive",
+            "gap": 0.052,
+            "worst": "copyleft"
+          },
+          "fpr": {
+            "best": "permissive",
+            "gap": 0.0684,
+            "worst": "unknown"
+          },
+          "tpr": {
+            "best": "unknown",
+            "gap": 0.1249,
+            "worst": "copyleft"
+          }
+        },
+        "groups": {
+          "copyleft": {
+            "accuracy": 0.6142,
+            "auc": 0.6268,
+            "count": 6467,
+            "fpr": 0.4613,
+            "merge_rate": 0.7643,
+            "selection_rate": 0.5959,
+            "tpr": 0.6375
+          },
+          "other": {
+            "accuracy": 0.6898,
+            "auc": 0.4332,
+            "count": 187,
+            "fpr": 0.8378,
+            "merge_rate": 0.8021,
+            "selection_rate": 0.8235,
+            "tpr": 0.82
+          },
+          "permissive": {
+            "accuracy": 0.6712,
+            "auc": 0.6788,
+            "count": 44644,
+            "fpr": 0.4567,
+            "merge_rate": 0.7735,
+            "selection_rate": 0.6516,
+            "tpr": 0.7087
+          },
+          "unknown": {
+            "accuracy": 0.7056,
+            "auc": 0.6714,
+            "count": 15183,
+            "fpr": 0.5252,
+            "merge_rate": 0.8025,
+            "selection_rate": 0.7155,
+            "tpr": 0.7624
+          }
+        },
+        "groups_too_small": [
+          "other"
+        ]
+      },
+      "reweighed": {
+        "gaps": {
+          "accuracy": {
+            "best": "unknown",
+            "gap": 0.0947,
+            "worst": "copyleft"
+          },
+          "auc": {
+            "best": "permissive",
+            "gap": 0.0836,
+            "worst": "copyleft"
+          },
+          "fpr": {
+            "best": "permissive",
+            "gap": 0.0645,
+            "worst": "unknown"
+          },
+          "tpr": {
+            "best": "unknown",
+            "gap": 0.13,
+            "worst": "copyleft"
+          }
+        },
+        "groups": {
+          "copyleft": {
+            "accuracy": 0.5415,
+            "auc": 0.5977,
+            "count": 6467,
+            "fpr": 0.3891,
+            "merge_rate": 0.7643,
+            "selection_rate": 0.4893,
+            "tpr": 0.5201
+          },
+          "other": {
+            "accuracy": 0.7487,
+            "auc": 0.5369,
+            "count": 187,
+            "fpr": 0.9459,
+            "merge_rate": 0.8021,
+            "selection_rate": 0.9251,
+            "tpr": 0.92
+          },
+          "permissive": {
+            "accuracy": 0.6165,
+            "auc": 0.6813,
+            "count": 44644,
+            "fpr": 0.3557,
+            "merge_rate": 0.7735,
+            "selection_rate": 0.5511,
+            "tpr": 0.6083
+          },
+          "unknown": {
+            "accuracy": 0.6362,
+            "auc": 0.657,
+            "count": 15183,
+            "fpr": 0.4201,
+            "merge_rate": 0.8025,
+            "selection_rate": 0.6047,
+            "tpr": 0.6501
+          }
+        },
+        "groups_too_small": [
+          "other"
+        ]
+      },
+      "thresholded": {
+        "gaps": {
+          "accuracy": {
+            "best": "unknown",
+            "gap": 0.0083,
+            "worst": "copyleft"
+          },
+          "auc": {
+            "best": null,
+            "gap": null,
+            "worst": null
+          },
+          "fpr": {
+            "best": "unknown",
+            "gap": 0.0077,
+            "worst": "permissive"
+          },
+          "tpr": {
+            "best": "permissive",
+            "gap": 0.0002,
+            "worst": "unknown"
+          }
+        },
+        "groups": {
+          "copyleft": {
+            "accuracy": 0.5935,
+            "auc": null,
+            "count": 6467,
+            "fpr": 0.5453,
+            "merge_rate": 0.7643,
+            "selection_rate": 0.6148,
+            "tpr": 0.6363
+          },
+          "other": {
+            "accuracy": 0.7326,
+            "auc": null,
+            "count": 187,
+            "fpr": 0.8378,
+            "merge_rate": 0.8021,
+            "selection_rate": 0.8663,
+            "tpr": 0.8733
+          },
+          "permissive": {
+            "accuracy": 0.5951,
+            "auc": null,
+            "count": 44644,
+            "fpr": 0.5462,
+            "merge_rate": 0.7735,
+            "selection_rate": 0.616,
+            "tpr": 0.6365
+          },
+          "unknown": {
+            "accuracy": 0.6017,
+            "auc": null,
+            "count": 15183,
+            "fpr": 0.5385,
+            "merge_rate": 0.8025,
+            "selection_rate": 0.6169,
+            "tpr": 0.6362
+          }
+        },
+        "groups_too_small": [
+          "other"
+        ]
+      }
+    },
+    "stars_bucket": {
+      "baseline": {
+        "gaps": {
+          "accuracy": {
+            "best": "100-199",
+            "gap": 0.3108,
+            "worst": "5k+"
+          },
+          "auc": {
+            "best": "1k-4.9k",
+            "gap": 0.0439,
+            "worst": "100-199"
+          },
+          "fpr": {
+            "best": "5k+",
+            "gap": 0.6409,
+            "worst": "100-199"
+          },
+          "tpr": {
+            "best": "100-199",
+            "gap": 0.5671,
+            "worst": "5k+"
+          }
+        },
+        "groups": {
+          "100-199": {
+            "accuracy": 0.8098,
+            "auc": 0.5977,
+            "count": 11442,
+            "fpr": 0.8384,
+            "merge_rate": 0.8675,
+            "selection_rate": 0.8995,
+            "tpr": 0.9088
+          },
+          "1k-4.9k": {
+            "accuracy": 0.6822,
+            "auc": 0.6416,
+            "count": 15326,
+            "fpr": 0.571,
+            "merge_rate": 0.807,
+            "selection_rate": 0.7096,
+            "tpr": 0.7427
+          },
+          "200-999": {
+            "accuracy": 0.7576,
+            "auc": 0.6257,
+            "count": 20275,
+            "fpr": 0.7459,
+            "merge_rate": 0.8243,
+            "selection_rate": 0.844,
+            "tpr": 0.8649
+          },
+          "5k+": {
+            "accuracy": 0.499,
+            "auc": 0.6176,
+            "count": 19438,
+            "fpr": 0.1975,
+            "merge_rate": 0.6586,
+            "selection_rate": 0.2925,
+            "tpr": 0.3417
+          }
+        },
+        "groups_too_small": []
+      },
+      "reweighed": {
+        "gaps": {
+          "accuracy": {
+            "best": "100-199",
+            "gap": 0.4501,
+            "worst": "5k+"
+          },
+          "auc": {
+            "best": "5k+",
+            "gap": 0.0992,
+            "worst": "100-199"
+          },
+          "fpr": {
+            "best": "5k+",
+            "gap": 0.8975,
+            "worst": "100-199"
+          },
+          "tpr": {
+            "best": "100-199",
+            "gap": 0.8729,
+            "worst": "5k+"
+          }
+        },
+        "groups": {
+          "100-199": {
+            "accuracy": 0.8248,
+            "auc": 0.5495,
+            "count": 11442,
+            "fpr": 0.9294,
+            "merge_rate": 0.8675,
+            "selection_rate": 0.9386,
+            "tpr": 0.94
+          },
+          "1k-4.9k": {
+            "accuracy": 0.5753,
+            "auc": 0.6392,
+            "count": 15326,
+            "fpr": 0.378,
+            "merge_rate": 0.807,
+            "selection_rate": 0.5282,
+            "tpr": 0.5641
+          },
+          "200-999": {
+            "accuracy": 0.754,
+            "auc": 0.5961,
+            "count": 20275,
+            "fpr": 0.7709,
+            "merge_rate": 0.8243,
+            "selection_rate": 0.8492,
+            "tpr": 0.8659
+          },
+          "5k+": {
+            "accuracy": 0.3747,
+            "auc": 0.6487,
+            "count": 19438,
+            "fpr": 0.0319,
+            "merge_rate": 0.6586,
+            "selection_rate": 0.055,
+            "tpr": 0.067
+          }
+        },
+        "groups_too_small": []
+      },
+      "thresholded": {
+        "gaps": {
+          "accuracy": {
+            "best": "100-199",
+            "gap": 0.1804,
+            "worst": "5k+"
+          },
+          "auc": {
+            "best": null,
+            "gap": null,
+            "worst": null
+          },
+          "fpr": {
+            "best": "5k+",
+            "gap": 0.3691,
+            "worst": "100-199"
+          },
+          "tpr": {
+            "best": "100-199",
+            "gap": 0.3095,
+            "worst": "5k+"
+          }
+        },
+        "groups": {
+          "100-199": {
+            "accuracy": 0.6721,
+            "auc": null,
+            "count": 11442,
+            "fpr": 0.754,
+            "merge_rate": 0.8675,
+            "selection_rate": 0.7394,
+            "tpr": 0.7372
+          },
+          "1k-4.9k": {
+            "accuracy": 0.6092,
+            "auc": null,
+            "count": 15326,
+            "fpr": 0.594,
+            "merge_rate": 0.807,
+            "selection_rate": 0.6454,
+            "tpr": 0.6577
+          },
+          "200-999": {
+            "accuracy": 0.6459,
+            "auc": null,
+            "count": 20275,
+            "fpr": 0.715,
+            "merge_rate": 0.8243,
+            "selection_rate": 0.7214,
+            "tpr": 0.7228
+          },
+          "5k+": {
+            "accuracy": 0.4917,
+            "auc": null,
+            "count": 19438,
+            "fpr": 0.3848,
+            "merge_rate": 0.6586,
+            "selection_rate": 0.413,
+            "tpr": 0.4276
+          }
+        },
+        "groups_too_small": []
+      }
+    }
+  },
+  "test_merge_rate": 0.7793
+}
