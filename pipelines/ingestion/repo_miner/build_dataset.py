@@ -761,7 +761,8 @@ def _drop_repo(out: str, repo: str, cache_dir: str = "ci_cache") -> None:
     for f in (os.path.join(cache_dir, f"{owner}_{name}.szz.json"),
               os.path.join(cache_dir, f"{owner}_{name}.szz.json.partial.jsonl"),
               os.path.join(cache_dir, f"{owner}_{name}.szz.json.blames.jsonl"),
-              os.path.join(cache_dir, f"{owner}_{name}.selection.json")):
+              os.path.join(cache_dir, f"{owner}_{name}.selection.json"),
+              os.path.join(cache_dir, f"{owner}_{name}.setup.json")):
         if os.path.isfile(f):
             os.remove(f)
             print(f"[remine] {repo}: removed {f}", flush=True)
