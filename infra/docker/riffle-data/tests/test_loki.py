@@ -186,13 +186,13 @@ def test_a_loki_that_is_down_never_fails_an_upload_and_gets_what_it_missed(env):
     more = (ev("done") + "\n").encode()
     assert put(env, KEY, more, offset=len(body))[0] == 200
     assert wait(lambda: len(env.fake.lines()) == 2)                     # the first line comes with the second
-    assert env.service.index.loki_offset(FULL) == len(body + more)
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len(body + more))
 
 
 def test_a_half_written_line_waits_for_its_end(env):
     put(env, KEY, b'{"msg": "a"}\n{"msg": "b')
     assert wait(lambda: len(env.fake.lines()) == 1)
-    assert env.service.index.loki_offset(FULL) == len(b'{"msg": "a"}\n')
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len(b'{"msg": "a"}\n'))
     put(env, KEY, b'{"msg": "a"}\n{"msg": "b"}\n')
     assert wait(lambda: len(env.fake.lines()) == 2)
 
@@ -276,7 +276,7 @@ def test_a_failed_push_never_leaves_a_hole_in_loki(env):
     time.sleep(0.4)
     got = sorted(json.loads(l)["msg"] for l in env.fake.lines())
     assert got == ["a", "b", "c"]                                       # every line, once
-    assert env.service.index.loki_offset(FULL) == len(a + b + (ev("c") + "\n").encode())
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len(a + b + (ev("c") + "\n").encode()))
 
 
 def test_the_queue_is_bounded_in_bytes_and_recovers(env, monkeypatch):
@@ -297,7 +297,7 @@ def test_a_long_trace_is_sent_a_chunk_at_a_time_without_loss(env, monkeypatch):
     put(env, KEY, body)
     assert wait(lambda: len(env.fake.lines()) == 200, 10)
     assert sorted(json.loads(l)["i"] for l in env.fake.lines()) == list(range(200))
-    assert env.service.index.loki_offset(FULL) == len(body)
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len(body))
 
 
 def test_one_line_loki_refuses_does_not_block_the_rest(env):
@@ -307,7 +307,7 @@ def test_one_line_loki_refuses_does_not_block_the_rest(env):
     assert wait(lambda: len(env.fake.lines()) == 2)
     assert sorted(json.loads(l)["msg"] for l in env.fake.lines()) == ["a", "b"]
     assert wait(lambda: env.service.loki.status()["rejected"] == 1)
-    assert env.service.index.loki_offset(FULL) == len(body)             # the trace moves on
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len(body))   # the trace moves on
 
 
 def test_a_line_from_the_future_is_stamped_now():
@@ -333,7 +333,7 @@ def test_a_shorter_replacement_of_a_trace_resets_loki_and_a_conflicting_append_i
     short = (ev("x") + "\n").encode()
     put(env, KEY, short)
     assert wait(lambda: any('"x"' in l or '"msg": "x"' in l for l in env.fake.lines()))
-    assert env.service.index.loki_offset(FULL) == len(short)
+    assert wait(lambda: env.service.index.loki_offset(FULL) == len(short))
     assert put(env, KEY + "/deeper.trace.jsonl", b"x\n", offset=0)[0] in (400, 409)
 
 
