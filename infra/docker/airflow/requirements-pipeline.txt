@@ -1,0 +1,11 @@
+# Packages for the data pipeline's stages (pipelines/data_pipeline). They go in their own
+# virtualenv in the image, not in Airflow's Python, so they cannot clash with Airflow's
+# dependencies. Keep in step with pipelines/data_pipeline/requirements.txt (minus DVC and
+# pytest, which the DAG does not need).
+huggingface_hub>=0.30
+pyarrow>=14
+pandas>=2.2
+PyYAML>=6
+great-expectations>=1.3,<2
+scikit-learn>=1.4
+fairlearn>=0.10

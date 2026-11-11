@@ -122,6 +122,21 @@ exists on no registry.
 The helper scripts in `scripts/` have tests:
 `python -m pytest infra/docker/airflow/tests`.
 
+## Try the data pipeline's email alerts (optional)
+
+`compose.yaml` has an optional `mailpit` service, a local mail catcher with a web page, behind the `mail` profile, so
+the default stack does not start it. It lets you see the alert emails without a real mail account.
+
+```bash
+docker compose --profile mail up -d          # starts Mailpit with the rest
+# add to .env: RIFFLE_SMTP_HOST=mailpit, RIFFLE_SMTP_PORT=1025, RIFFLE_ALERT_FROM, RIFFLE_ALERT_TO (see .env.example)
+docker compose --profile mail up -d          # again, so Airflow picks up the new .env
+```
+
+Read the mail at http://localhost:8025 (bound to 127.0.0.1; `MAILPIT_PORT` and `MAILPIT_BIND_ADDR` change it).
+Mailpit accepts any message and never forwards one, so it is for trying things, not for production. Without the
+profile, leave the `RIFFLE_SMTP_*` lines out of `.env` or the pipeline's emails will fail (and be logged).
+
 ## Not done yet
 
 - Logins use the simple auth manager: passwords sit in plain text in `.env` on
