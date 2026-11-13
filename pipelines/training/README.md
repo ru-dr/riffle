@@ -48,3 +48,31 @@ python pipelines/training/slices.py dataset_merged.parquet --out slices.csv [--s
 ```
 
 `--strict` exits 1 when a slice is flagged. Slice columns and thresholds are arguments, not repository rules.
+
+## Features for the at-open outcome model
+
+`outcome_features.py` turns the miner's dataset table into the inputs of a model that predicts `outcome_3class`
+(lands clean, lands after rework, goes nowhere) when a PR opens: 161 columns, 131 from the miner and 30 engineered
+(ADR 0022).
+
+```python
+import outcome_features as OF
+d = OF.build_features(dataset)       # the whole table: history needs every earlier PR of each repo
+X = d[list(OF.FEATURES)]
+rows = OF.training_rows(d)           # rows.scored, rows.train (exact at-open diffs), rows.weight
+w = rows.weight * OF.repo_weights(d["repo"])
+```
+
+- **Engineered:** the author's history in the repo (`ah_*`: outcome counts and smoothed rates, PRs open now, first
+  PR, days since the previous PR, tenure), the repo's recent behaviour (`rh*`: 90-day outcome mix, PRs open now,
+  PRs opened in 30 days, time to close, how outside authors and first-timers fared over 180 days), and consolidated
+  columns (`c_*`), among them the 18 LLM detail answers compressed into `c_llm_ran` and `c_llm_flags`.
+- **Point-in-time:** a past PR counts only if it closed strictly before this PR opened. A stale-open row (no
+  `closed_at`) never lends its outcome. Unknown authors get no author history.
+- **Leaks:** `OF.LEAKS` lists the columns a model must not read, with the reason for each.
+- **Rows:** score on outside contributors (not a bot, not a confirmed maintainer) whose PR has a known outcome,
+  opened at least 90 days before the data was observed, with an at-open diff that is not `final`. Train on those
+  with an exact diff, reweighted so each repo keeps its class mix.
+
+Run `python -m pytest pipelines/training/tests/test_outcome_features.py`: the cut test, the stale-open test, and a
+check that the column lists still match `contracts/mined_dataset.schema.json`.
