@@ -76,3 +76,10 @@ w = rows.weight * OF.repo_weights(d["repo"])
 
 Run `python -m pytest pipelines/training/tests/test_outcome_features.py`: the cut test, the stale-open test, and a
 check that the column lists still match `contracts/mined_dataset.schema.json`.
+
+## The outcome model pipeline
+
+`outcome/` holds the at-open outcome model the team chose (setup G: LightGBM, XGBoost and logistic regression,
+blended; ADR 0023): `pipeline.ipynb` trains and evaluates it from the miner's zip without importing project code,
+`WRITEUP.md` explains it, `DECISIONS.md` and `FEATURES_LOG.md` record how it was reached, and `experiments/` holds
+the code behind each pass. See `outcome/README.md`.

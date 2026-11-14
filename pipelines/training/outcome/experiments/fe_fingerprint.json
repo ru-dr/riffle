@@ -1,0 +1,38 @@
+{
+ "lands_after_rework | diff values": {
+  "auroc": 0.671,
+  "auroc_within_repo": 0.653,
+  "share_not_exact": 0.423,
+  "n": 68363
+ },
+ "lands_after_rework | diff blanks only": {
+  "auroc": 0.645,
+  "auroc_within_repo": 0.636,
+  "share_not_exact": 0.423,
+  "n": 68363
+ },
+ "lands_after_rework | all clean inputs": {
+  "auroc": 0.653,
+  "auroc_within_repo": 0.679,
+  "share_not_exact": 0.423,
+  "n": 68363
+ },
+ "goes_nowhere | diff values": {
+  "auroc": 0.657,
+  "auroc_within_repo": 0.674,
+  "share_not_exact": 0.131,
+  "n": 36348
+ },
+ "goes_nowhere | diff blanks only": {
+  "auroc": 0.635,
+  "auroc_within_repo": 0.63,
+  "share_not_exact": 0.131,
+  "n": 36348
+ },
+ "goes_nowhere | all clean inputs": {
+  "auroc": 0.657,
+  "auroc_within_repo": 0.702,
+  "share_not_exact": 0.131,
+  "n": 36348
+ }
+}

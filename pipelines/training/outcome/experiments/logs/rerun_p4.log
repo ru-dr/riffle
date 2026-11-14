@@ -1,0 +1,18 @@
+A LightGBM                                 pr   skill 0.2926 ±0.0008  ll 0.7789  calib 0.0104 (worst class 0.0123)  worst repo nestjs/nest 0.164  below0 0.0
+A LightGBM                                 repo skill 0.2348 ±0.0004  ll 0.8632  calib 0.0122 (worst class 0.0165)  worst repo nestjs/nest 0.057  below0 0.0
+A' LightGBM, strong regularisation         pr   skill 0.2898 ±0.0012  ll 0.7825  calib 0.0108 (worst class 0.0122)  worst repo preactjs/preact 0.156  below0 0.0
+A' LightGBM, strong regularisation         repo skill 0.2353 ±0.0008  ll 0.8622  calib 0.0130 (worst class 0.0179)  worst repo nestjs/nest 0.061  below0 0.0
+B LightGBM + XGBoost                       pr   skill 0.2949 ±0.0001  ll 0.7762  calib 0.0101 (worst class 0.0123)  worst repo nestjs/nest 0.166  below0 0.0
+B LightGBM + XGBoost                       repo skill 0.2357 ±0.0001  ll 0.8619  calib 0.0133 (worst class 0.0176)  worst repo nestjs/nest 0.057  below0 0.0
+C LightGBM + sequence                      pr   skill 0.2955 ±0.0008  ll 0.7753  calib 0.0101 (worst class 0.0123)  worst repo nestjs/nest 0.165  below0 0.0
+C LightGBM + sequence                      repo skill 0.2386 ±0.0006  ll 0.8583  calib 0.0112 (worst class 0.0148)  worst repo nestjs/nest 0.048  below0 0.0
+D LightGBM + logistic regression           pr   skill 0.2923 ±0.0009  ll 0.7797  calib 0.0102 (worst class 0.0134)  worst repo nestjs/nest 0.164  below0 0.0
+D LightGBM + logistic regression           repo skill 0.2387 ±0.0003  ll 0.8576  calib 0.0110 (worst class 0.0148)  worst repo nestjs/nest 0.056  below0 0.0
+E LightGBM + sequence + MLP                pr   skill 0.2955 ±0.0003  ll 0.7755  calib 0.0094 (worst class 0.0118)  worst repo nestjs/nest 0.166  below0 0.0
+E LightGBM + sequence + MLP                repo skill 0.2381 ±0.0008  ll 0.8586  calib 0.0108 (worst class 0.0141)  worst repo nestjs/nest 0.048  below0 0.0
+F LightGBM + XGBoost + sequence + MLP      pr   skill 0.2970 ±0.0004  ll 0.7736  calib 0.0100 (worst class 0.0124)  worst repo nestjs/nest 0.167  below0 0.0
+F LightGBM + XGBoost + sequence + MLP      repo skill 0.2386 ±0.0006  ll 0.8579  calib 0.0116 (worst class 0.0145)  worst repo nestjs/nest 0.049  below0 0.0
+G LightGBM + XGBoost + logistic regression pr   skill 0.2945 ±0.0001  ll 0.7769  calib 0.0105 (worst class 0.0121)  worst repo nestjs/nest 0.166  below0 0.0
+G LightGBM + XGBoost + logistic regression repo skill 0.2390 ±0.0000  ll 0.8571  calib 0.0119 (worst class 0.0152)  worst repo nestjs/nest 0.057  below0 0.0
+H LightGBM + XGBoost + sequence            pr   skill 0.2969 ±0.0001  ll 0.7736  calib 0.0100 (worst class 0.0116)  worst repo nestjs/nest 0.167  below0 0.0
+H LightGBM + XGBoost + sequence            repo skill 0.2390 ±0.0003  ll 0.8575  calib 0.0120 (worst class 0.0150)  worst repo nestjs/nest 0.049  below0 0.0
