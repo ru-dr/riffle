@@ -10,6 +10,7 @@ Every path below is relative to this folder.
 | `WRITEUP.md` | The writeup: rows, leaks, how we measured, the five passes, the model, results, limitations |
 | `pipeline.ipynb` | The whole pipeline, standalone, executed (outputs included): data, features, leakage tests, training, both evaluations, saving, scoring |
 | `eval/by_pr/`, `eval/by_repo/` | `eval_script.py` reports and charts for the two splits (`report.txt` first) |
+| `bias_report.py` | Slices the held-out predictions (newcomers, forks, agent branches, size, miner version, repo), flags disparities, writes `eval/*/bias/slices.csv` and `slices.png`; run it after the notebook |
 | `tools/sample_output.csv` | The team's sample output; the notebook checks its column order against it |
 | `DECISIONS.md` | Every decision in order, with the evidence and what it caused |
 | `FEATURES_LOG.md` | Every feature built and tested, pass by pass, with full result tables |

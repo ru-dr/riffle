@@ -141,7 +141,7 @@ sharing more.
 | LightGBM | 0.293 | 0.235 | 23 s | 10 MB | 6 ms | yes |
 | + XGBoost | 0.295 | 0.236 | 60 s | 94 MB | 21 ms | yes |
 | + logistic regression | 0.292 | 0.239 | 37 s | 187 MB | 15 ms | yes |
-| **G: + XGBoost + logistic regression (chosen)** | 0.295 | 0.239 | 75 s | 271 MB | 30 ms | yes |
+| **G: + XGBoost + logistic regression (chosen)** | 0.294 | 0.239 | 75 s | 271 MB | 30 ms | yes |
 | H: + XGBoost + GRU sequence model | 0.297 | 0.239 | 210 s | 94 MB + torch | 34 ms | trees only |
 
 G was chosen over H. H's +0.002 on seen repos is smaller than many differences we treat as noise. It costs torch

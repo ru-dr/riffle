@@ -35,7 +35,7 @@ A scorer may meet repos it was trained on or repos it has never seen.
 
 | Option | Why not |
 | --- | --- |
-| H: LightGBM + XGBoost + the GRU sequence model | Ties G on new repos (0.239) and leads by 0.002 on seen repos (0.297 against 0.295); needs torch, a serving path that fetches recent PRs, and explains only its tree part |
+| H: LightGBM + XGBoost + the GRU sequence model | Ties G on new repos (0.239) and leads by 0.002 on seen repos (0.297 against 0.294); needs torch, a serving path that fetches recent PRs, and explains only its tree part |
 | F: LightGBM + XGBoost + GRU + MLP | No better than H (0.297 / 0.239) |
 | LightGBM alone | 0.293 / 0.235 |
 | CatBoost, the MLP, logistic regression alone | Each behind LightGBM alone (one seed: 0.287 / 0.229, 0.264 / 0.219, 0.242 / 0.215) |
