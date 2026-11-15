@@ -1,0 +1,8 @@
+feature,auroc_on_its_own,outcome,filled_in,look_at_it
+LA,0.6770491999954757,lands_clean,1.0,
+author_prs_merged_repo,0.6610716113763986,goes_nowhere,0.9596743153219837,
+title_len,0.5647909540557386,lands_after_rework,1.0,
+LD,0.5584348801510751,lands_after_rework,1.0,
+repo_median_first_response_hours,0.5539849867168214,goes_nowhere,0.9971132494448557,
+repo_outside_closed_count,0.5330534260625159,lands_clean,1.0,
+ai_agent_authored,0.5028342112075824,goes_nowhere,1.0,

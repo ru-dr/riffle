@@ -78,6 +78,9 @@ jobs:
       - name: Training loader
         run: python -m pytest pipelines/training/tests -q
 
+      - name: Outcome model experiments (point-in-time tests; the sequence-model tests skip without torch)
+        run: python -m pytest pipelines/training/outcome/experiments -q
+
       - name: Airflow start-up scripts
         run: python -m pytest infra/docker/airflow/tests -q
 

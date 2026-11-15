@@ -50,6 +50,7 @@ from version import __version__
 from features import diff_stats, history, line_history, deterministic, scanners, deps_cve, llm_flags, api_contract, repo_local, merge_signals
 import flaky
 import maintainers
+import setup_cache
 from labels import (CI_SIDECAR, POST_MERGE_COLUMNS, build_labels, build_szz_index, szz_cache_covers,
                     szz_window)
 from merge_labels import (COLUMNS as MERGE_LABEL_COLUMNS, at_open, build_merge_labels,
@@ -296,6 +297,7 @@ def _make_base_resolver(repo: str, api, prs: list[dict], st: config.Settings):
             return None                        # actually a squash -> merge^1
         return cand
 
+    resolver.style = style                     # part of the setup cache's key (setup_cache.py)
     return resolver
 
 
@@ -434,7 +436,8 @@ def _author_prs_merged_repo(author_email: str, cutoff_raw: str | None,
 
 
 def _build_concurrency(repo: str, prs: list[dict],
-                       base_resolver=None, workers: int = 1) -> dict[int, dict]:
+                       base_resolver=None, workers: int = 1,
+                       stats: dict | None = None) -> dict[int, dict]:
     """
     For each PR, count OTHER PRs that were open at the moment it opened and
     touch the same files (and, more finely, the same lines). Point-in-time by
@@ -442,10 +445,15 @@ def _build_concurrency(repo: str, prs: list[dict],
     open when P opened. Files/lines come from the local clone, from each PR's
     at-open diff where known (ADR 0010), else its final diff — no extra API.
 
+    `stats`, when given, gets {"errors": n}: PRs whose diff could not be read (they count as touching no
+    file). The setup cache keeps the result only when there were none.
+
     Note: computed over the fetched PR set, so a small --max-prs cap undercounts
     (it only sees PRs in that window); a full mine sees all merged PRs. PRs that
     closed without merging aren't in the list and are not counted.
     """
+    errors: list = []
+
     def _one(pr: dict) -> dict | None:
         created = pr.get("created_at")
         closed = pr.get("merged_at") or pr.get("closed_at")
@@ -461,12 +469,15 @@ def _build_concurrency(repo: str, prs: list[dict],
             lines = gitio.changed_lines_by_file(repo, base, head)
         except Exception:
             lines = {}
+            errors.append(num)
         return {"num": num, "created": _parse_ts(created), "close": _parse_ts(closed),
                 "files": set(lines.keys()), "lines": lines}
 
     # one `git diff -U0` per PR, in parallel (the work is git subprocesses)
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         meta = [m for m in pool.map(_one, prs) if m is not None]
+    if stats is not None:
+        stats["errors"] = len(errors)
 
     # only PRs sharing a file can count for each other: index files -> PRs
     by_file: dict[str, list[int]] = defaultdict(list)
@@ -492,6 +503,28 @@ def _build_concurrency(repo: str, prs: list[dict],
             "concurrent_open_prs_same_hunks": same_hunks,
         }
     return out
+
+
+def _setup_stage(path: str | None, section: str, repo: str, prs: list[dict], base_resolver, label: str,
+                 compute, encode=lambda v: v, decode=lambda v: v):
+    """Run a setup stage through the setup cache (setup_cache.py). `compute()` returns (value, cacheable); a value
+    that came with errors is used but not kept. A cached value that cannot be decoded is a miss."""
+    key = setup_cache.key_for(section, repo, prs, getattr(base_resolver, "style", None)) if path else None
+    if key:
+        hit = setup_cache.load(path, section, key)
+        if hit is not None:
+            try:
+                value = decode(hit)
+            except (TypeError, ValueError, KeyError, AttributeError):
+                value = None
+            if value is not None:
+                print(f"[setup-cache] {label}: reused from {os.path.basename(path)} (same PRs, same history)",
+                      file=sys.stderr, flush=True)
+                return value
+    value, cacheable = compute()
+    if key and cacheable:
+        setup_cache.save(path, section, key, encode(value))
+    return value
 
 
 def _pr_metadata(pr: dict) -> dict:
@@ -1500,8 +1533,13 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         if evidence.confirmed((pr.get("user") or {}).get("login"),
                               _parse_ts(pr["created_at"]) if pr.get("created_at") else None):
             sc["outsider"] = False
+    setup_path = setup_cache.path_for(st.ci_cache_dir, owner, name) if api is not None else None
     runlog.stage("author index")
-    author_pr_times = _build_author_pr_times(repo, prs)
+    author_pr_times = _setup_stage(
+        setup_path, "author_index", repo, prs, base_resolver, "author index",
+        lambda: (_build_author_pr_times(repo, prs), True),
+        encode=lambda idx: {e: [t.isoformat() for t in ts] for e, ts in idx.items()},
+        decode=lambda d: {e: [datetime.fromisoformat(t) for t in ts] for e, ts in d.items()})
     if api is not None:
         runlog.stage("open snapshots")
         progress.emit("stage", repo=f"{owner}/{name}", stage="open snapshots")
@@ -1509,7 +1547,16 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
             _resolve_open_snapshots(repo, prs, api, default_branch, st)
             _save_open_snapshots(sel_path, st, prs, default_branch)
     runlog.stage("concurrency")
-    concurrency = _build_concurrency(repo, prs, base_resolver, st.workers)
+    def _compute_concurrency():
+        stats: dict = {}
+        out = _build_concurrency(repo, prs, base_resolver, st.workers, stats=stats)
+        return out, not stats.get("errors")
+    concurrency = _setup_stage(
+        setup_path, "concurrency", repo, prs, base_resolver, "concurrency", _compute_concurrency,
+        encode=lambda c: {str(n): v for n, v in c.items()},
+        decode=lambda d: {int(n): {"concurrent_open_prs_same_files": int(v["concurrent_open_prs_same_files"]),
+                                   "concurrent_open_prs_same_hunks": int(v["concurrent_open_prs_same_hunks"])}
+                          for n, v in d.items()})
     ci_map = {}
     if st.enable_ci_history and api is not None:
         cache_path = os.path.join(st.ci_cache_dir, f"{owner}_{name}.json")
@@ -1545,7 +1592,10 @@ def mine_repo(repo: str, owner: str, name: str, st: config.Settings,
         print("[szz] tracing fix-forward defects (slow; cached after first run)...",
               file=sys.stderr, flush=True)
         window = szz_window(prs, st)
-        relevant = _szz_relevant_commits(repo, prs, base_resolver, st.workers)
+        relevant = _setup_stage(
+            setup_path, "szz_relevant", repo, prs, base_resolver, "SZZ relevant commits",
+            lambda: (_szz_relevant_commits(repo, prs, base_resolver, st.workers), True),
+            encode=sorted, decode=set)
         szz_cached = szz_cache_covers(szz_cache, window, repo, relevant)
         szz_shas = build_szz_index(
             repo, st, szz_cache,
@@ -2059,12 +2109,12 @@ def main():
             drop_repo_from_checkpoint(out + ".partial.jsonl", f"{owner}/{name}")
         except OSError:
             pass
-        sel = selection_path(st, owner, name)
-        try:
-            if os.path.isfile(sel):
-                os.remove(sel)
-        except OSError:
-            pass
+        for stale in (selection_path(st, owner, name), setup_cache.path_for(st.ci_cache_dir, owner, name)):
+            try:
+                if os.path.isfile(stale):
+                    os.remove(stale)
+            except OSError:
+                pass
     if args.append:
         print(f"[done] +{len(rows)} rows this run, {total} total -> {out}")
     else:
