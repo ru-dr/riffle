@@ -1,0 +1,14 @@
+# Build context for infra/docker/outcome-training/Dockerfile (BuildKit reads <Dockerfile>.dockerignore): everything
+# is excluded except what the image copies, so the repo's data, clones and models never reach the build.
+*
+!infra/docker/outcome-training/
+!pipelines/training/outcome_features.py
+!pipelines/training/outcome/
+!pipelines/evaluation/eval_script.py
+pipelines/training/outcome/models/
+pipelines/training/outcome/predictions/
+pipelines/training/outcome/mlruns/
+pipelines/training/outcome/experiments/
+pipelines/training/outcome/eval/*/predictions.csv
+pipelines/training/outcome/eval/*/train.csv
+**/__pycache__/
