@@ -1,2 +1,2 @@
 label,answers,prs,brier,log_loss,f1_average,accuracy
-close_reason,duplicate/unwanted/ci_technical/abandoned/other,4488,0.6340610972876243,1.2252929586616286,0.43088648896532555,0.4850713012477718
+close_reason,duplicate/unwanted/ci_technical/abandoned/other,4488,0.6334046481739131,1.2239361485180813,0.43279621558987225,0.4855169340463458
