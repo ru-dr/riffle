@@ -115,7 +115,9 @@ def prepare(raw: pd.DataFrame) -> pd.DataFrame:
     d = raw[raw["outcome_3class"].isin(CLASSES)].reset_index(drop=True).copy()
     d["y"] = d["outcome_3class"].map({c: i for i, c in enumerate(CLASSES)}).astype(int)
     d["t_open"] = secs(d["created_at"])
-    d["t_close"] = np.maximum(secs(d["closed_at"]), d["t_open"])   # a close stamped before the open is not earlier
+    tc = secs(d["closed_at"])
+    tc = np.where(tc < 0, np.int64(2) ** 34, tc)                  # not closed (or unknown): far in the future
+    d["t_close"] = np.maximum(tc, d["t_open"])                    # a close stamped before the open is not earlier
     cut = d.groupby("repo")["observed_through"].transform(lambda s: s.dropna().max())
     d["t_obs"] = secs(d["observed_through"].fillna(cut))
     d["mature"] = (d["t_obs"] - d["t_open"]) >= MATURITY_DAYS * DAY
@@ -157,8 +159,9 @@ def _consolidated(d):
 def _history(d):
     """D. point-in-time history from PRs closed before this one opened."""
     t, tc, y = d["t_open"].to_numpy(), d["t_close"].to_numpy(), d["y"].to_numpy()
-    # a PR with no closed_at (1,339 goes-nowhere PRs) never adds an outcome or an open/closed count to anyone's
-    # history: when its outcome became known is unknown. (Before this fix it counted as closed at open: a leak.)
+    # a PR with no closed_at (1,339 goes-nowhere PRs) never adds an outcome to anyone's history: when its outcome
+    # became known is unknown. It counts as open from the day it opened (t_close is far in the future), as every
+    # open PR does when a new PR is scored. (Earlier it counted as closed at open, then as neither: both wrong.)
     hist_ok = pd.to_datetime(d["closed_at"], utc=True, errors="coerce").notna().to_numpy()
     Y = np.eye(3)[y] * hist_ok[:, None]
     ones = np.ones(len(d))
@@ -181,7 +184,7 @@ def _history(d):
     d["ah_nowhere"] = a[:, 2]
     rate = _rates(a, an, prior, 3.0)
     d["ah_clean_rate"], d["ah_rework_rate"], d["ah_nowhere_rate"] = rate.T
-    d["ah_open_now"] = prior_sum(ar, t, t, ones_h)[:, 0] - prior_sum(ar, t, tc, ones_h)[:, 0]
+    d["ah_open_now"] = prior_sum(ar, t, t, ones)[:, 0] - prior_sum(ar, t, tc, ones)[:, 0]
     d["ah_first_pr"] = ((an == 0) & (opened == 0)).astype(float)
     d["ah_days_since_prev_pr"] = prev_event_gap(ar, t, t) / DAY
     d["ah_tenure_days"] = first_event_gap(ar, t, t) / DAY
@@ -193,7 +196,7 @@ def _history(d):
     d["rh90_n"] = rn
     rr = np.where(rn[:, None] >= 5, r90 / np.maximum(rn, 1)[:, None], np.nan)
     d["rh90_clean_rate"], d["rh90_rework_rate"], d["rh90_nowhere_rate"] = rr.T
-    d["rh_open_now"] = prior_sum(repo, t, t, ones_h)[:, 0] - prior_sum(repo, t, tc, ones_h)[:, 0]
+    d["rh_open_now"] = prior_sum(repo, t, t, ones)[:, 0] - prior_sum(repo, t, tc, ones)[:, 0]
     d["rh30_opened"] = prior_sum(repo, t, t, ones, 30 * DAY)[:, 0]
     ttc = np.log1p((tc - t) / 3600.0)
     s = prior_sum(repo, t, tc, np.c_[ttc * hist_ok, ones_h], 90 * DAY)

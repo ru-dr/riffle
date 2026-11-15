@@ -1,6 +1,7 @@
 # Produced by running pipeline.ipynb or the experiments; regenerated, or too big for git.
 models/
 predictions/
+mlruns/
 eval/*/predictions.csv
 eval/*/train.csv
 *.zip

@@ -53,6 +53,23 @@ def test_cut():
     assert not bad, bad
 
 
+def test_open_prs_count_as_open():
+    """A PR with no closed_at is open: it counts in ah_open_now and rh_open_now from the day it opened, as every
+    open PR does when a new PR is scored, and it lends no outcome."""
+    raw = pd.DataFrame({
+        "repo": ["o/r"] * 3, "pr_number": [1, 2, 3], "author_email": ["a@x", "a@x", "b@x"],
+        "created_at": pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-05"], utc=True),
+        "closed_at": pd.to_datetime([None, "2024-01-10", None], utc=True),
+        "observed_through": pd.Timestamp("2024-06-01", tz="UTC"),
+        "outcome_3class": ["goes_nowhere", "lands_clean", "goes_nowhere"], "author_is_bot": False,
+        "author_confirmed_maintainer": False, "head_from_fork": True, "EXP": 1, "SEXP": 0, "LA": 10, "LD": 2,
+        "NF": 1, "ND": 1, "semantic_risk_1to5": None, "change_intent": "fix"})
+    d = F.prepare(raw).set_index("pr_number")
+    assert d.loc[3, "rh_open_now"] == 2      # PR 1 (no close time) and PR 2 (closes later) are open on 5 January
+    assert d.loc[2, "ah_open_now"] == 1      # the author's PR 1 is still open when PR 2 opens
+    assert d.loc[3, "rh90_n"] == 0           # neither has lent an outcome yet
+
+
 def test_counts():
     key = np.array([0, 0, 0, 1, -1])
     t = np.array([10, 20, 30, 20, 20])

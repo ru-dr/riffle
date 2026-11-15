@@ -1,11 +1,11 @@
 check,result,detail
 Prediction file is complete and valid,PASS,
 Model reads no banned columns,PASS,
-Beats the base rate overall,PASS,"skill 0.2695, 95% range down to 0.2318"
+Beats the base rate overall,PASS,"skill 0.2694, 95% range down to 0.2316"
 Beats the base rate in every main group,PASS,
-"Probabilities are honest (calibration error <= 0.03, slopes 0.8 to 1.2)",PASS,"calibration error 0.0147; slopes 0.99, 0.92, 1.01"
+"Probabilities are honest (calibration error <= 0.03, slopes 0.8 to 1.2)",PASS,"calibration error 0.0145; slopes 1.00, 0.93, 1.01"
 Honest within each repo tier (calibration error <= 0.05),not checked,no tier column
-'Likely to go nowhere' list beats PR age only,FAIL,nowhere list top-5 hit rate: -0.003 (95% range -0.080 to +0.062)
-'Likely to go nowhere' list beats simple heuristic,FAIL,nowhere list top-5 hit rate: -0.010 (95% range -0.082 to +0.046)
+'Likely to go nowhere' list beats PR age only,FAIL,nowhere list top-5 hit rate: -0.004 (95% range -0.081 to +0.061)
+'Likely to go nowhere' list beats simple heuristic,FAIL,nowhere list top-5 hit rate: -0.011 (95% range -0.083 to +0.045)
 Fast enough (95% of PRs scored within 200 ms),PASS,95% within 1 ms
 Trained with 3 or more seeds,PASS,3 seed(s)
