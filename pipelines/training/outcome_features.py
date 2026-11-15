@@ -205,13 +205,13 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
 
     # history
     t, tc = d["t_open"].to_numpy(), d["t_close"].to_numpy()
-    # a PR with no close time (a stale-open row) adds no outcome and no open/closed count to anyone's history: when
-    # its outcome became known is unknown. It still counts as having opened.
+    # a PR with no close time (a stale-open row) adds no outcome to anyone's history: when its outcome became known
+    # is unknown. It counts as open from the day it opened, as it was (still open when mined), so ah_open_now and
+    # rh_open_now mean the same in training as when a new PR is scored, where every open PR has no close time.
     hist_ok = known & pd.to_datetime(d["closed_at"], utc=True, errors="coerce").notna().to_numpy() \
         if "closed_at" in d else np.zeros(len(d), bool)
     Y = np.eye(3)[np.clip(d["y"].to_numpy(), 0, 2)] * hist_ok[:, None]
     ones = np.ones(len(d))
-    ones_h = hist_ok.astype(float)
     repo = pd.factorize(d["repo"])[0]
     ar = pd.factorize(d["repo"] + "\x00" + d["author_key"].fillna("\x01"))[0]
     ar[d["author_key"].isna().to_numpy()] = -1
@@ -223,7 +223,7 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
     d["ah_n"], d["ah_merged"], d["ah_nowhere"] = an, a[:, 0] + a[:, 1], a[:, 2]
     rate = _rates(a, an, prior, 3.0)
     d["ah_clean_rate"], d["ah_rework_rate"], d["ah_nowhere_rate"] = rate.T
-    d["ah_open_now"] = prior_sum(ar, t, t, ones_h)[:, 0] - prior_sum(ar, t, tc, ones_h)[:, 0]
+    d["ah_open_now"] = prior_sum(ar, t, t, ones)[:, 0] - prior_sum(ar, t, tc, ones)[:, 0]
     d["ah_first_pr"] = ((an == 0) & (opened == 0)).astype(float)
     d["ah_days_since_prev_pr"] = prev_event_gap(ar, t, t) / DAY
     d["ah_tenure_days"] = first_event_gap(ar, t, t) / DAY
@@ -233,7 +233,7 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
     d["rh90_n"] = rn
     rr = np.where(rn[:, None] >= 5, r90 / np.maximum(rn, 1)[:, None], np.nan)
     d["rh90_clean_rate"], d["rh90_rework_rate"], d["rh90_nowhere_rate"] = rr.T
-    d["rh_open_now"] = prior_sum(repo, t, t, ones_h)[:, 0] - prior_sum(repo, t, tc, ones_h)[:, 0]
+    d["rh_open_now"] = prior_sum(repo, t, t, ones)[:, 0] - prior_sum(repo, t, tc, ones)[:, 0]
     d["rh30_opened"] = prior_sum(repo, t, t, ones, 30 * DAY)[:, 0]
     s = prior_sum(repo, t, tc, np.c_[np.log1p((tc - t) / 3600.0) * hist_ok, hist_ok], 90 * DAY)
     d["rh90_mean_log_hours_to_close"] = np.where(s[:, 1] >= 5, s[:, 0] / np.maximum(s[:, 1], 1), np.nan)
