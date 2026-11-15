@@ -1,0 +1,16 @@
+# Produced by running pipeline.ipynb or the experiments; regenerated, or too big for git.
+models/
+predictions/
+eval/*/predictions.csv
+eval/*/train.csv
+*.zip
+# Experiment outputs: saved test predictions, profiled models, caches.
+experiments/fe_preds/
+experiments/fe_profile/
+experiments/fe_importance/
+experiments/catboost_info/
+experiments/logs/notebook_run.log
+__pycache__/
+# Local only.
+local_old/
+RESUME_STATE.md

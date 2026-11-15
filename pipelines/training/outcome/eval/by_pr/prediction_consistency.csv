@@ -1,0 +1,6 @@
+prediction,should_match,average_gap,largest_gap,result
+p_label_merged,p_clean + p_rework,5.356235196041602e-17,3.3306690738754696e-16,OK
+p_label_abandoned,p_nowhere x p_reason_abandoned,0.21651692756583105,0.7988021001273654,CHECK
+p_label_duplicate,p_nowhere x p_reason_duplicate,0.15036662924576752,0.6550296594498608,CHECK
+p_label_unwanted,p_nowhere x p_reason_unwanted,0.14129132604984276,0.5558116479213755,CHECK
+p_label_ci_technical,p_nowhere x p_reason_ci_technical,0.03658002829466267,0.8040779619798866,OK

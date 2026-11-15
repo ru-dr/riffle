@@ -1,0 +1,2 @@
+prs,prs_with_a_known_reason,f1_average,f1_average_lo,f1_average_hi,f1_average_unknown_counts_as_wrong,model_says_unknown,really_unknown,outcome_and_reason_brier
+22249,19322,0.18928214172501898,0.16384635279735407,0.21324445528582436,0.1886808670293309,0.008090251247247068,0.1315564744482898,0.6267677732371804
