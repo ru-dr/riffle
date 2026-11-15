@@ -87,6 +87,45 @@ jobs:
       - name: Team store (riffle-data) and the miner's sync client
         run: python -m pytest infra/docker/riffle-data/tests -q
 
+  # The outcome model's gates (guidelines 7.2, 7.3, 7.6): validation, bias, and no regression against the model on
+  # main, read from the eval reports the notebook and bias_report.py commit. A failure blocks the merge. No data or
+  # training here: retraining runs on a machine with the data release, and its eval reports come with the PR.
+  model-gates:
+    name: model gates
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install pandas
+
+      - name: Eval reports of the model on main (the baseline)
+        run: |
+          mkdir -p /tmp/baseline
+          git archive origin/main pipelines/training/outcome/eval | tar -x -C /tmp/baseline \
+            || echo "no outcome eval reports on main yet: the regression checks are skipped"
+
+      - name: Validation, bias and regression gates
+        run: >-
+          python pipelines/training/outcome/model_gates.py
+          --baseline /tmp/baseline/pipelines/training/outcome/eval
+
+      # Optional: set the SLACK_WEBHOOK_URL secret to be told when a model fails its gates.
+      - name: Alert on failure
+        if: failure() && env.SLACK_WEBHOOK_URL != ''
+        run: >-
+          curl -sS -X POST -H 'Content-type: application/json'
+          --data "{\"text\": \"Riffle model gates failed on ${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}:
+          ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}"
+          "$SLACK_WEBHOOK_URL"
+
   # The logging stack (Loki, Alloy, Grafana). Its own job: it is its own stack. Checks the
   # configuration and that Compose accepts the file; no container is started.
   logging:
