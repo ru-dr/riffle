@@ -57,3 +57,6 @@ site/assets/fonts/
 
 # Docs content compiled by site/scripts/build-docs.mjs on every dev/build.
 site/components/docs/content.generated.ts
+
+# eval_script.py output
+eval_results/
