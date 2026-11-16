@@ -35,7 +35,7 @@ REQUIRED_CHECKS = ("Prediction file is complete and valid", "Model reads no bann
                    "Beats the base rate overall", "Beats the base rate in every main group",
                    "Probabilities are honest", "Fast enough", "Trained with 3 or more seeds")
 SKILL_FLOOR = {"by_repo": 0.15, "by_pr": 0.20}
-CALIBRATION_LIMIT = 0.001   # TEMPORARY: fail a gate to test the PR alert; reverted next commit
+CALIBRATION_LIMIT = 0.03
 LATENCY_MS = 200.0
 NEWCOMER_FF_LIMIT = 0.40
 NEWCOMER_RATIO_LIMIT = 4.0
