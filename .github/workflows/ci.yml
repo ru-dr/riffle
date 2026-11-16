@@ -93,6 +93,10 @@ jobs:
   model-gates:
     name: model gates
     runs-on: ubuntu-latest
+    # pull-requests: write lets the job comment on the PR when the gates fail (the alert, guideline 7.5).
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
     steps:
@@ -113,11 +117,32 @@ jobs:
             || echo "no outcome eval reports on main yet: the regression checks are skipped"
 
       - name: Validation, bias and regression gates
+        shell: bash
         run: >-
           python pipelines/training/outcome/model_gates.py
           --baseline /tmp/baseline/pipelines/training/outcome/eval
+          | tee /tmp/gates.md
 
-      # Optional: set the SLACK_WEBHOOK_URL secret to be told when a model fails its gates.
+      # The alert: a failed gate posts its table as a comment on the PR, so GitHub notifies the author and the
+      # reviewers. A PR from a fork gets a read-only token and cannot be commented on; the failed check still shows.
+      - name: Comment on the PR when the gates fail
+        if: failure() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "**The model gates failed on this PR.** The model must not be merged or registered until they pass."
+            echo
+            cat /tmp/gates.md 2>/dev/null || echo "(no gate table: the gates step did not finish)"
+            echo
+            echo "Run: $RUN_URL"
+          } > /tmp/comment.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file /tmp/comment.md
+
+      # Optional: set the SLACK_WEBHOOK_URL secret to be told in Slack as well.
       - name: Alert on failure
         if: failure() && env.SLACK_WEBHOOK_URL != ''
         run: >-
