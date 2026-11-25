@@ -273,24 +273,26 @@ const NODES = {
   gtrain: [C.k0, R.m0, "Global training", "all repos · bounded CPU Jobs", "planned", "ml", "Retrains the global model on the seed corpus plus opt-in shared outcomes, as Kubernetes Jobs in a bounded pool.", "Point-in-time: only labels already mature before each PR opened.", "pipelines/training"],
   gate: [C.k1, R.m0, "Promotion gate", "time-ordered backtest · holdout", "planned", "ml", "Replays history in time order and compares each candidate with the model it would replace. Reports effort-aware recall and lift over FIFO.", "A candidate is promoted only if it beats its predecessor on holdout.", "pipelines/backtest"],
   rfit: [C.k2, R.m0, "Repo model fits", "per repo · nightly · on new labels", "planned", "ml", "Fits a repo model for each connected repository on its own reverts, post-merge CI failures and hotfixes.", "A repo model that makes ranking worse falls back to weight 0.", "pipelines/training"],
+  scorelog: [C.e, R.m1, "Score log", "features as scored · Parquet", "planned", "ml", "Every score the scorer writes, with the exact features it used, model_version, extractor version, score and band (ADR 0024). Written off the scoring path through the score-log topic, stored as Parquet on object storage per tenant and date, encrypted with the tenant key. Repo model fits train on it, global training uses opted-in tenants only, and live AUC and drift are computed from it.", "Training uses what the scorer saw, so there is no training-serving skew. Rows are never rewritten.", "ADR 0024"],
   gmodel: [C.k0, R.m1, "Global model", "every repo, from the first PR", "planned", "ml", "The shared tree model. Serves every repository from its first pull request and is the base each repo model sits on.", "Works with no history: a new repo is ranked by the global model alone.", "ADR 0001"],
   registry: [C.k1, R.m1, "Model registry", "MLflow · versions pinned", "planned", "ml", "Holds every promoted global model and repo model with its data version, feature extractor and rules hash.", "One model_version per request covers model, repo layer, extractor and rules hash.", "not built"],
   rmodel: [C.k2, R.m1, "Repo models", "learns how each repo breaks", "planned", "ml", "One calibrated layer per repository, applied on top of the global model. Its weight starts at zero and grows as labelled outcomes accumulate.", "layer_weight is 0 for a new repo or one whose layer fell back.", "ADR 0001"],
 
   intake: [C.k0, R.r0, "intake", "Go · stateless · HPA", "planned", "cluster", "Webhook front door. Verifies the signature, sets the delivery ID in Redis, publishes a PrEvent and returns 200 inside ten seconds. Holds no state; scales out on request rate from one warm replica.", "The same delivery ID is never published twice.", "services/intake"],
-  scorer: [C.k1, R.r0, "scorer", "global + repo model", "planned", "cluster", "Stateless workers that consume PrEvent, read the tenant's compiled config and rules, extract features and score with the global model plus the repo model. KEDA scales on queue depth from one warm replica; the global model is preloaded at start and repo models are cached, so there is no cold start on the hot path.", "Idempotent per delivery ID, one pinned model_version per request, and fail open through the dead-letter queue.", "services/scorer"],
+  scorer: [C.k1, R.r0, "scorer", "global + repo model", "planned", "cluster", "Stateless workers that consume PrEvent, read the tenant's compiled config and rules, extract features and score with the global model plus the repo model. KEDA scales on queue depth from one warm replica; the global model is preloaded at start and repo models are cached, so there is no cold start on the hot path. After each score it publishes a score log row with the features it used (ADR 0024).", "Idempotent per delivery ID, one pinned model_version per request, and fail open through the dead-letter queue.", "services/scorer"],
   explainer: [C.k2, R.r0, "explainer", "template · LLM opt-in", "planned", "cluster", "Turns the score and its evidence into what to check first. Template text on every plan; an LLM only phrases it. Stateless, one warm replica, scales on request rate.", "The LLM is never on the correctness path. A timeout means a null explanation.", "services/explainer"],
-  bus: [C.k0, R.bus, "Message queue", "NATS JetStream or Kafka · pr-events · score-results · dead-letter", "planned", "cluster", "The queue between services, open source so it runs on any cloud (a managed Pub/Sub or SQS works behind the same contract). Per-tenant fair share keeps a busy monorepo from starving small teams. Its depth drives autoscaling.", "Tenant fairness.", "contracts/pr_event", 936, 52],
+  bus: [C.k0, R.bus, "Message queue", "NATS JetStream or Kafka · pr-events · score-results · score-log · dead-letter", "planned", "cluster", "The queue between services, open source so it runs on any cloud (a managed Pub/Sub or SQS works behind the same contract). Per-tenant fair share keeps a busy monorepo from starving small teams. Its depth drives autoscaling. The score-log topic carries score log rows off the scoring path (ADR 0024).", "Tenant fairness.", "contracts/pr_event", 936, 52],
   appweb: [C.k0, R.r2, "app · dashboard", "ranked queue UI", "planned", "cluster", "The queue UI. Stateless: sessions live in Redis. Signs teams in with GitHub and reads results from the Postgres replica.", "A null explanation still renders as a valid rank.", "services/app"],
   appgh: [C.k1, R.r2, "app · GitHub App", "check runs · comments", "planned", "cluster", "Stateless consumer of score-results that writes a check run and an optional PR comment. Handles installs as tenant lifecycle.", "Never merges, auto-approves or hides a PR.", "services/app"],
   labeler: [C.k2, R.r2, "outcome labeler", "reverts · CI fails · hotfixes", "planned", "cluster", "Live ingestion: watches connected repos for reverts, post-merge CI failures and hotfixes and writes labelled outcomes. These feed repo models and, when shared, the global model.", "Labels are used only once mature. Outcome sharing is opt-in.", "pipelines/ingestion"],
-  platform: [C.k0, R.plat, "Cluster platform", "", "planned", "cluster", "Shared machinery: ingress, horizontal autoscaling, GitOps deploys from infra/k8s, secrets from the vault, pod identity, default-deny networking, the training Job pool and the telemetry agent.", "No service holds a key file; manifests in git describe what runs.", "infra/k8s", 936, 132],
+  platform: [C.k0, R.plat, "Cluster platform", "", "planned", "cluster", "Shared machinery: ingress, horizontal autoscaling, GitOps deploys from infra/k8s, secrets synced by External Secrets, pod identity, default-deny networking, the training Job pool and the telemetry agent.", "No service holds a key file; manifests in git describe what runs.", "infra/k8s", 584, 120],
 
-  pg: [C.d0, R.m0, "Postgres", "tenants · outcomes · results", "planned", "data", "System of record for tenants, compiled config and rules, feature vectors, outcomes and ScoreResults. A managed Postgres or an operator; Terraform picks per cloud.", "null means not measured, 0 means measured and found none. Never coerced.", "contracts/"],
+  workflow: [C.k2, R.plat, "Tenant workflow", "install · uninstall · durable", "planned", "cluster", "Runs on GitHub's installation events (ADR 0025). On install: creates the tenant row, generates its data key and starts the history backfill on the lowest queue lane. On suspend: pauses scoring. On uninstall: stops scoring, drops tokens, and after a grace period deletes the tenant's rows and storage prefix and destroys its key. Runs on a durable workflow engine so a failed step resumes.", "Every step is idempotent per installation ID. Destroying the key makes every copy of the tenant's stored files unreadable.", "ADR 0025"],
+  pg: [C.d0, R.m0, "Postgres", "row-level security by tenant", "planned", "data", "System of record for tenants, compiled config and rules, feature vectors, outcomes and ScoreResults. One pooled database: every row carries tenant_id and row-level security filters on it; each service sets app.tenant_id per connection (ADR 0025).", "null means not measured, 0 means measured and found none. Never coerced. No query reads across tenants.", "ADR 0025"],
   redis: [C.d0, R.m1, "Redis", "dedupe keys · cache · sessions", "planned", "data", "Delivery IDs with a TTL for dedupe, an inference cache for unchanged head SHAs, and dashboard sessions, so no service keeps state in memory.", "Idempotent scoring per delivery_id.", "services/intake"],
-  secrets: [C.d1, R.m1, "Secrets vault", "App key · webhook secret", "suggested", "data", "GitHub App private key, webhook secret and database credentials in Vault or the provider's secret store, synced into pods by External Secrets.", "Secrets never sit in Terraform state or the repo.", "not built"],
+  secrets: [C.d1, R.m1, "Key vault", "per-tenant keys · App key", "suggested", "data", "Holds the key-encryption key that wraps each tenant's data key (Vault Transit or the provider's KMS, set in Terraform), plus the GitHub App private key, webhook secret and database credentials synced into pods by External Secrets.", "Scoring never depends on the vault: only writes that need a tenant key wait for it (ADR 0025).", "ADR 0025"],
   ar: [C.o, R.low, "Container registry", "GHCR or any OCI registry", "suggested", "outside", "OCI images built and scanned by CI, pulled by the cluster. GHCR or any OCI registry, so it stays vendor-agnostic.", "Only images CI built from main reach prod.", "not built"],
-  gcs: [C.d1, R.m0, "Object storage", "S3 API · corpus · artifacts", "built", "data", "S3-compatible buckets for the frozen seed corpus, training snapshots and model artifacts. Mining that produced the corpus runs off prod.", "Raw downloads are never committed; git holds pointers only.", "infra/terraform/store-vm"],
+  gcs: [C.d1, R.m0, "Object storage", "S3 API · encrypted per tenant", "built", "data", "S3-compatible buckets for the score log, training snapshots, the frozen seed corpus and model artifacts. Each tenant's objects are encrypted with that tenant's data key (ADR 0025).", "Raw downloads are never committed. A destroyed tenant key makes its objects unreadable, backups included.", "ADR 0024 · ADR 0025"],
 
   collector: [C.d0, R.r0, "Alloy · OTel", "logs · metrics · traces", "built", "obs", "Agent on every node. Ships logs to Loki and, in production, metrics and traces too.", "Logs are JSON and always carry delivery_id and tenant.", "infra/alloy"],
   prom: [C.d1, R.r0, "Prometheus", "riffle_* · tenant label", "planned", "obs", "Stores the riffle_* metrics with a tenant label: queue depth, scoring time, repo model AUC and weight, drift.", "Every metric carries tenant.", "README · Observability"],
@@ -326,7 +328,9 @@ const EDGES = [
   ["bus", "labeler", "data", "outcome events"],
   ["labeler", "pg", "data", "outcomes", { via: [{ x: 1708 }], oe: 18 }],
   ["pg", "gcs", "data", "snapshots"],
-  ["secrets", "platform", "data", "synced secrets", { via: [{ y: -112 }, { x: 1756 }], oe: 30 }],
+  ["workflow", "secrets", "data", "create · destroy key", { via: [{ x: 1756 }, { y: -112 }] }],
+  ["appgh", "workflow", "data", "install events"],
+  ["scorer", "scorelog", "data", "score log row", { via: [{ y: -122 }], o: -30 }],
   ["oncall", "iap", "ctl", "admin sign-in", { via: [{ x: 268 }] }],
   ["armor", "lb", "ctl", "policy"],
   ["ci", "ar", "ship", "push images"],
@@ -337,11 +341,12 @@ const EDGES = [
   ["gtrain", "gate", "ml", "candidate"],
   ["rfit", "gate", "ml", "candidate"],
   ["rfit", "pg", "ml", "repo outcomes", { o: -24 }],
+  ["scorelog", "gtrain", "ml", "training rows", { oe: 18 }],
   ["gate", "registry", "ml", "promote"],
   ["registry", "gmodel", "ml", "serve"],
   ["registry", "rmodel", "ml", "serve"],
 
-  ["platform", "collector", "obs", "all pods", { via: [{ x: 1740 }], o: -30 }],
+  ["platform", "collector", "obs", "all pods", { via: [{ y: 664, below: ["platform", "workflow"] }, { x: 1740 }] }],
   ["collector", "prom", "obs", "metrics"],
   ["collector", "loki", "obs", "logs"],
   ["collector", "tempo", "obs", "traces", { via: [{ x: 2092 }], o: 20, oe: -12 }],
@@ -369,7 +374,7 @@ const STEPS = [
 const NS = "http://www.w3.org/2000/svg";
 const mk = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const KEY = "riffle-arch-v8";
+const KEY = "riffle-arch-v9";
 const stored = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } })();
 const pos = {};
 for (const [id, n] of Object.entries(NODES)) pos[id] = stored.pos?.[id] || { x: n[0], y: n[1] };
