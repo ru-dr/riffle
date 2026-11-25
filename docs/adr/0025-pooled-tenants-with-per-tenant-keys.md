@@ -1,7 +1,7 @@
 # 0025: Pooled tenants, per-tenant keys, and an install and uninstall workflow
 
 - **Date:** 2026-11-25
-- **Status:** Proposed
+- **Status:** Accepted
 - **Owners:** #10 Deployment & CI/CD, with #8 GitHub App (to confirm, see Open)
 
 ## Context
