@@ -1,7 +1,7 @@
 # 0024: Log every score with the features the scorer saw
 
 - **Date:** 2026-11-25
-- **Status:** Proposed
+- **Status:** Accepted
 - **Owners:** #9 Inference, with #2 Training (to confirm, see Open)
 
 ## Context
