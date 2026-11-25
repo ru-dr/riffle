@@ -67,7 +67,7 @@ services:
 
   grafana:
     image: grafana/grafana:13.2.4
-    restart: unless-stopped
+    restart: "no"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       # A key with no value passes the variable of the same name through from .env. Do not
