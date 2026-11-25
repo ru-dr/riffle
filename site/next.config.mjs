@@ -11,4 +11,12 @@ export default {
       { source: "/v1", destination: "/", permanent: true },
     ];
   },
+  async rewrites() {
+    return [
+      // The architecture canvas is a standalone HTML page in
+      // public/architecture/. Public folders do not serve index.html for a
+      // bare directory path, so map /architecture to it.
+      { source: "/architecture", destination: "/architecture/index.html" },
+    ];
+  },
 };

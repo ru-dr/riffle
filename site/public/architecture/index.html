@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Riffle Architecture</title>
+<link rel="icon" href="/architecture/assets/mark.svg" type="image/svg+xml">
+<script>try { const t = localStorage.getItem("riffle-arch-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Riffle tokens (site/app/globals.css). Zone hues sit beside the brand green, never replace it. */
+:root {
+  --bg: #fbfaf7; --surface: #ffffff; --wash: rgba(22,23,29,.045);
+  --ink: #16171d; --nickel: #3b3440; --grey: #867e8e; --stroke: #e5e4e7; --wire: #b9b5bf;
+  --accent: #0f7a4f; --live: #00b442; --accent-wash: rgba(15,122,79,.09);
+  --dot: #e3e1dc; --frame: #f2f1ec;
+  --code-bg: #16171d; --code-fg: #f2f1f4;
+  --e-data: #3557b7; --e-obs: #6b4fc4; --e-ml: #a26a00; --e-ship: #c25a1c; --pro: #9a6200; --pro-wash: #fdf3dc;
+  --sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #16171d; --surface: #1e1f25; --wash: rgba(255,255,255,.055);
+  --ink: #f2f1f4; --nickel: rgba(242,241,244,.78); --grey: rgba(242,241,244,.52); --stroke: #2c2d34; --wire: #575864;
+  --accent: #7dd3a0; --live: #3ddc7a; --accent-wash: rgba(125,211,160,.12);
+  --dot: #24252c; --frame: #1a1b21; --code-bg: #101115; --e-data: #93acff; --e-obs: #b9a3ff; --e-ml: #f0c25e; --e-ship: #ffa36e; --pro: #f0c25e; --pro-wash: #2a2415; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #16171d; --surface: #1e1f25; --wash: rgba(255,255,255,.055);
+  --ink: #f2f1f4; --nickel: rgba(242,241,244,.78); --grey: rgba(242,241,244,.52); --stroke: #2c2d34; --wire: #575864;
+  --accent: #7dd3a0; --live: #3ddc7a; --accent-wash: rgba(125,211,160,.12);
+  --dot: #24252c; --frame: #1a1b21; --code-bg: #101115; --e-data: #93acff; --e-obs: #b9a3ff; --e-ml: #f0c25e; --e-ship: #ffa36e; --pro: #f0c25e; --pro-wash: #2a2415; color-scheme: dark }
+
+/* one hue per zone: --zc for header, bar and outline; --zt for the panel tint */
+.z-outside  { --zc: #5a6878; --zt: #eef1f4 }
+.z-edge     { --zc: #c25a1c; --zt: #fcefe6 }
+.z-cluster  { --zc: #0f7a4f; --zt: #e7f4ed }
+.z-data     { --zc: #3557b7; --zt: #e9eefb }
+.z-ml { --zc: #a26a00; --zt: #fbf3df }
+.z-obs      { --zc: #6b4fc4; --zt: #f1ecfb }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .z-outside  { --zc: #b4c2d1; --zt: #1e2227 }
+  :root:not([data-theme="light"]) .z-edge     { --zc: #ffa36e; --zt: #2a1e18 }
+  :root:not([data-theme="light"]) .z-cluster  { --zc: #7dd3a0; --zt: #17251e }
+  :root:not([data-theme="light"]) .z-data     { --zc: #93acff; --zt: #191f30 }
+  :root:not([data-theme="light"]) .z-ml { --zc: #f0c25e; --zt: #2a2415 }
+  :root:not([data-theme="light"]) .z-obs      { --zc: #b9a3ff; --zt: #221d33 }
+}
+:root[data-theme="dark"] .z-outside  { --zc: #b4c2d1; --zt: #1e2227 }
+:root[data-theme="dark"] .z-edge     { --zc: #ffa36e; --zt: #2a1e18 }
+:root[data-theme="dark"] .z-cluster  { --zc: #7dd3a0; --zt: #17251e }
+:root[data-theme="dark"] .z-data     { --zc: #93acff; --zt: #191f30 }
+:root[data-theme="dark"] .z-ml { --zc: #f0c25e; --zt: #2a2415 }
+:root[data-theme="dark"] .z-obs      { --zc: #b9a3ff; --zt: #221d33 }
+
+* { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--sans); overflow: hidden; -webkit-font-smoothing: antialiased }
+
+#vp { position: fixed; inset: 0; touch-action: none; cursor: grab; user-select: none;
+  background-image: radial-gradient(circle, var(--dot) 1.2px, transparent 1.4px); background-size: 24px 24px }
+#vp.panning { cursor: grabbing }
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0 }
+#world.moving { will-change: transform }
+svg.layer { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none }
+
+/* frame + zones */
+.frame rect { fill: var(--frame); stroke: var(--stroke) }
+.frame .gt { font: 700 20px var(--sans); letter-spacing: -.02em; fill: var(--ink) }
+.frame .gn { font: 13px var(--mono); fill: var(--grey) }
+.zone rect.f { fill: var(--zt); stroke: var(--zc); stroke-opacity: .35 }
+.zone rect.hdr { fill: var(--zc) }
+.zone text { font: 600 13px var(--sans); letter-spacing: .01em; fill: var(--surface) }
+.zone text.n { font: 500 11.5px var(--mono); fill: var(--zc); letter-spacing: 0 }
+
+/* nodes */
+.node { position: absolute; background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--zc) 55%, transparent); border-radius: 8px;
+  padding: 11px 16px 11px 22px; cursor: pointer; transition: border-color .15s, box-shadow .15s, opacity .2s }
+.node::before { content: ""; position: absolute; left: 9px; top: 12px; bottom: 12px; width: 4px; border-radius: 2px; background: var(--zc) }
+.node:hover { border-color: var(--zc); box-shadow: 0 6px 18px rgba(22,23,29,.08) }
+.node.dragging { cursor: grabbing; box-shadow: 0 14px 32px rgba(22,23,29,.16); z-index: 5 }
+.node.suggested { border-style: dashed }
+.node.sel { border-color: var(--ink); box-shadow: 0 0 0 4px color-mix(in srgb, var(--zc) 22%, transparent) }
+.node:focus-visible { outline: 2px solid var(--zc); outline-offset: 3px }
+.node .t { font-weight: 600; font-size: 15.5px; letter-spacing: -.015em; line-height: 1.25; white-space: nowrap; color: var(--ink); display: flex; align-items: center; gap: 8px }
+.tier { font: 600 9.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--pro); border: 1px solid currentColor; border-radius: 4px; padding: 3px 5px; background: var(--pro-wash) }
+.node .s { font-size: 12.5px; line-height: 1.4; color: var(--nickel); margin-top: 3px; overflow-wrap: anywhere }
+.node .st { position: absolute; right: 11px; top: 11px; width: 10px; height: 10px; border-radius: 50% }
+.st.built { background: var(--live); box-shadow: 0 0 0 3px var(--accent-wash) }
+.st.planned { border: 1.5px solid var(--wire); background: var(--surface) }
+.st.suggested { border: 1.5px dashed var(--wire); background: var(--surface) }
+.node.bus { display: flex; align-items: center; gap: 16px; padding-block: 8px }
+.node.bus .s { margin: 0 }
+.node .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px }
+.node .chips span { font: 11.5px var(--mono); color: var(--nickel); border: 1px solid var(--stroke); border-radius: 4px; padding: 2px 7px; background: var(--bg) }
+.node .chips span.suggested { border-style: dashed; border-color: var(--wire) }
+.node .chips span.built { border-color: var(--accent); color: var(--accent) }
+.dim .node:not(.on) { opacity: .22 }
+
+/* edges: request path always, the rest on focus or with All links */
+.edge { display: none }
+.edge.main, .edge.on, .showall .edge, .flow .edge.on { display: inline }
+.edge path.w { fill: none; stroke-width: 1.3; stroke-linejoin: round; stroke: var(--wire) }
+.edge.main path.w { stroke: var(--accent); stroke-width: 1.8 }
+.edge.data path.w { stroke: var(--e-data) } .edge.obs path.w { stroke: var(--e-obs); stroke-dasharray: 5 4 }
+.edge.ml path.w { stroke: var(--e-ml); stroke-dasharray: 5 4 } .edge.ship path.w { stroke: var(--e-ship); stroke-dasharray: 2 4 }
+.edge.ctl path.w { stroke: var(--grey); stroke-dasharray: 2 4 }
+.edge path.hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: help }
+.edge.on path.w { stroke-width: 2.6 }
+.dim .edge:not(.on) { opacity: .12 }
+.lbl { display: none; pointer-events: none }
+.lbl.main, .lbl.on, .showall .lbl { display: inline }
+.dim .lbl:not(.on) { display: none }
+.lbl rect { fill: var(--bg); stroke: var(--stroke); stroke-width: 1 }
+.lbl.main rect { stroke: color-mix(in srgb, var(--accent) 40%, transparent) }
+.lbl text { font: 500 11.5px var(--mono); fill: var(--nickel); dominant-baseline: central }
+.lbl.on text { fill: var(--ink); font-weight: 600 }
+.lbl.on text.numt { fill: var(--surface) }
+.lbl .num { fill: var(--accent) } .lbl text.numt { fill: var(--surface); font: 600 10px var(--mono); text-anchor: middle; dominant-baseline: central }
+
+/* chrome: Riffle cards */
+.brand { position: fixed; z-index: 5; top: calc(16px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px));
+  display: flex; align-items: center; gap: 14px; pointer-events: none }
+.brand img { height: 30px; width: auto; display: block }
+.brand .dark { display: none }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .brand .light { display: none } :root:not([data-theme="light"]) .brand .dark { display: block } }
+:root[data-theme="dark"] .brand .light { display: none } :root[data-theme="dark"] .brand .dark { display: block }
+.brand .sep { width: 1px; height: 30px; background: var(--stroke) }
+.brand .name { font-weight: 600; font-size: 20px; letter-spacing: -.02em; line-height: 1 }
+.brand .name span { display: block; font-weight: 400; font-size: 12.5px; color: var(--grey); margin-top: 5px; letter-spacing: 0 }
+
+.card { position: fixed; z-index: 5; background: var(--surface); border: 1px solid var(--stroke); border-radius: 10px }
+.ctrl { left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 2px; align-items: center; padding: 4px }
+.ctrl button, .flows button { white-space: nowrap; font: 500 13.5px var(--sans); color: var(--ink); background: transparent; border: 0; border-radius: 6px; height: 34px; min-width: 34px; padding: 0 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px }
+.ctrl button:hover, .flows button:hover { background: var(--wash) }
+.ctrl button[hidden] { display: none }
+.ctrl button[aria-pressed="true"], .flows button[aria-pressed="true"] { background: var(--ink); color: var(--bg) }
+.ctrl .play { background: var(--ink); color: var(--bg); padding: 0 14px }
+.ctrl .play:hover { background: var(--ink); opacity: .88 }
+.ctrl .sep { width: 1px; height: 22px; background: var(--stroke); margin: 0 4px }
+.ctrl .zoom { font: 500 12px var(--mono); color: var(--grey); min-width: 48px; text-align: center; font-variant-numeric: tabular-nums }
+.flows { top: calc(16px + env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); display: flex; gap: 2px; padding: 4px }
+.flows i { width: 9px; height: 9px; border-radius: 2px; display: inline-block }
+.key { right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 16px; padding: 9px 14px; font-size: 12.5px; color: var(--nickel) }
+.key span { display: inline-flex; align-items: center; gap: 7px }
+.key .st { position: static; width: 10px; height: 10px; border-radius: 50%; display: inline-block }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px }
+.drawer-open .flows, .drawer-open .key { display: none }
+
+/* drawer */
+.drawer { position: fixed; z-index: 6; top: calc(12px + env(safe-area-inset-top, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px)); width: min(460px, calc(100vw - 24px)); background: var(--surface); border: 1px solid var(--stroke);
+  border-radius: 12px; box-shadow: 0 12px 40px rgba(22,23,29,.12); overflow-y: auto; padding: 20px 22px 26px; display: flex; flex-direction: column; gap: 14px; font-size: 14.5px; line-height: 1.6 }
+.drawer > * { flex-shrink: 0 }
+.drawer[hidden] { display: none }
+.headbar { display: flex; align-items: center; gap: 8px; min-height: 26px }
+.headbar .path { margin-left: auto; font: 12px var(--mono); color: var(--grey); text-align: right; overflow-wrap: anywhere }
+.ztag { font: 600 12px var(--sans); background: var(--zc); color: var(--surface); padding: 3px 9px; border-radius: 5px }
+.close { flex: none; display: grid; place-items: center; width: 28px; height: 28px; color: var(--grey); background: transparent; border: 0; border-radius: 6px; cursor: pointer }
+.close:hover { color: var(--ink); background: var(--wash) }
+.drawer h2 { font-weight: 700; font-size: 28px; letter-spacing: -.03em; line-height: 1.1; margin: 0 }
+.drawer h3 { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--grey); margin: 6px 0 -6px }
+.drawer p { margin: 0; color: var(--nickel) }
+.drawer .lede { font-size: 15.5px; color: var(--ink) }
+.dchips { display: flex; flex-wrap: wrap; gap: 6px }
+.dchip { font: 12px var(--mono); border: 1px solid var(--stroke); border-radius: 999px; padding: 2px 10px; color: var(--nickel) }
+.dchip.built { color: var(--accent); border-color: currentColor } .dchip.suggested { border-style: dashed; border-color: var(--wire) }
+.owns { border-left: 3px solid var(--zc); background: var(--zt); border-radius: 0 8px 8px 0; padding: 10px 14px; color: var(--ink) }
+.conns { display: grid; gap: 6px }
+.conn { display: grid; grid-template-columns: 22px minmax(0,1fr); gap: 8px; align-items: baseline; text-align: left; font: 14px var(--sans); color: var(--ink);
+  background: var(--bg); border: 1px solid var(--stroke); border-radius: 8px; padding: 8px 11px; cursor: pointer }
+.conn:hover { border-color: var(--wire) }
+.conn .dir { font: 12px var(--mono); color: var(--grey) }
+.conn em { font-style: normal; color: var(--grey) }
+
+/* tour block (top of the drawer) */
+.tour { border: 1px solid var(--stroke); background: var(--bg); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px }
+.tour .row { display: flex; justify-content: space-between; align-items: center; gap: 10px }
+.tour .lbl2 { font: 12px var(--mono); color: var(--grey); font-variant-numeric: tabular-nums }
+.tour h4 { margin: 0; font-size: 18px; letter-spacing: -.02em }
+.tour p { color: var(--ink); font-size: 15px }
+.tour .bar { height: 3px; background: var(--stroke); border-radius: 2px; overflow: hidden }
+.tour .bar div { height: 100%; width: 0; background: var(--accent) }
+.tour .btns { display: flex; gap: 6px }
+.tour button { font: 500 13.5px var(--sans); color: var(--ink); background: var(--surface); border: 1px solid var(--stroke); border-radius: 6px; height: 32px; min-width: 40px; padding: 0 12px; cursor: pointer }
+.tour button:hover { border-color: var(--wire) }
+.tour button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); min-width: 88px }
+
+#tip { position: fixed; pointer-events: none; z-index: 20; font: 500 12px var(--mono); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--stroke); border-radius: 6px; padding: 4px 8px; transform: translate(12px, 12px); box-shadow: 0 4px 14px rgba(22,23,29,.08) }
+@media (max-width: 900px) { .flows, .key { display: none } .brand .name span { display: none } }
+@media (max-width: 680px) {
+  .ctrl { left: max(8px, env(safe-area-inset-left, 0px)); right: max(8px, env(safe-area-inset-right, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); overflow-x: auto; scrollbar-width: none }
+  .ctrl button { padding: 0 9px; font-size: 13px; white-space: nowrap; flex: none }
+  .ctrl .zoom, .ctrl .sep, #zout, #zin { display: none }
+  .brand { top: calc(10px + env(safe-area-inset-top, 0px)) } .brand img { height: 22px } .brand .sep { height: 22px } .brand .name { font-size: 16px }
+}
+@media (max-width: 680px) { .drawer { top: auto; left: max(8px, env(safe-area-inset-left, 0px)); right: max(8px, env(safe-area-inset-right, 0px)); width: auto; height: 68vh; bottom: calc(8px + env(safe-area-inset-bottom, 0px)) } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+</head>
+<body>
+<div id="vp" role="img" aria-label="Map of Riffle's production architecture. Drag to pan, scroll to zoom, click a box for details.">
+  <div id="world" class="showall">
+    <svg class="layer" id="zones"></svg>
+    <svg class="layer" id="edges"><defs id="defs"></defs></svg>
+    <div id="nodes"></div>
+    <svg class="layer" id="labels"></svg>
+  </div>
+</div>
+
+<div class="brand">
+  <img class="light" src="/architecture/assets/logo-light.svg" alt="Riffle"><img class="dark" src="/architecture/assets/logo-dark.svg" alt="Riffle">
+  <div class="sep"></div>
+  <div class="name">Architecture<span>Click a box for what it does. Drag to pan, scroll to zoom, drag a box to move it.</span></div>
+</div>
+
+<nav class="card flows" aria-label="Show one flow">
+  <button data-k="main" aria-pressed="false"><i style="background:var(--accent)"></i>Request</button>
+  <button data-k="data" aria-pressed="false"><i style="background:var(--e-data)"></i>Data</button>
+  <button data-k="obs" aria-pressed="false"><i style="background:var(--e-obs)"></i>Telemetry</button>
+  <button data-k="ml" aria-pressed="false"><i style="background:var(--e-ml)"></i>ML platform</button>
+  <button data-k="ship" aria-pressed="false"><i style="background:var(--e-ship)"></i>Delivery</button>
+</nav>
+
+<div class="card ctrl" role="toolbar" aria-label="Canvas controls">
+  <button type="button" id="play" class="play">▶ Trace a PR</button>
+  <span class="sep"></span>
+  <button type="button" id="zout" aria-label="Zoom out">−</button><span class="zoom" id="zoom">100%</span><button type="button" id="zin" aria-label="Zoom in">+</button>
+  <button type="button" id="fit">Fit</button>
+  <span class="sep"></span>
+  <button type="button" id="all" aria-pressed="true">All links</button>
+  <button type="button" id="reset" hidden>Reset layout</button>
+  <span class="sep"></span>
+  <button type="button" id="theme">◐ Auto</button>
+</div>
+
+
+<aside class="drawer" id="drawer" hidden aria-live="polite"></aside>
+<div id="tip" hidden></div>
+
+<script>
+"use strict";
+const W = 232, H = 68;
+// columns and rows of the base layout
+const C = { o: 0, e: 352, k0: 704, k1: 1056, k2: 1408, d0: 1800, d1: 2152 };
+const R = { m0: -404, m1: -240, r0: 0, bus: 164, r2: 328, plat: 492, low: 656 };
+
+const ZONES = [
+  { key: "outside", label: "Outside", note: "teams, GitHub, delivery" },
+  { key: "edge", label: "Edge", note: "ingress and egress" },
+  { key: "ml", label: "ML platform", note: "online, in cluster · retrains from live outcomes" },
+  { key: "cluster", label: "Kubernetes cluster", note: "stateless · autoscaled · one warm replica each" },
+  { key: "data", label: "Data", note: "all state lives here" },
+  { key: "obs", label: "Observability", note: "logs, metrics, traces" },
+];
+
+// id: [x, y, title, sub, status, zone, job, owns, path, w?, h?, tier?]
+const NODES = {
+  community: [C.o, R.bus, "Teams", "reviewers · ranked queue", "planned", "outside", "The people working the review queue. They read the ranked queue on the dashboard and the check run on each PR.", "Riffle reorders the queue; it never merges, approves or hides a PR.", "services/app"],
+  github: [C.o, R.r2, "GitHub", "webhooks · REST API · Checks", "planned", "outside", "Source of pull_request and check_suite events and target of check runs and comments.", "GitHub gives a webhook ten seconds, which is why intake does nothing else.", "services/intake"],
+  ci: [C.o, R.plat, "CI/CD", "GitHub Actions · Terraform", "planned", "outside", "GitHub Actions builds and scans images, pushes them to the registry, runs terraform plan and apply for the whole stack, and Argo CD syncs the manifests. Every cloud resource is in Terraform, so the stack moves between providers by swapping modules.", "Nothing in prod is created by hand; a change is a reviewed PR.", "infra/terraform · infra/k8s"],
+  oncall: [C.o, R.m0, "On-call", "pager · team chat", "suggested", "outside", "Whoever holds the pager. Gets SLO-burn and saturation alerts from Alertmanager.", "Alerts carry tenant and delivery_id so one PR can be traced across services.", "not built"],
+
+  armor: [C.e, R.bus, "WAF", "rate limits · hook IP ranges", "suggested", "edge", "Web application firewall in front of the load balancer: OWASP rules, per-tenant rate limits, and GitHub's published hook ranges on /webhook. Any provider's WAF or an open-source one behind Terraform.", "Defence in depth only. Intake still verifies the HMAC signature on every request.", "infra/terraform (later)"],
+  lb: [C.e, R.r2, "Load balancer", "L7 · TLS · DNS · path routes", "suggested", "edge", "Layer 7 load balancer from the Kubernetes Gateway API, so the same manifest works on any cloud. Routes /webhook to intake and /app to the dashboard.", "Readiness checks keep traffic off pods mid-rollout, so no webhook is dropped.", "infra/k8s (later)"],
+  nat: [C.e, R.plat, "NAT gateway", "one fixed egress IP", "suggested", "edge", "The only way out of the cluster. Pods have no public IPs; egress rules allow GitHub's API and nothing else.", "Code and diffs never leave the installation.", "infra/terraform (later)"],
+  iap: [C.e, R.r0, "SSO access proxy", "Grafana · admin tools", "planned", "edge", "Operator access to Grafana and admin tools through an identity-aware proxy (the provider's, or oauth2-proxy). ADR 0018 does this with IAP today.", "No admin UI is open to the internet.", "ADR 0018"],
+
+  triggers: [C.e, R.m0, "Retrain triggers", "new labels · drift · weekly", "planned", "ml", "Starts training when enough new labelled outcomes arrive, when drift crosses its threshold, or on the weekly schedule. Replaces the mining DAG, which stays off prod.", "Training runs under backpressure: excess requests queue or defer, never run.", "pipelines/dags (retraining)"],
+  gtrain: [C.k0, R.m0, "Global training", "all repos · bounded CPU Jobs", "planned", "ml", "Retrains the global model on the seed corpus plus opt-in shared outcomes, as Kubernetes Jobs in a bounded pool.", "Point-in-time: only labels already mature before each PR opened.", "pipelines/training"],
+  gate: [C.k1, R.m0, "Promotion gate", "time-ordered backtest · holdout", "planned", "ml", "Replays history in time order and compares each candidate with the model it would replace. Reports effort-aware recall and lift over FIFO.", "A candidate is promoted only if it beats its predecessor on holdout.", "pipelines/backtest"],
+  rfit: [C.k2, R.m0, "Repo model fits", "per repo · nightly · on new labels", "planned", "ml", "Fits a repo model for each connected repository on its own reverts, post-merge CI failures and hotfixes.", "A repo model that makes ranking worse falls back to weight 0.", "pipelines/training"],
+  gmodel: [C.k0, R.m1, "Global model", "every repo, from the first PR", "planned", "ml", "The shared tree model. Serves every repository from its first pull request and is the base each repo model sits on.", "Works with no history: a new repo is ranked by the global model alone.", "ADR 0001"],
+  registry: [C.k1, R.m1, "Model registry", "MLflow · versions pinned", "planned", "ml", "Holds every promoted global model and repo model with its data version, feature extractor and rules hash.", "One model_version per request covers model, repo layer, extractor and rules hash.", "not built"],
+  rmodel: [C.k2, R.m1, "Repo models", "learns how each repo breaks", "planned", "ml", "One calibrated layer per repository, applied on top of the global model. Its weight starts at zero and grows as labelled outcomes accumulate.", "layer_weight is 0 for a new repo or one whose layer fell back.", "ADR 0001"],
+
+  intake: [C.k0, R.r0, "intake", "Go · stateless · HPA", "planned", "cluster", "Webhook front door. Verifies the signature, sets the delivery ID in Redis, publishes a PrEvent and returns 200 inside ten seconds. Holds no state; scales out on request rate from one warm replica.", "The same delivery ID is never published twice.", "services/intake"],
+  scorer: [C.k1, R.r0, "scorer", "global + repo model", "planned", "cluster", "Stateless workers that consume PrEvent, read the tenant's compiled config and rules, extract features and score with the global model plus the repo model. KEDA scales on queue depth from one warm replica; the global model is preloaded at start and repo models are cached, so there is no cold start on the hot path.", "Idempotent per delivery ID, one pinned model_version per request, and fail open through the dead-letter queue.", "services/scorer"],
+  explainer: [C.k2, R.r0, "explainer", "template · LLM opt-in", "planned", "cluster", "Turns the score and its evidence into what to check first. Template text on every plan; an LLM only phrases it. Stateless, one warm replica, scales on request rate.", "The LLM is never on the correctness path. A timeout means a null explanation.", "services/explainer"],
+  bus: [C.k0, R.bus, "Message queue", "NATS JetStream or Kafka · pr-events · score-results · dead-letter", "planned", "cluster", "The queue between services, open source so it runs on any cloud (a managed Pub/Sub or SQS works behind the same contract). Per-tenant fair share keeps a busy monorepo from starving small teams. Its depth drives autoscaling.", "Tenant fairness.", "contracts/pr_event", 936, 52],
+  appweb: [C.k0, R.r2, "app · dashboard", "ranked queue UI", "planned", "cluster", "The queue UI. Stateless: sessions live in Redis. Signs teams in with GitHub and reads results from the Postgres replica.", "A null explanation still renders as a valid rank.", "services/app"],
+  appgh: [C.k1, R.r2, "app · GitHub App", "check runs · comments", "planned", "cluster", "Stateless consumer of score-results that writes a check run and an optional PR comment. Handles installs as tenant lifecycle.", "Never merges, auto-approves or hides a PR.", "services/app"],
+  labeler: [C.k2, R.r2, "outcome labeler", "reverts · CI fails · hotfixes", "planned", "cluster", "Live ingestion: watches connected repos for reverts, post-merge CI failures and hotfixes and writes labelled outcomes. These feed repo models and, when shared, the global model.", "Labels are used only once mature. Outcome sharing is opt-in.", "pipelines/ingestion"],
+  platform: [C.k0, R.plat, "Cluster platform", "", "planned", "cluster", "Shared machinery: ingress, horizontal autoscaling, GitOps deploys from infra/k8s, secrets from the vault, pod identity, default-deny networking, the training Job pool and the telemetry agent.", "No service holds a key file; manifests in git describe what runs.", "infra/k8s", 936, 132],
+
+  pg: [C.d0, R.m0, "Postgres", "tenants · outcomes · results", "planned", "data", "System of record for tenants, compiled config and rules, feature vectors, outcomes and ScoreResults. A managed Postgres or an operator; Terraform picks per cloud.", "null means not measured, 0 means measured and found none. Never coerced.", "contracts/"],
+  redis: [C.d0, R.m1, "Redis", "dedupe keys · cache · sessions", "planned", "data", "Delivery IDs with a TTL for dedupe, an inference cache for unchanged head SHAs, and dashboard sessions, so no service keeps state in memory.", "Idempotent scoring per delivery_id.", "services/intake"],
+  secrets: [C.d1, R.m1, "Secrets vault", "App key · webhook secret", "suggested", "data", "GitHub App private key, webhook secret and database credentials in Vault or the provider's secret store, synced into pods by External Secrets.", "Secrets never sit in Terraform state or the repo.", "not built"],
+  ar: [C.o, R.low, "Container registry", "GHCR or any OCI registry", "suggested", "outside", "OCI images built and scanned by CI, pulled by the cluster. GHCR or any OCI registry, so it stays vendor-agnostic.", "Only images CI built from main reach prod.", "not built"],
+  gcs: [C.d1, R.m0, "Object storage", "S3 API · corpus · artifacts", "built", "data", "S3-compatible buckets for the frozen seed corpus, training snapshots and model artifacts. Mining that produced the corpus runs off prod.", "Raw downloads are never committed; git holds pointers only.", "infra/terraform/store-vm"],
+
+  collector: [C.d0, R.r0, "Alloy · OTel", "logs · metrics · traces", "built", "obs", "Agent on every node. Ships logs to Loki and, in production, metrics and traces too.", "Logs are JSON and always carry delivery_id and tenant.", "infra/alloy"],
+  prom: [C.d1, R.r0, "Prometheus", "riffle_* · tenant label", "planned", "obs", "Stores the riffle_* metrics with a tenant label: queue depth, scoring time, repo model AUC and weight, drift.", "Every metric carries tenant.", "README · Observability"],
+  loki: [C.d0, R.bus, "Loki", "JSON logs", "built", "obs", "Log store for every service.", "Retention is set per environment.", "infra/loki"],
+  tempo: [C.d0, R.plat, "Tempo", "traces by delivery_id", "suggested", "obs", "Traces from intake through scorer, explainer and app, so a slow PR shows where the time went.", "Sampling never drops errors or dead-lettered events.", "not built"],
+  alert: [C.d1, R.bus, "Alertmanager", "SLO burn · queue · drift", "suggested", "obs", "Pages on intake latency near 10 s, queue backlog, dead-letter growth, explainer timeouts, drift and training pool saturation.", "A page means a user-visible promise is at risk.", "not built"],
+  grafana: [C.d0, R.r2, "Grafana", "per-service, per-repo views", "built", "obs", "Dashboards per service and per repo, including repo model AUC and weight.", "Reached only through the SSO proxy.", "infra/grafana"],
+  uptime: [C.d1, R.r2, "Uptime checks", "synthetic /healthz", "suggested", "obs", "External probes on webhook and dashboard endpoints, so an edge outage is caught when no PRs arrive.", "Probes carry no tenant data.", "not built"],
+  errors: [C.d1, R.plat, "Error tracking", "self-hosted · per release", "suggested", "obs", "Exception grouping per release, self-hosted so stack traces stay inside.", "Code never leaves the installation.", "not built"],
+};
+const CHIPS = [["Gateway API", "suggested"], ["HPA on CPU and rate", "suggested"], ["KEDA on queue depth", "planned"], ["min 1 warm replica", "suggested"],
+  ["PodDisruptionBudgets", "suggested"], ["Argo CD", "suggested"], ["External Secrets", "suggested"], ["NetworkPolicy", "suggested"], ["OTel agent", "built"], ["Training Job pool", "planned"]];
+
+// [from, to, class, label, opts]
+const EDGES = [
+  ["github", "lb", "main", "webhook", { step: 1 }],
+  ["lb", "intake", "main", "/webhook", { step: 2, via: [{ x: 644 }], o: -14 }],
+  ["intake", "redis", "main", "SET NX delivery_id", { step: 3, via: [{ y: 96, below: ["intake", "scorer", "explainer"] }, { x: 1724 }], o: 70 }],
+  ["intake", "bus", "main", "PrEvent", { step: 4, o: -50 }],
+  ["bus", "scorer", "main", "consume", { step: 5, o: -60 }],
+  ["scorer", "explainer", "main", "evidence", { step: 6 }],
+  ["scorer", "pg", "main", "ScoreResult", { step: 7, via: [{ y: -110 }, { x: 1676 }], oe: -10 }],
+  ["scorer", "bus", "main", "score-results", { step: 8, o: 60 }],
+  ["bus", "appgh", "main", "result", { step: 9 }],
+  ["appgh", "nat", "main", "check run", { step: 10, via: [{ y: 444, below: ["appweb", "appgh", "labeler"] }] }],
+  ["nat", "github", "main", "GitHub API", { via: [{ x: 256 }], o: 16, oe: 22 }],
+  ["community", "lb", "main", "dashboard", { step: 11, via: [{ x: 292 }], oe: -20 }],
+  ["lb", "appweb", "main", "/app", { o: 12 }],
+  ["gmodel", "scorer", "main", "global score", { oe: -50 }],
+  ["rmodel", "scorer", "main", "repo layer", { oe: 50 }],
+
+  ["appweb", "pg", "data", "ranked queue", { via: [{ y: 246, below: ["bus"] }, { x: 1692 }], o: 60, oe: 4 }],
+  ["bus", "labeler", "data", "outcome events"],
+  ["labeler", "pg", "data", "outcomes", { via: [{ x: 1708 }], oe: 18 }],
+  ["pg", "gcs", "data", "snapshots"],
+  ["secrets", "platform", "data", "synced secrets", { via: [{ y: -112 }, { x: 1756 }], oe: 30 }],
+  ["oncall", "iap", "ctl", "admin sign-in", { via: [{ x: 268 }] }],
+  ["armor", "lb", "ctl", "policy"],
+  ["ci", "ar", "ship", "push images"],
+  ["ci", "platform", "ship", "terraform apply · deploy", { via: [{ x: 292 }, { y: 620 }, { x: 644 }], o: 20 }],
+
+  ["triggers", "gtrain", "ml", "start"],
+  ["triggers", "rfit", "ml", "start", { via: [{ y: -430 }], o: 40 }],
+  ["gtrain", "gate", "ml", "candidate"],
+  ["rfit", "gate", "ml", "candidate"],
+  ["rfit", "pg", "ml", "repo outcomes", { o: -24 }],
+  ["gate", "registry", "ml", "promote"],
+  ["registry", "gmodel", "ml", "serve"],
+  ["registry", "rmodel", "ml", "serve"],
+
+  ["platform", "collector", "obs", "all pods", { via: [{ x: 1740 }], o: -30 }],
+  ["collector", "prom", "obs", "metrics"],
+  ["collector", "loki", "obs", "logs"],
+  ["collector", "tempo", "obs", "traces", { via: [{ x: 2092 }], o: 20, oe: -12 }],
+  ["collector", "errors", "obs", "exceptions", { via: [{ x: 2092 }], o: 20, oe: 12 }],
+  ["prom", "alert", "obs", "rules"],
+  ["loki", "grafana", "obs", "query"],
+  ["uptime", "alert", "obs", "probe fails"],
+  ["alert", "oncall", "obs", "page", { via: [{ x: 2440 }, { y: -600 }] }],
+];
+const STEPS = [
+  ["Webhook arrives", "GitHub posts the pull_request event to /webhook. The WAF checks the source range and the tenant's rate limit; the load balancer terminates TLS."],
+  ["Intake verifies", "The HMAC signature is checked against the webhook secret. A bad signature gets 401 and stops here."],
+  ["Deduplicate", "SET NX on the delivery ID in Redis. A redelivery is acknowledged and dropped."],
+  ["Publish and return 200", "PrEvent goes to pr-events with a per-tenant, per-PR ordering key. GitHub gets 200 inside ten seconds."],
+  ["Scorer consumes", "A warm worker (KEDA scales out on queue depth) reads the tenant's rules and pins one model_version: the global model plus the repo model, whose weight is 0 for a new repo."],
+  ["Explain, with a timeout", "Evidence goes to the explainer. Template text by default; if the LLM is slow the explanation is null and the rank stands."],
+  ["Write the result", "ScoreResult is stored keyed by delivery ID, so a retry overwrites. Stage 2 scanners rescore once."],
+  ["Announce it", "The result goes to score-results. On failure the event goes to dead-letter and the PR shows unranked and flagged."],
+  ["GitHub App picks it up", "app consumes the result and builds the check run for the PR's head SHA."],
+  ["Back to GitHub", "The check run and optional comment leave through the single NAT egress IP."],
+  ["Teams see the queue", "The dashboard, behind the same load balancer, reads the replica and shows the PR in its rank band, with how much the repo model contributed."],
+];
+
+/* ---------- helpers + state ---------- */
+const NS = "http://www.w3.org/2000/svg";
+const mk = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const KEY = "riffle-arch-v8";
+const stored = (() => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } })();
+const pos = {};
+for (const [id, n] of Object.entries(NODES)) pos[id] = stored.pos?.[id] || { x: n[0], y: n[1] };
+const moved = () => Object.entries(NODES).some(([id, n]) => pos[id].x !== n[0] || pos[id].y !== n[1]);
+const persist = () => { try { localStorage.setItem(KEY, JSON.stringify({ pos })); } catch (e) {} const r = document.getElementById("reset"); if (r) r.hidden = !moved(); };
+const realH = {};
+const box = id => { const n = NODES[id]; return { x: pos[id].x, y: pos[id].y, w: n[9] || W, h: Math.max(n[10] || H, realH[id] || 0) }; };
+const measureNodes = () => { for (const id in nodeEls) realH[id] = nodeEls[id].offsetHeight; };
+const zoneLabel = k => ZONES.find(z => z.key === k).label;
+
+const vp = document.getElementById("vp"), world = document.getElementById("world");
+const zonesSvg = document.getElementById("zones"), edgesSvg = document.getElementById("edges"), labelsSvg = document.getElementById("labels"), nodesEl = document.getElementById("nodes");
+const measure = (() => { const c = document.createElement("canvas").getContext("2d"); return (t, font) => { c.font = font; return c.measureText(t).width; }; })();
+
+/* ---------- nodes ---------- */
+const nodeEls = {};
+for (const [id, n] of Object.entries(NODES)) {
+  const [, , t, s, st, z] = n, b = box(id);
+  const d = document.createElement("div");
+  d.className = `node z-${z}${id === "bus" ? " bus" : ""}`;
+  d.style.width = b.w + "px"; d.style.minHeight = b.h + "px";
+  d.tabIndex = 0; d.setAttribute("role", "button"); d.setAttribute("aria-label", `${t}, ${s}`);
+  d.innerHTML = `<div class="t">${esc(t)}${n[11] ? `<span class="tier">${esc(n[11])}</span>` : ""}</div>${s ? `<div class="s">${esc(s)}</div>` : ""}` +
+    (id === "platform" ? `<div class="chips">${CHIPS.map(([c]) => `<span>${esc(c)}</span>`).join("")}</div>` : "");
+  nodesEl.appendChild(d); nodeEls[id] = d;
+}
+const placeNodes = () => { for (const id in nodeEls) { nodeEls[id].style.left = pos[id].x + "px"; nodeEls[id].style.top = pos[id].y + "px"; } };
+
+/* ---------- arrowheads ---------- */
+const defs = document.getElementById("defs");
+const HUE = { main: "var(--accent)", data: "var(--e-data)", obs: "var(--e-obs)", ml: "var(--e-ml)", ship: "var(--e-ship)", ctl: "var(--grey)" };
+for (const c in HUE) {
+  const m = mk("marker", { id: "m-" + c, viewBox: "0 0 10 10", refX: 8.5, refY: 5, markerWidth: 9, markerHeight: 9, orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" }, defs);
+  mk("path", { d: "M1.5,1.5 L8.5,5 L1.5,8.5", style: `fill:none;stroke:${HUE[c]};stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round` }, m);
+}
+
+/* ---------- routing: straight when boxes line up, one elbow otherwise, lanes where asked ---------- */
+function route(e) {
+  const [f, t, , , o = {}] = e, A = box(f), B = box(t);
+  const acx = A.x + A.w / 2, acy = A.y + A.h / 2, bcx = B.x + B.w / 2, bcy = B.y + B.h / 2, os = o.o || 0, oe = o.oe || 0;
+  if (o.via) {
+    const first = o.via[0], pts = [];
+    pts.push("y" in first ? [acx + os, (first.below ? Math.max(first.y, A.y + A.h + 1) : first.y) < A.y ? A.y : A.y + A.h] : [first.x < A.x ? A.x : A.x + A.w, acy + os]);
+    let cur = pts[0];
+    const laneY = v => v.below ? Math.max(v.y, ...v.below.map(id => { const b = box(id); return b.y + b.h + 18; })) : v.y;
+    for (const v of o.via) { cur = "y" in v ? [cur[0], laneY(v)] : [v.x, cur[1]]; pts.push(cur); }
+    const last = o.via[o.via.length - 1];
+    if ("y" in last) { const tx = bcx + oe; pts.push([tx, cur[1]], [tx, cur[1] < B.y ? B.y : B.y + B.h]); }
+    else { const ty = bcy + oe; pts.push([cur[0], ty], [cur[0] < B.x ? B.x : B.x + B.w, ty]); }
+    return pts;
+  }
+  const gapX = Math.max(B.x - (A.x + A.w), A.x - (B.x + B.w)), gapY = Math.max(B.y - (A.y + A.h), A.y - (B.y + B.h));
+  if (gapX >= gapY) {
+    const r = bcx > acx, x0 = r ? A.x + A.w : A.x, x1 = r ? B.x : B.x + B.w, lo = Math.max(A.y, B.y), hi = Math.min(A.y + A.h, B.y + B.h);
+    if (hi - lo > 18) { const y = (lo + hi) / 2 + os; return [[x0, y], [x1, y]]; }
+    const mx = (x0 + x1) / 2; return [[x0, acy + os], [mx, acy + os], [mx, bcy + oe], [x1, bcy + oe]];
+  }
+  const d = bcy > acy, y0 = d ? A.y + A.h : A.y, y1 = d ? B.y : B.y + B.h, lo = Math.max(A.x, B.x), hi = Math.min(A.x + A.w, B.x + B.w);
+  if (hi - lo > 18) { const x = (lo + hi) / 2 + os; return [[x, y0], [x, y1]]; }
+  const my = (y0 + y1) / 2; return [[acx + os, y0], [acx + os, my], [bcx + oe, my], [bcx + oe, y1]];
+}
+function pathD(pts, r = 9) {
+  const p = pts.filter((q, i) => !i || q[0] !== pts[i - 1][0] || q[1] !== pts[i - 1][1]);
+  let d = `M${p[0][0]},${p[0][1]}`;
+  for (let i = 1; i < p.length - 1; i++) {
+    const [ax, ay] = p[i - 1], [bx, by] = p[i], [cx, cy] = p[i + 1];
+    const l1 = Math.hypot(bx - ax, by - ay), l2 = Math.hypot(cx - bx, cy - by), rr = Math.min(r, l1 / 2, l2 / 2);
+    d += ` L${bx - (bx - ax) / l1 * rr},${by - (by - ay) / l1 * rr} Q${bx},${by} ${bx + (cx - bx) / l2 * rr},${by + (cy - by) / l2 * rr}`;
+  }
+  const z = p[p.length - 1]; return d + ` L${z[0]},${z[1]}`;
+}
+
+/* ---------- edges + labels ---------- */
+const tip = document.getElementById("tip");
+const LFONT = "500 11.5px 'Geist Mono', ui-monospace, monospace";
+const edgeEls = EDGES.map(e => {
+  const [f, t, c, label, o = {}] = e;
+  const g = mk("g", { class: "edge " + c }, edgesSvg);
+  const w = mk("path", { class: "w", "marker-end": `url(#m-${c})` }, g), hit = mk("path", { class: "hit" }, g);
+  hit.addEventListener("pointerenter", () => { tip.textContent = `${NODES[f][2]} → ${NODES[t][2]} · ${label}`; tip.hidden = false; });
+  hit.addEventListener("pointermove", ev => { tip.style.left = ev.clientX + "px"; tip.style.top = ev.clientY + "px"; });
+  hit.addEventListener("pointerleave", () => { tip.hidden = true; });
+  const lg = mk("g", { class: "lbl" + (c === "main" ? " main" : "") }, labelsSvg);
+  const rect = mk("rect", { rx: 4, height: 20 }, lg);
+  let num = null, numt = null;
+  if (o.step) { num = mk("circle", { class: "num", r: 8 }, lg); numt = mk("text", { class: "numt" }, lg); numt.textContent = o.step; }
+  const txt = mk("text", {}, lg); txt.textContent = label;
+  return { e, g, w, hit, lg, rect, txt, num, numt, pts: [] };
+});
+const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+function pointAt(pts, f) {
+  const seg = []; let tot = 0;
+  for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); seg.push(l); tot += l; }
+  let d = tot * f;
+  for (let i = 0; i < seg.length; i++) { if (d <= seg[i] || i === seg.length - 1) { const r = seg[i] ? Math.min(1, d / seg[i]) : 0; return { x: pts[i][0] + (pts[i + 1][0] - pts[i][0]) * r, y: pts[i][1] + (pts[i + 1][1] - pts[i][1]) * r, horiz: pts[i][1] === pts[i + 1][1] }; } d -= seg[i]; }
+}
+function placeLabels() {
+  const CH = 6.9, h = 20;                        // Geist Mono advance at 11.5px; pill height
+  const taken = Object.keys(NODES).map(id => { const b = box(id); return { x: b.x - 3, y: b.y - 3, w: b.w + 6, h: b.h + 6 }; });
+  for (const z of zoneRects) taken.push(z.hdr);
+  const order = [...edgeEls].sort((a, b) => (b.e[2] === "main") - (a.e[2] === "main"));
+  for (const x of order) {
+    const step = !!x.num, w = Math.ceil(x.e[3].length * CH) + 16 + (step ? (String(x.e[4].step).length > 1 ? 22 : 20) : 0);
+    const segs = [];
+    for (let i = 1; i < x.pts.length; i++) { const [a, b] = [x.pts[i - 1], x.pts[i]]; segs.push({ a, b, l: Math.hypot(b[0] - a[0], b[1] - a[1]) }); }
+    segs.sort((p, q) => q.l - p.l);
+    let best = null;
+    search: for (const sg of segs) for (const f of [0.5, 0.38, 0.62, 0.26, 0.74, 0.16, 0.84]) {
+      const cx = sg.a[0] + (sg.b[0] - sg.a[0]) * f, cy = sg.a[1] + (sg.b[1] - sg.a[1]) * f;
+      const r = { x: cx - w / 2, y: cy - h / 2, w, h };
+      if (!taken.some(t => overlaps(t, r))) { best = r; break search; }
+    }
+    if (!best) { const sg = segs[0], cx = (sg.a[0] + sg.b[0]) / 2, cy = (sg.a[1] + sg.b[1]) / 2; best = { x: cx - w / 2, y: cy - h / 2, w, h }; }
+    taken.push(best);
+    const X = Math.round(best.x) + 0.5, Y = Math.round(best.y) + 0.5, cy = Y + h / 2;
+    x.rect.setAttribute("x", X); x.rect.setAttribute("y", Y); x.rect.setAttribute("width", w); x.rect.setAttribute("rx", h / 2);
+    let tx = X + 8;
+    if (step) { const two = String(x.e[4].step).length > 1, r = two ? 8.5 : 7.5;
+      x.num.setAttribute("cx", X + 3 + r); x.num.setAttribute("cy", cy); x.num.setAttribute("r", r);
+      x.numt.setAttribute("x", X + 3 + r); x.numt.setAttribute("y", cy + 0.5); x.numt.style.fontSize = two ? "9px" : "10px"; tx = X + 9 + r * 2; }
+    x.txt.setAttribute("x", tx); x.txt.setAttribute("y", cy + 0.5);
+  }
+}
+function drawEdges() { for (const x of edgeEls) { x.pts = route(x.e); const d = pathD(x.pts); x.w.setAttribute("d", d); x.hit.setAttribute("d", d); } }
+
+/* ---------- zones + frame ---------- */
+const PAD = 24, HEAD = 52;
+const zoneRects = [];
+const zoneEls = ZONES.map(z => {
+  const g = mk("g", { class: "zone z-" + z.key }, zonesSvg);
+  return { z, f: mk("rect", { class: "f", rx: 12 }, g), hdr: mk("rect", { class: "hdr", rx: 5, height: 26 }, g), t: mk("text", {}, g), n: mk("text", { class: "n" }, g) };
+});
+const frame = (() => { const g = mk("g", { class: "frame" }); zonesSvg.insertBefore(g, zonesSvg.firstChild); return { r: mk("rect", { rx: 16 }, g), t: mk("text", { class: "gt" }, g), n: mk("text", { class: "gn" }, g) }; })();
+function drawZones() {
+  zoneRects.length = 0;
+  let U = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
+  for (const ze of zoneEls) {
+    const ids = Object.keys(NODES).filter(id => NODES[id][5] === ze.z.key);
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for (const id of ids) { const b = box(id); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); }
+    const x = x0 - PAD, y = y0 - PAD - HEAD, w = x1 - x0 + PAD * 2, h = y1 - y0 + PAD * 2 + HEAD;
+    Object.entries({ x, y, width: w, height: h }).forEach(([k, v]) => ze.f.setAttribute(k, v));
+    const lw = measure(ze.z.label, "600 13px Geist, sans-serif") + 24;
+    ze.hdr.setAttribute("x", x + 14); ze.hdr.setAttribute("y", y + 14); ze.hdr.setAttribute("width", lw);
+    ze.t.setAttribute("x", x + 26); ze.t.setAttribute("y", y + 31.5); ze.t.textContent = ze.z.label;
+    ze.n.setAttribute("x", x + 14 + lw + 10); ze.n.setAttribute("y", y + 31.5); ze.n.textContent = ze.z.note;
+    zoneRects.push({ hdr: { x: x + 10, y: y + 10, w: lw + 20 + measure(ze.z.note, "500 11.5px 'Geist Mono'"), h: 34 } });
+    if (ze.z.key !== "outside") U = { x0: Math.min(U.x0, x), y0: Math.min(U.y0, y), x1: Math.max(U.x1, x + w), y1: Math.max(U.y1, y + h) };
+  }
+  for (const id in NODES) if (NODES[id][5] === "outside") { const b = box(id); U.y0 = Math.min(U.y0, b.y - PAD - HEAD); U.y1 = Math.max(U.y1, b.y + b.h + PAD); }
+  const fx = U.x0 - 20, fy = U.y0 - 56;
+  Object.entries({ x: fx, y: fy, width: U.x1 - U.x0 + 40, height: U.y1 - U.y0 + 76 }).forEach(([k, v]) => frame.r.setAttribute(k, v));
+  frame.t.setAttribute("x", fx + 22); frame.t.setAttribute("y", fy + 36); frame.t.textContent = "Any cloud";
+  frame.n.setAttribute("x", fx + 22 + measure("Any cloud", "700 20px Geist, sans-serif") + 12); frame.n.setAttribute("y", fy + 35);
+  frame.n.textContent = "provisioned by Terraform · Kubernetes · S3-compatible storage";
+  const oz = zoneEls.find(z => z.z.key === "outside"), fh = U.y1 - U.y0 + 76;
+  oz.f.setAttribute("y", fy); oz.f.setAttribute("height", fh);
+  oz.hdr.setAttribute("y", fy + 14); oz.t.setAttribute("y", fy + 31.5); oz.n.setAttribute("y", fy + 31.5);
+  const zi = zoneEls.indexOf(oz); zoneRects[zi].hdr.y = fy + 10;
+}
+function redraw() { placeNodes(); measureNodes(); drawZones(); drawEdges(); placeLabels(); }
+
+/* ---------- camera ---------- */
+const cam = { x: 0, y: 0, k: 1 };
+const zoomEl = document.getElementById("zoom");
+const clampK = k => Math.min(2.5, Math.max(0.08, k));
+function apply() {
+  world.style.transform = `translate(${Math.round(cam.x)}px,${Math.round(cam.y)}px) scale(${cam.k})`;
+  const g = 24 * cam.k; vp.style.backgroundSize = `${g}px ${g}px`; vp.style.backgroundPosition = `${cam.x}px ${cam.y}px`;
+  zoomEl.textContent = Math.round(cam.k * 100) + "%";
+}
+function zoomAt(px, py, k2) { stopAnim(); k2 = clampK(k2); cam.x = px - (px - cam.x) * (k2 / cam.k); cam.y = py - (py - cam.y) * (k2 / cam.k); cam.k = k2; apply(); }
+let anim = 0;
+function stopAnim() { cancelAnimationFrame(anim); anim = 0; world.classList.remove("moving"); }
+function animateTo(t, D = 420) {
+  stopAnim();
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { Object.assign(cam, t); apply(); return; }
+  const from = { ...cam }, t0 = performance.now(), ease = x => 1 - Math.pow(1 - x, 3); world.classList.add("moving");
+  const stepF = now => { const p = Math.min(1, (now - t0) / D), e = ease(p);
+    cam.x = from.x + (t.x - from.x) * e; cam.y = from.y + (t.y - from.y) * e; cam.k = from.k + (t.k - from.k) * e; apply();
+    if (p < 1) anim = requestAnimationFrame(stepF); else world.classList.remove("moving"); };
+  anim = requestAnimationFrame(stepF);
+}
+const drawer = document.getElementById("drawer");
+const usableW = () => innerWidth - (drawer.hidden || innerWidth <= 680 ? 0 : drawer.offsetWidth + 24);
+const usableH = () => innerHeight - (drawer.hidden || innerWidth > 680 ? 0 : drawer.offsetHeight + 16);
+function worldBounds() {
+  const r = frame.r, fx = +r.getAttribute("x"), fy = +r.getAttribute("y");
+  let x0 = Math.min(fx, -PAD), y0 = Math.min(fy, -PAD - HEAD), x1 = fx + +r.getAttribute("width"), y1 = fy + +r.getAttribute("height");
+  for (const id in NODES) { const b = box(id); x0 = Math.min(x0, b.x - PAD); x1 = Math.max(x1, b.x + b.w + PAD); y1 = Math.max(y1, b.y + b.h + PAD); }
+  for (const e of edgeEls) for (const [px, py] of e.pts) { x0 = Math.min(x0, px - 16); x1 = Math.max(x1, px + 16); y0 = Math.min(y0, py - 16); y1 = Math.max(y1, py + 16); }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+function fitTo(B, animated, top = 76, pad = 28) {
+  const vw = usableW(), vh = usableH();
+  const k = clampK(Math.min((vw - pad * 2) / B.w, (vh - top - 70 - pad) / B.h, 1.4));
+  const t = { k, x: (vw - B.w * k) / 2 - B.x * k, y: top + (vh - top - 70 - B.h * k) / 2 - B.y * k };
+  animated ? animateTo(t) : (Object.assign(cam, t), apply());
+}
+const fit = animated => fitTo(worldBounds(), animated, innerWidth <= 680 ? 56 : 76, innerWidth <= 680 ? 10 : 28);
+
+/* ---------- input ---------- */
+const pointers = new Map();
+let act = null, pinch = null;
+vp.addEventListener("pointerdown", ev => {
+  stopAnim(); vp.setPointerCapture(ev.pointerId); pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (pointers.size === 2) { const [p, q] = [...pointers.values()]; pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), k: cam.k }; act = null; return; }
+  const n = ev.target.closest(".node"), id = n ? Object.keys(nodeEls).find(k => nodeEls[k] === n) : null;
+  act = id ? { type: "drag", id, sx: ev.clientX, sy: ev.clientY, ox: pos[id].x, oy: pos[id].y, moved: false }
+           : { type: "pan", sx: ev.clientX, sy: ev.clientY, ox: cam.x, oy: cam.y, moved: false };
+});
+vp.addEventListener("pointermove", ev => {
+  if (!pointers.has(ev.pointerId)) return;
+  pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  if (pinch && pointers.size === 2) { const [p, q] = [...pointers.values()]; zoomAt((p.x + q.x) / 2, (p.y + q.y) / 2, pinch.k * Math.hypot(p.x - q.x, p.y - q.y) / pinch.d); return; }
+  if (!act) return;
+  const dx = ev.clientX - act.sx, dy = ev.clientY - act.sy;
+  if (!act.moved && Math.abs(dx) + Math.abs(dy) > 4) { act.moved = true; if (act.type === "pan") vp.classList.add("panning"); else nodeEls[act.id].classList.add("dragging"); if (tourOn()) pauseTour(); }
+  if (!act.moved) return;
+  if (act.type === "pan") { cam.x = act.ox + dx; cam.y = act.oy + dy; apply(); }
+  else { const snap = v => ev.altKey ? v : Math.round(v / 8) * 8; pos[act.id] = { x: snap(act.ox + dx / cam.k), y: snap(act.oy + dy / cam.k) }; placeNodes(); drawZones(); drawEdges(); }
+});
+function endPointer(ev) {
+  pointers.delete(ev.pointerId); if (pointers.size < 2) pinch = null;
+  if (!act || pointers.size) return;
+  vp.classList.remove("panning");
+  if (act.type === "drag") { nodeEls[act.id].classList.remove("dragging"); if (act.moved) { placeLabels(); persist(); } else select(act.id, true); }
+  else if (!act.moved) { tourOn() ? pauseTour() : closeDrawer(); }
+  act = null;
+}
+vp.addEventListener("pointerup", endPointer);
+vp.addEventListener("pointercancel", endPointer);
+vp.addEventListener("wheel", ev => { ev.preventDefault(); if (tourOn()) pauseTour(); zoomAt(ev.clientX, ev.clientY, cam.k * Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.0015))); }, { passive: false });
+
+/* ---------- focus ---------- */
+function clearFocus() { world.classList.remove("dim"); document.querySelectorAll(".on, .sel").forEach(x => x.classList.remove("on", "sel")); }
+function focus(pred, ids = []) {
+  clearFocus(); world.classList.add("dim");
+  for (const x of edgeEls) if (pred(x.e)) { x.g.classList.add("on"); x.lg.classList.add("on"); nodeEls[x.e[0]].classList.add("on"); nodeEls[x.e[1]].classList.add("on"); edgesSvg.appendChild(x.g); }
+  ids.forEach(id => nodeEls[id].classList.add("on"));
+}
+function boundsOf(ids) {
+  let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const id of ids) { const b = box(id); x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y); x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h); }
+  return { x: x0 - 60, y: y0 - 60, w: x1 - x0 + 120, h: y1 - y0 + 120 };
+}
+
+/* ---------- drawer ---------- */
+const statusText = { built: "built today", planned: "planned", suggested: "suggested, not decided" };
+function detailHTML(id) {
+  const n = NODES[id], conns = EDGES.filter(e => e[0] === id || e[1] === id);
+  return `<div class="headbar z-${n[5]}"><span class="ztag">${esc(zoneLabel(n[5]))}</span><span class="path">${esc(n[8])}</span>
+      <button class="close" type="button" aria-label="Close details"><svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9" stroke="currentColor" stroke-width="1.6" fill="none"/></svg></button></div>
+    <h2>${esc(n[2])}</h2>
+    <div class="dchips">${n[11] ? `<span class="dchip"><span class="tier">${esc(n[11])}</span> plan only</span>` : ""}${n[3] ? `<span class="dchip">${esc(n[3])}</span>` : ""}</div>
+    <p class="lede">${esc(n[6])}</p>
+    <h3>Owns</h3><div class="owns z-${n[5]}">${esc(n[7])}</div>
+    ${id === "platform" ? `<h3>Pieces</h3><div class="dchips">${CHIPS.map(([c]) => `<span class="dchip">${esc(c)}</span>`).join("")}</div>` : ""}
+    ${conns.length ? `<h3>Connected to</h3><div class="conns">${conns.map(([a, b, , label]) => {
+      const other = a === id ? b : a;
+      return `<button class="conn" type="button" data-go="${other}"><span class="dir">${a === id ? "→" : "←"}</span><span><b>${esc(NODES[other][2])}</b> <em>· ${esc(label)}</em></span></button>`;
+    }).join("")}</div>` : ""}`;
+}
+function openDrawer(html, zone) {
+  drawer.innerHTML = html; drawer.className = "drawer" + (zone ? " z-" + zone : ""); drawer.hidden = false; drawer.scrollTop = 0;
+  document.body.classList.add("drawer-open");
+  drawer.querySelector(".close")?.addEventListener("click", closeDrawer);
+  drawer.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => select(b.dataset.go, false)));
+}
+function select(id, fromTap) {
+  if (tourOn()) stopTour();
+  setFlow(null);
+  focus(e => e[0] === id || e[1] === id, [id]); nodeEls[id].classList.add("sel");
+  openDrawer(detailHTML(id), NODES[id][5]);
+  const b = box(id), sx = (b.x + b.w / 2) * cam.k + cam.x, sy = (b.y + b.h / 2) * cam.k + cam.y;
+  if (!fromTap || sx > usableW() - 80 || sy > usableH() - 80) { const k = Math.max(cam.k, 0.75); animateTo({ k, x: usableW() / 2 - (b.x + b.w / 2) * k, y: usableH() / 2 - (b.y + b.h / 2) * k }); }
+  if (location.hash !== "#" + id) history.replaceState(null, "", "#" + id);
+}
+function closeDrawer() {
+  if (tourOn()) stopTour();
+  drawer.hidden = true; document.body.classList.remove("drawer-open"); clearFocus(); setFlow(null);
+  if (location.hash) history.replaceState(null, "", location.pathname);
+}
+for (const [id, el] of Object.entries(nodeEls)) el.addEventListener("keydown", ev => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(id, false); } });
+
+/* ---------- flows ---------- */
+const flowsEl = document.querySelector(".flows"); let curFlow = null;
+function setFlow(k) { curFlow = k; world.classList.toggle("flow", !!k); flowsEl.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === k))); }
+flowsEl.addEventListener("click", ev => {
+  const b = ev.target.closest("button"); if (!b) return;
+  const k = b.dataset.k;
+  if (curFlow === k) { setFlow(null); clearFocus(); return; }
+  if (!drawer.hidden) closeDrawer();
+  setFlow(k); focus(e => e[2] === k);
+  const ids = [...new Set(EDGES.filter(e => e[2] === k).flatMap(e => [e[0], e[1]]))];
+  fitTo(boundsOf(ids), true);
+});
+
+/* ---------- tour ---------- */
+const tour = { on: false, i: 0, playing: false, t: 0, raf: 0, D: 5200 };
+const tourOn = () => tour.on;
+function stepEdges(i) { return EDGES.filter(e => e[4]?.step === i + 1); }
+function goTour(i) {
+  tour.i = (i + STEPS.length) % STEPS.length; tour.t = performance.now();
+  const es = stepEdges(tour.i), ids = [...new Set(es.flatMap(e => [e[0], e[1]]))];
+  focus(e => e[4]?.step === tour.i + 1, ids);
+  const [title, text] = STEPS[tour.i];
+  openDrawer(`<div class="tour"><div class="row"><span class="lbl2">Step ${tour.i + 1} of ${STEPS.length} · one pull request</span>
+      <button type="button" id="tStop">End</button></div>
+      <h4>${esc(title)}</h4><p>${esc(text)}</p><div class="bar"><div id="tBar"></div></div>
+      <div class="btns"><button type="button" id="tPrev" aria-label="Previous">←</button><button type="button" class="primary" id="tPlay">${tour.playing ? "Pause" : "Play"}</button><button type="button" id="tNext" aria-label="Next">→</button></div></div>
+    ${ids.length ? `<h3>In this step</h3><div class="conns">${es.map(([a, b, , l]) => `<button class="conn" type="button" data-go="${a}"><span class="dir">→</span><span><b>${esc(NODES[a][2])}</b> to <b>${esc(NODES[b][2])}</b> <em>· ${esc(l)}</em></span></button>`).join("")}</div>` : ""}`, "cluster");
+  document.getElementById("tStop").onclick = stopTour;
+  document.getElementById("tPrev").onclick = () => goTour(tour.i - 1);
+  document.getElementById("tNext").onclick = () => goTour(tour.i + 1);
+  document.getElementById("tPlay").onclick = () => tour.playing ? pauseTour() : playTour();
+  drawer.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { stopTour(); select(b.dataset.go, false); });
+  fitTo(boundsOf(ids), true, 40, 60);
+}
+function tick(now) {
+  if (!tour.playing) return;
+  const p = (now - tour.t) / tour.D, bar = document.getElementById("tBar");
+  if (bar) bar.style.width = Math.min(100, p * 100) + "%";
+  if (p >= 1) { if (tour.i === STEPS.length - 1) { pauseTour(); return; } goTour(tour.i + 1); }
+  tour.raf = requestAnimationFrame(tick);
+}
+function playTour() { tour.on = true; tour.playing = true; document.getElementById("play").textContent = "❚❚ Pause"; tour.t = performance.now(); const b = document.getElementById("tPlay"); if (b) b.textContent = "Pause"; cancelAnimationFrame(tour.raf); tour.raf = requestAnimationFrame(tick); }
+function pauseTour() { tour.playing = false; cancelAnimationFrame(tour.raf); document.getElementById("play").textContent = "▶ Resume"; const b = document.getElementById("tPlay"); if (b) b.textContent = "Play"; }
+function stopTour() { tour.on = false; pauseTour(); document.getElementById("play").textContent = "▶ Trace a PR"; drawer.hidden = true; document.body.classList.remove("drawer-open"); clearFocus(); }
+document.getElementById("play").onclick = () => {
+  if (!tour.on) { setFlow(null); tour.on = true; goTour(0); playTour(); }
+  else tour.playing ? pauseTour() : playTour();
+};
+
+/* ---------- controls ---------- */
+document.getElementById("zin").onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, cam.k * 1.25);
+document.getElementById("zout").onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, cam.k / 1.25);
+document.getElementById("fit").onclick = () => fit(true);
+const allBtn = document.getElementById("all");
+allBtn.onclick = () => { const on = world.classList.toggle("showall"); allBtn.setAttribute("aria-pressed", String(on)); };
+document.getElementById("reset").onclick = () => { for (const [id, n] of Object.entries(NODES)) pos[id] = { x: n[0], y: n[1] }; persist(); redraw(); fit(true); };
+const themeBtn = document.getElementById("theme");
+const themeLabel = () => { const t = document.documentElement.dataset.theme; themeBtn.textContent = t === "dark" ? "◐ Dark" : t === "light" ? "◐ Light" : "◐ Auto"; };
+themeBtn.onclick = () => {
+  const r = document.documentElement, next = !r.dataset.theme ? "light" : r.dataset.theme === "light" ? "dark" : null;
+  if (next) r.dataset.theme = next; else delete r.dataset.theme;
+  try { next ? localStorage.setItem("riffle-arch-theme", next) : localStorage.removeItem("riffle-arch-theme"); } catch (e) {}
+  themeLabel();
+};
+themeLabel();
+document.addEventListener("keydown", ev => {
+  if (ev.target.closest?.("input, textarea")) return;
+  if (tourOn()) {
+    if (ev.key === " ") { ev.preventDefault(); tour.playing ? pauseTour() : playTour(); return; }
+    if (ev.key === "ArrowRight") return goTour(tour.i + 1);
+    if (ev.key === "ArrowLeft") return goTour(tour.i - 1);
+  }
+  if (ev.key === "+" || ev.key === "=") zoomAt(innerWidth / 2, innerHeight / 2, cam.k * 1.25);
+  else if (ev.key === "-") zoomAt(innerWidth / 2, innerHeight / 2, cam.k / 1.25);
+  else if (ev.key === "0" || ev.key === "f") fit(true);
+  else if (ev.key === "Escape") tourOn() ? stopTour() : closeDrawer();
+});
+let rt = 0; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => fit(false), 150); });
+
+redraw(); fit(false); persist();
+document.fonts?.ready.then(() => { redraw(); fit(false); });
+const h = location.hash.slice(1); if (NODES[h]) select(h, false);
+</script>
+</body>
+</html>
