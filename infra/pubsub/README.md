@@ -1,8 +1,9 @@
 # pubsub
 
 The message topics between the services, listed once in [`topics.json`](topics.json).
-Terraform reads this file to create the topics and subscriptions on Pub/Sub, so adding a topic
-is a change here, not in Terraform.
+Terraform (`infra/terraform/modules/pubsub`) reads this file to create the topics and
+subscriptions on Pub/Sub, so adding a topic is a change here, not in Terraform. In GCP every
+name gets the environment prefix, e.g. `riffle-staging-pr-events`.
 
 | Topic | From | Read by (subscription) |
 | --- | --- | --- |
@@ -10,6 +11,7 @@ is a change here, not in Terraform.
 | `score-results` | scorer | app (`app-score-results`) |
 | `score-log` | scorer | score-log writer (`score-log-writer`, ADR 0024) |
 | `installation-events` | intake | app (`app-installation-events`, ordered, ADR 0025) |
+| `outcome-events` | intake | outcome labeler (`outcome-labeler-outcome-events`, ordered) |
 
 ## Invariants
 

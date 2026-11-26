@@ -1,5 +1,5 @@
 {
-  "description": "Every Pub/Sub topic and subscription Riffle uses. The local stack (create_topics.py) and Terraform read this one file, so the two cannot drift apart. Each subscription gets a dead-letter topic named <topic>-dead-letter and a hold subscription on it, so a message that failed max_delivery_attempts times is kept, not dropped.",
+  "description": "Every Pub/Sub topic and subscription Riffle uses. Terraform (infra/terraform/modules/pubsub) reads this file, so adding a topic is a change here. Each subscription gets a dead-letter topic named <topic>-dead-letter and a hold subscription on it, so a message that failed max_delivery_attempts times is kept, not dropped.",
   "dead_letter": {
     "max_delivery_attempts": 5,
     "hold_retention_days": 7
@@ -14,7 +14,10 @@
           "consumer": "scorer",
           "ack_deadline_seconds": 60,
           "message_ordering": true,
-          "retry_backoff_seconds": [10, 600]
+          "retry_backoff_seconds": [
+            10,
+            600
+          ]
         }
       ]
     },
@@ -27,7 +30,10 @@
           "consumer": "app",
           "ack_deadline_seconds": 60,
           "message_ordering": false,
-          "retry_backoff_seconds": [10, 600]
+          "retry_backoff_seconds": [
+            10,
+            600
+          ]
         }
       ]
     },
@@ -40,7 +46,10 @@
           "consumer": "score-log writer",
           "ack_deadline_seconds": 120,
           "message_ordering": false,
-          "retry_backoff_seconds": [10, 600]
+          "retry_backoff_seconds": [
+            10,
+            600
+          ]
         }
       ]
     },
@@ -53,7 +62,26 @@
           "consumer": "app",
           "ack_deadline_seconds": 60,
           "message_ordering": true,
-          "retry_backoff_seconds": [10, 600]
+          "retry_backoff_seconds": [
+            10,
+            600
+          ]
+        }
+      ]
+    },
+    {
+      "name": "outcome-events",
+      "about": "What happened to PRs after scoring (closed or merged, pushes to the default branch, check results), for the outcome labeler",
+      "subscriptions": [
+        {
+          "name": "outcome-labeler-outcome-events",
+          "consumer": "outcome labeler",
+          "ack_deadline_seconds": 60,
+          "message_ordering": true,
+          "retry_backoff_seconds": [
+            10,
+            600
+          ]
         }
       ]
     }

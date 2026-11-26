@@ -13,9 +13,9 @@ module "database" {
   deletion_protection = var.db_deletion_protection
   labels              = local.labels
 
-  # People who may log in (for debugging), with their Google account; services are added in
-  # phase 9. Nobody gets a password.
-  iam_users = var.db_people
+  # Who may log in, all with Google identities, nobody with a password: the services from
+  # phase 9 (09-identity.tf) and the team members in db_people.
+  iam_users = merge(module.identity.database_users, var.db_people)
 
   # Private services access must exist before an instance can get a private IP.
   depends_on = [module.network]

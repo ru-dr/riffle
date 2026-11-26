@@ -18,7 +18,12 @@ infra/terraform/
 │   ├── memorystore/         Redis
 │   ├── storage-buckets/     Cloud Storage buckets and their lifecycle rules
 │   ├── kms/                 the tenant key-encryption key
-│   └── secrets/             Secret Manager entries
+│   ├── secrets/             Secret Manager entries
+│   ├── pubsub/              topics and subscriptions from infra/pubsub/topics.json
+│   ├── service-accounts/    one Google account per service, Workload Identity, permissions
+│   ├── artifact-registry/   the container registry
+│   ├── github-oidc/         GitHub Actions access without keys
+│   └── edge/                load balancer IP and Cloud Armor
 └── envs/
     └── staging/             one root per environment: state, provider, variables
         ├── versions.tf      Terraform and provider versions, GCS backend, provider
@@ -31,6 +36,10 @@ infra/terraform/
         ├── 05-redis.tf
         ├── 06-storage.tf
         ├── 07-keys-and-secrets.tf
+        ├── 08-pubsub.tf
+        ├── 09-identity.tf
+        ├── 10-ci-access.tf
+        ├── 11-edge.tf
         └── outputs.tf
 ```
 
@@ -83,9 +92,9 @@ The CI job `terraform` runs exactly this, with Terraform 1.9.
 | 5 | Memorystore Redis 7.2 (private, AUTH and TLS, no persistence) | `memorystore` | `05-redis.tf` | Redis | done |
 | 6 | Cloud Storage buckets (score log, models, snapshots, logs, traces), private, with lifecycle rules | `storage-buckets` | `06-storage.tf` | Object storage, Score log | done |
 | 7 | Cloud KMS key-encryption key (ADR 0025, rotated every 90 days) and Secret Manager entries (2 by hand, 3 by Terraform) | `kms`, `secrets` | `07-keys-and-secrets.tf` | Key vault | done |
-| 8 | Pub/Sub from `infra/pubsub/topics.json`, dead-letter permissions | `pubsub` | `08-pubsub.tf` | Message queue | to do |
-| 9 | One service account per service, Workload Identity, least privilege | `service-accounts` | `09-identity.tf` | Cluster platform (pod identity) | to do |
-| 10 | GitHub Actions access without keys (Workload Identity Federation) | `github-oidc` | `10-ci-access.tf` | CI/CD | to do |
-| 11 | Edge: global static IP, Cloud Armor (GitHub hook IPs, rate limits); HTTPS once there is a domain | `edge` | `11-edge.tf` | Load balancer, WAF | to do |
+| 8 | Pub/Sub from `infra/pubsub/topics.json` (5 topics), dead-letter topics, hold subscriptions and their permissions | `pubsub` | `08-pubsub.tf` | Message queue | done |
+| 9 | One service account per service (15), Workload Identity, least privilege; fills the database logins | `service-accounts` | `09-identity.tf` | Cluster platform (pod identity) | done |
+| 10 | Artifact Registry, and GitHub Actions access without keys (images from any branch, Terraform from main only) | `artifact-registry`, `github-oidc` | `10-ci-access.tf` | CI/CD, Container registry | done |
+| 11 | Edge: global static IP, Cloud Armor (GitHub-only `/webhook`, OWASP rules in preview, rate limit); HTTPS once there is a domain | `edge` | `11-edge.tf` | Load balancer, WAF | done |
 | 12 | Argo CD bootstrap, then `infra/k8s`: namespaces, NetworkPolicy, External Secrets, KEDA, Gateway, the database migration Job | — | own root | Cluster platform | to do |
 | 13 | Observability base: Managed Prometheus, Loki and Tempo storage, uptime check | — | — | Observability | to do |

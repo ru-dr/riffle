@@ -120,3 +120,43 @@ variable "trace_retention_days" {
   type        = number
   default     = 14
 }
+
+variable "github_repository" {
+  description = "The only GitHub repository whose Actions runs are trusted (owner/name)."
+  type        = string
+  default     = "ru-dr/riffle"
+}
+
+variable "terraform_deploy_ref" {
+  description = "The only git ref whose Actions runs may plan and apply Terraform."
+  type        = string
+  default     = "refs/heads/main"
+}
+
+variable "github_hook_ranges" {
+  description = "GitHub's webhook sender ranges, from the hooks list of https://api.github.com/meta (checked 2026-11-25). Compare before each apply."
+  type        = list(string)
+  default = [
+    "9.234.106.48/28",
+    "9.234.98.160/28",
+    "9.234.98.176/28",
+    "192.30.252.0/22",
+    "185.199.108.0/22",
+    "140.82.112.0/20",
+    "143.55.64.0/20",
+    "2a0a:a440::/29",
+    "2606:50c0::/32",
+  ]
+}
+
+variable "edge_rate_limit_per_minute" {
+  description = "Requests a minute one IP may send through the load balancer (GitHub's IPs are not limited)."
+  type        = number
+  default     = 300
+}
+
+variable "edge_waf_preview" {
+  description = "Log-only mode for the SQL injection and XSS rules until their logs show no false positives."
+  type        = bool
+  default     = true
+}
