@@ -102,3 +102,21 @@ variable "redis_deletion_protection" {
   type        = bool
   default     = false
 }
+
+variable "storage_force_destroy" {
+  description = "Let terraform destroy delete buckets that still hold objects. On in staging only."
+  type        = bool
+  default     = true
+}
+
+variable "log_retention_days" {
+  description = "Days Loki keeps logs (the logs bucket deletes them one day later as a backstop)."
+  type        = number
+  default     = 30
+}
+
+variable "trace_retention_days" {
+  description = "Days Tempo keeps traces (the traces bucket deletes them one day later as a backstop)."
+  type        = number
+  default     = 14
+}

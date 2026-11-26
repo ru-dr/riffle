@@ -15,7 +15,10 @@ infra/terraform/
 │   ├── network/             VPC, subnet, private services access, Cloud NAT
 │   ├── gke-autopilot/       the Kubernetes cluster and its node service account
 │   ├── cloud-sql/           Postgres: instance, databases, IAM logins
-│   └── memorystore/         Redis
+│   ├── memorystore/         Redis
+│   ├── storage-buckets/     Cloud Storage buckets and their lifecycle rules
+│   ├── kms/                 the tenant key-encryption key
+│   └── secrets/             Secret Manager entries
 └── envs/
     └── staging/             one root per environment: state, provider, variables
         ├── versions.tf      Terraform and provider versions, GCS backend, provider
@@ -26,6 +29,8 @@ infra/terraform/
         ├── 03-cluster.tf
         ├── 04-database.tf
         ├── 05-redis.tf
+        ├── 06-storage.tf
+        ├── 07-keys-and-secrets.tf
         └── outputs.tf
 ```
 
@@ -76,8 +81,8 @@ The CI job `terraform` runs exactly this, with Terraform 1.9.
 | 3 | GKE Autopilot, regional, private nodes, Workload Identity | `gke-autopilot` | `03-cluster.tf` | Kubernetes cluster | done |
 | 4 | Cloud SQL Postgres 17 (databases `riffle` and `mlflow`, private IP, IAM logins only, backups) | `cloud-sql` | `04-database.tf` | Postgres, Model registry | done |
 | 5 | Memorystore Redis 7.2 (private, AUTH and TLS, no persistence) | `memorystore` | `05-redis.tf` | Redis | done |
-| 6 | Cloud Storage buckets (score log, models, snapshots, logs, traces) | `storage` | `06-storage.tf` | Object storage, Score log | to do |
-| 7 | Cloud KMS key-encryption key (ADR 0025) and Secret Manager entries | `kms`, `secrets` | `07-keys-and-secrets.tf` | Key vault | to do |
+| 6 | Cloud Storage buckets (score log, models, snapshots, logs, traces), private, with lifecycle rules | `storage-buckets` | `06-storage.tf` | Object storage, Score log | done |
+| 7 | Cloud KMS key-encryption key (ADR 0025, rotated every 90 days) and Secret Manager entries (2 by hand, 3 by Terraform) | `kms`, `secrets` | `07-keys-and-secrets.tf` | Key vault | done |
 | 8 | Pub/Sub from `infra/pubsub/topics.json`, dead-letter permissions | `pubsub` | `08-pubsub.tf` | Message queue | to do |
 | 9 | One service account per service, Workload Identity, least privilege | `service-accounts` | `09-identity.tf` | Cluster platform (pod identity) | to do |
 | 10 | GitHub Actions access without keys (Workload Identity Federation) | `github-oidc` | `10-ci-access.tf` | CI/CD | to do |

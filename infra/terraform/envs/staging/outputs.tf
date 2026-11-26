@@ -27,3 +27,23 @@ output "redis_host" {
   description = "Redis private IP (port 6378, TLS)."
   value       = module.redis.host
 }
+
+output "buckets" {
+  description = "Bucket name per purpose."
+  value       = module.storage.names
+}
+
+output "tenant_kek_id" {
+  description = "KMS key that wraps every tenant's data key (ADR 0025)."
+  value       = module.kms.tenant_kek_id
+}
+
+output "secrets" {
+  description = "Secret Manager id per secret."
+  value       = module.secrets.ids
+}
+
+output "secrets_to_fill_by_hand" {
+  description = "Add a value to each after the first apply: gcloud secrets versions add <id> --data-file=<file>."
+  value       = module.secrets.set_by_hand
+}
