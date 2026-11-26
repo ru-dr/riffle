@@ -1,0 +1,53 @@
+# Default requests for containers that set none (Autopilot bills requests, so the default is
+# small), and quotas that cap background and training work so it cannot take what the live
+# path needs. riffle-serving has no quota: it must always be able to scale.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-requests
+  namespace: riffle-serving
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 100m, memory: 128Mi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-requests
+  namespace: riffle-workers
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 100m, memory: 128Mi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-requests
+  namespace: riffle-ml
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 250m, memory: 512Mi }
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: workers-cap
+  namespace: riffle-workers
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ml-cap
+  namespace: riffle-ml
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 80Gi
+    count/jobs.batch: "50"

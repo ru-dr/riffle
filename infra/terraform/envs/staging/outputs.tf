@@ -81,3 +81,33 @@ output "ingress_ip" {
   description = "Public IP of the load balancer. The GitHub App's webhook URL is http://<this>/webhook until there is a domain."
   value       = module.edge.ingress_ip
 }
+
+output "pubsub_subscriptions" {
+  description = "Pub/Sub subscription name per topics.json name."
+  value       = module.pubsub.subscriptions
+}
+
+output "redis_port" {
+  description = "Redis TLS port."
+  value       = module.redis.port
+}
+
+output "redis_ca_cert" {
+  description = "CA certificate clients use to check Redis's TLS certificate (not secret)."
+  value       = module.redis.server_ca_cert
+}
+
+output "region" {
+  description = "Region of the platform."
+  value       = var.region
+}
+
+output "project_id" {
+  description = "GCP project of the platform."
+  value       = var.project_id
+}
+
+output "alert_policies" {
+  description = "Cloud Monitoring alert policies."
+  value       = module.monitoring.alert_policies
+}

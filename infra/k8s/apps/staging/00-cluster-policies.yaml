@@ -1,0 +1,32 @@
+# Wave -3. Priority classes, quotas, default requests and network rules for the Riffle
+# namespaces (made by Terraform, envs/staging-bootstrap). Source: infra/k8s/platform/cluster-policies.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cluster-policies
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '-3'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ru-dr/riffle.git
+    targetRevision: main
+    path: infra/k8s/platform/cluster-policies
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: riffle-serving
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true

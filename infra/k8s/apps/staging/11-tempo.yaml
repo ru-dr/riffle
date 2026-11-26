@@ -1,0 +1,57 @@
+# Wave 2. Tempo stores traces in the tempo bucket, as the tempo Google account; kept 14 days.
+# The Grafana and Tempo charts moved to grafana-community; the old ones are deprecated.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '2'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    chart: tempo
+    targetRevision: 3.2.1
+    helm:
+      releaseName: tempo
+      valuesObject:
+        tempo:
+          storage:
+            trace:
+              backend: gcs
+              gcs:
+                bucket_name: riffle-infra-platform-staging-tempo
+              wal:
+                path: /var/tempo/wal
+          retention: 336h
+          reportingEnabled: false
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        serviceAccount:
+          create: true
+          name: tempo
+          annotations:
+            iam.gke.io/gcp-service-account: riffle-staging-tempo@riffle-infra-platform.iam.gserviceaccount.com
+        persistence:
+          enabled: true
+          size: 10Gi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true

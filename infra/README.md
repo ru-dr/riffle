@@ -5,7 +5,7 @@ How Riffle runs, per environment.
 | Directory | Responsibility |
 | --- | --- |
 | [`docker`](docker) | Service images and the local Compose stacks (today: Airflow, the riffle-data team store) |
-| [`k8s`](k8s) | Manifests for staging and prod |
+| [`k8s`](k8s) | What runs in the GKE cluster, deployed by Argo CD (app of apps): platform add-ons, policies, the Gateway, the migration Job, observability |
 | [`terraform`](terraform) | The GCP platform (project `riffle-infra-platform`): network, GKE, Cloud SQL, Memorystore, Pub/Sub, storage, keys, identity, edge. Reusable modules in `modules/`, one root per environment in `envs/` |
 | [`loki`](loki), [`grafana`](grafana), [`alloy`](alloy) | The logging stack: where logs are stored, read, and collected from. One folder of configuration each; [`compose.logging.yaml`](compose.logging.yaml) runs the three together locally |
 

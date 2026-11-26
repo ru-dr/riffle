@@ -1,0 +1,51 @@
+# Values for the argo-cd chart. Kept small: no SSO (Dex) and no notifications yet; the UI is
+# reached with kubectl port-forward until the edge has a domain and IAP.
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+configs:
+  cm:
+    # Lets infra/k8s/platform/db-migrate read the SQL files in infra/db/migrations, which sit
+    # outside its folder.
+    kustomize.buildOptions: --load-restrictor LoadRestrictionsNone
+    # Report each child Application's health, so the sync waves in infra/k8s/apps/staging are
+    # really waited on (Argo CD does not do this for Applications by default).
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+  repositories:
+    # Kueue's chart is only published as an OCI artifact.
+    kueue:
+      name: kueue
+      type: helm
+      url: registry.k8s.io/kueue/charts
+      enableOCI: "true"
+
+# Autopilot bills requests: keep them honest and small.
+controller:
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+server:
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+repoServer:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+applicationSet:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+redis:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }

@@ -1,0 +1,53 @@
+# Wave -2. KEDA: scales services on Pub/Sub backlog. Its operator acts as the keda Google
+# service account (Terraform phase 9), which may read metrics.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keda
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '-2'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://kedacore.github.io/charts
+    chart: keda
+    targetRevision: 2.21.1
+    helm:
+      releaseName: keda
+      valuesObject:
+        podIdentity:
+          gcp:
+            enabled: true
+            gcpIAMServiceAccount: riffle-staging-keda@riffle-infra-platform.iam.gserviceaccount.com
+        resources:
+          operator:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          metricServer:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          webhooks:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keda
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true
+    - CreateNamespace=true

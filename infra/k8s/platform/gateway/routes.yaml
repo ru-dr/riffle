@@ -1,0 +1,28 @@
+# What the load balancer sends where. The backends are the Services of intake and
+# app-dashboard, which their charts create later; until then these routes show as unresolved.
+# Ports follow each service's README: intake 8080, the dashboard 3000.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: riffle
+  namespace: riffle-serving
+spec:
+  parentRefs:
+    - name: riffle
+      namespace: riffle-gateway
+  rules:
+    # GitHub webhooks. Cloud Armor lets only GitHub's IPs reach this path.
+    - matches:
+        - path: { type: PathPrefix, value: /webhook }
+      backendRefs:
+        - { name: intake, port: 8080 }
+    # The uptime check (Terraform phase 13) calls intake's health endpoint from outside.
+    - matches:
+        - path: { type: Exact, value: /healthz }
+      backendRefs:
+        - { name: intake, port: 8080 }
+    # The reviewers' dashboard.
+    - matches:
+        - path: { type: PathPrefix, value: /app }
+      backendRefs:
+        - { name: app-dashboard, port: 3000 }

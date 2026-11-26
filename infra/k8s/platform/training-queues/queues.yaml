@@ -1,0 +1,40 @@
+# The bounded training pool (README invariant: training runs under backpressure). A training
+# Job joins it with the label kueue.x-k8s.io/queue-name: training. Kueue admits Jobs only while
+# their requests fit in the quota below; the rest wait in order, never start and fail.
+# Admitted Jobs run on Spot capacity, apart from the live path.
+
+# Spot: Autopilot gives a pod Spot capacity when it asks for this node label.
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: spot
+spec:
+  nodeLabels:
+    cloud.google.com/gke-spot: "true"
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: training
+spec:
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: riffle-ml
+  queueingStrategy: BestEffortFIFO # a small Job may start while a big one waits for room
+  resourceGroups:
+    - coveredResources: [cpu, memory]
+      flavors:
+        - name: spot
+          resources:
+            - name: cpu
+              nominalQuota: "16"
+            - name: memory
+              nominalQuota: 64Gi
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: training
+  namespace: riffle-ml
+spec:
+  clusterQueue: training

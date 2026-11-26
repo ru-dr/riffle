@@ -1,0 +1,72 @@
+# Runs on every Argo CD sync (a Sync hook; the previous run is deleted first):
+#   1. cloud-sql-proxy  sidecar: connects to Cloud SQL as this pod's Google account, no password
+#   2. migrate          dbmate applies infra/db/migrations (already applied ones are skipped)
+#   3. grants           psql grants each service its database role (grants.sql)
+# The connection name comes from riffle-platform-settings, written by Terraform.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: db-migrate
+        app.kubernetes.io/part-of: riffle
+    spec:
+      serviceAccountName: db-migrate # Google account riffle-staging-db-migrate (cloudsqlsuperuser)
+      priorityClassName: riffle-workers
+      restartPolicy: Never
+      initContainers:
+        # A native sidecar (restartPolicy: Always): starts first, stays up while the steps run,
+        # and is stopped when the last one finishes.
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.28.1
+          restartPolicy: Always
+          args:
+            - --auto-iam-authn # log in with the pod's Google identity
+            - --private-ip
+            - --port=5432
+            - --structured-logs
+            - $(DB_CONNECTION_NAME)
+          envFrom:
+            - configMapRef: { name: riffle-platform-settings }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+        - name: migrate
+          image: amacneil/dbmate:2.38.2
+          args: [--migrations-dir, /db/migrations, --no-dump-schema, --wait, --wait-timeout, 2m, up]
+          env:
+            # The IAM database user is the Google account without .gserviceaccount.com (@ as %40);
+            # the proxy adds TLS and the login token, so there is no password and no sslmode.
+            - name: DATABASE_URL
+              value: postgres://riffle-staging-db-migrate%40riffle-infra-platform.iam@127.0.0.1:5432/riffle?sslmode=disable
+          volumeMounts:
+            - { name: migrations, mountPath: /db/migrations, readOnly: true }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+      containers:
+        - name: grants
+          image: postgres:17.12-alpine
+          command: [psql]
+          args:
+            - host=127.0.0.1 port=5432 dbname=riffle sslmode=disable user=riffle-staging-db-migrate@riffle-infra-platform.iam
+            - --set=ON_ERROR_STOP=1
+            - --file=/grants/grants.sql
+          volumeMounts:
+            - { name: grants, mountPath: /grants, readOnly: true }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+      volumes:
+        - name: migrations
+          configMap: { name: db-migrations }
+        - name: grants
+          configMap: { name: db-grants }

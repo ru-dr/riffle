@@ -1,0 +1,62 @@
+# Cloud Armor on each backend (the policy Terraform made in phase 11, riffle-staging-edge),
+# and how the load balancer checks each backend is healthy.
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: intake
+  namespace: riffle-serving
+spec:
+  default:
+    securityPolicy: riffle-staging-edge
+    timeoutSec: 15 # longer than intake's own 8 s request deadline
+  targetRef:
+    group: ""
+    kind: Service
+    name: intake
+---
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: app-dashboard
+  namespace: riffle-serving
+spec:
+  default:
+    securityPolicy: riffle-staging-edge
+  targetRef:
+    group: ""
+    kind: Service
+    name: app-dashboard
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: intake
+  namespace: riffle-serving
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        requestPath: /healthz
+        port: 8080
+  targetRef:
+    group: ""
+    kind: Service
+    name: intake
+---
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: app-dashboard
+  namespace: riffle-serving
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        requestPath: /healthz
+        port: 3000
+  targetRef:
+    group: ""
+    kind: Service
+    name: app-dashboard

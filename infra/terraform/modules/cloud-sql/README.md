@@ -23,7 +23,7 @@ registry (database `mlflow`). Diagram: "Postgres" and the Model registry's metad
 | --- | --- | --- |
 | The migration Job's | `cloudsqlsuperuser` | Creates tables, the `riffle_app` role and row-level security |
 | A team member's | none by default | Can connect; give a role only when needed |
-| Each service's | none at first, then `riffle_app` | `riffle_app` is created by the first migration, so it can only be granted after that has run (phase 12): the migration Job grants it, or `database_roles` is updated and applied again |
+| Each service's | none here; `riffle_app` from the migration Job | `riffle_app` is created by the first migration, so it is granted right after, by the `grants` step of `infra/k8s/platform/db-migrate` (`grants.sql`) |
 
 Services must never get `cloudsqlsuperuser`: it is not bound by row-level security.
 

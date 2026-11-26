@@ -121,6 +121,11 @@ module "identity" {
       description = "Stores traces in the tempo bucket"
       buckets     = { tempo = "roles/storage.objectUser" }
     }
+    grafana = {
+      namespace     = "observability"
+      description   = "Dashboards; reads metrics from Managed Prometheus through Cloud Monitoring"
+      project_roles = ["roles/monitoring.viewer"]
+    }
     keda = {
       namespace     = "keda"
       ksa           = "keda-operator"

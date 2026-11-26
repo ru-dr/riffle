@@ -1,0 +1,81 @@
+# Wave 3. Grafana with Loki, Tempo and Managed Prometheus as data sources. No public address:
+# kubectl -n observability port-forward svc/grafana 3000:80 (admin password in the grafana Secret).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '3'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://grafana-community.github.io/helm-charts
+    chart: grafana
+    targetRevision: 14.6.1
+    helm:
+      releaseName: grafana
+      valuesObject:
+        serviceAccount:
+          create: true
+          name: grafana
+          annotations:
+            iam.gke.io/gcp-service-account: riffle-staging-grafana@riffle-infra-platform.iam.gserviceaccount.com
+        persistence:
+          enabled: false
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        grafana.ini:
+          analytics:
+            reporting_enabled: false
+            check_for_updates: false
+            check_for_plugin_updates: false
+          users:
+            allow_sign_up: false
+          auth.anonymous:
+            enabled: false
+        datasources:
+          datasources.yaml:
+            apiVersion: 1
+            datasources:
+            - name: Loki
+              type: loki
+              uid: loki
+              access: proxy
+              isDefault: true
+              url: http://loki.observability.svc:3100
+              jsonData: {}
+            - name: Tempo
+              type: tempo
+              uid: tempo
+              access: proxy
+              url: http://tempo.observability.svc:3200
+              jsonData:
+                tracesToLogsV2:
+                  datasourceUid: loki
+            - name: Managed Prometheus
+              type: stackdriver
+              uid: gmp
+              access: proxy
+              jsonData:
+                authenticationType: gce
+                defaultProject: riffle-infra-platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true

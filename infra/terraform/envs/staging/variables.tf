@@ -160,3 +160,9 @@ variable "edge_waf_preview" {
   type        = bool
   default     = true
 }
+
+variable "alert_emails" {
+  description = "Addresses alerts are emailed to. Empty: alerts only show in Cloud Monitoring."
+  type        = list(string)
+  default     = []
+}

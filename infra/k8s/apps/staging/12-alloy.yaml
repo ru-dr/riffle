@@ -1,0 +1,131 @@
+# Wave 3. Alloy collects the Riffle pods' logs (through the Kubernetes API) for Loki, and
+# receives the services' traces (OTLP) for Tempo. One Deployment, not a DaemonSet.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alloy
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '3'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: alloy
+    targetRevision: 1.16.0
+    helm:
+      releaseName: alloy
+      valuesObject:
+        controller:
+          type: deployment
+          replicas: 1
+        alloy:
+          enableReporting: false
+          configMap:
+            create: true
+            content: |
+              // Logs: tail the Riffle pods through the Kubernetes API (Autopilot does not let a pod read
+              // the node's log files), keep level as a label and delivery_id / tenant_id as structured
+              // metadata (searchable without making a label per PR), send to Loki.
+              discovery.kubernetes "pods" {
+                role = "pod"
+                namespaces {
+                  names = ["riffle-serving", "riffle-workers", "riffle-ml"]
+                }
+              }
+
+              discovery.relabel "pods" {
+                targets = discovery.kubernetes.pods.targets
+                rule {
+                  source_labels = ["__meta_kubernetes_namespace"]
+                  target_label  = "namespace"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+                  target_label  = "service"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_name"]
+                  target_label  = "pod"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_container_name"]
+                  target_label  = "container"
+                }
+              }
+
+              loki.source.kubernetes "pods" {
+                targets    = discovery.relabel.pods.output
+                forward_to = [loki.process.riffle.receiver]
+              }
+
+              loki.process "riffle" {
+                stage.json {
+                  expressions = { level = "level", delivery_id = "delivery_id", tenant_id = "tenant_id" }
+                }
+                stage.labels {
+                  values = { level = "" }
+                }
+                stage.structured_metadata {
+                  values = { delivery_id = "", tenant_id = "" }
+                }
+                forward_to = [loki.write.default.receiver]
+              }
+
+              loki.write "default" {
+                endpoint {
+                  url = "http://loki.observability.svc:3100/loki/api/v1/push"
+                }
+              }
+
+              // Traces: services send OTLP here (alloy.observability.svc:4317 or :4318); forwarded to Tempo.
+              otelcol.receiver.otlp "default" {
+                grpc {
+                  endpoint = "0.0.0.0:4317"
+                }
+                http {
+                  endpoint = "0.0.0.0:4318"
+                }
+                output {
+                  traces = [otelcol.exporter.otlp.tempo.input]
+                }
+              }
+
+              otelcol.exporter.otlp "tempo" {
+                client {
+                  endpoint = "tempo.observability.svc:4317"
+                  tls {
+                    insecure = true
+                  }
+                }
+              }
+          extraPorts:
+          - name: otlp-grpc
+            port: 4317
+            targetPort: 4317
+            protocol: TCP
+          - name: otlp-http
+            port: 4318
+            targetPort: 4318
+            protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true

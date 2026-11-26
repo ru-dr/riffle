@@ -1,0 +1,26 @@
+# The Gateway: GKE turns it into a global external Application Load Balancer on the fixed IP
+# Terraform reserved (phase 11, riffle-staging-ingress). Routes may attach from namespaces
+# labelled riffle.dev/gateway-access=true (only riffle-serving).
+#
+# HTTP only for now: there is no domain, so no certificate. Add an HTTPS listener with a
+# Certificate Manager certificate when there is one (infra/terraform/modules/edge/README.md).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: riffle
+  namespace: riffle-gateway
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+  addresses:
+    - type: NamedAddress
+      value: riffle-staging-ingress
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              riffle.dev/gateway-access: "true"

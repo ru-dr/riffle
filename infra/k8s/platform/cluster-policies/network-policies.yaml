@@ -1,0 +1,148 @@
+# Incoming traffic is denied by default in the Riffle namespaces; each rule below opens one
+# path. Pods are matched by app.kubernetes.io/name, which every service chart must set.
+# Outgoing traffic is not restricted (Google APIs, GitHub through Cloud NAT).
+#
+# 35.191.0.0/16 and 130.211.0.0/22 are Google's load balancer and health-check ranges: the
+# only way in from outside the cluster.
+
+# ---- riffle-serving ----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: riffle-serving
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-load-balancer
+  namespace: riffle-serving
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: In, values: [intake, app-dashboard] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 35.191.0.0/16 }
+        - ipBlock: { cidr: 130.211.0.0/22 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scorer-to-explainer
+  namespace: riffle-serving
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: explainer }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: scorer }
+---
+# ---- riffle-workers ----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: riffle-workers
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# The app starts the tenant workflow when an installation event arrives.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-app-to-tenant-workflow
+  namespace: riffle-workers
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: tenant-workflow }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: riffle-serving }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: app-github }
+---
+# ---- riffle-ml ----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: riffle-ml
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# The model registry: training writes to it, the scorer reads which version is champion.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mlflow-clients
+  namespace: riffle-ml
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: mlflow }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/name, operator: In, values: [trainer, retrain] }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: riffle-serving }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: scorer }
+---
+# ---- every Riffle namespace: metrics scraping by Managed Prometheus ----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-scrape
+  namespace: riffle-serving
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: gmp-system }
+      ports:
+        - { port: metrics }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-scrape
+  namespace: riffle-workers
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: gmp-system }
+      ports:
+        - { port: metrics }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-scrape
+  namespace: riffle-ml
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: gmp-system }
+      ports:
+        - { port: metrics }

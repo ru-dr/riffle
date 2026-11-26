@@ -1,0 +1,26 @@
+# When the cluster is short of room, lower classes wait or are evicted first: live ranking
+# always wins over background work, and training never pushes anything out.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: riffle-serving
+value: 100000
+globalDefault: false
+description: Live path (intake, scorer, explainer, app). An unranked PR is a broken promise.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: riffle-workers
+value: 10000
+globalDefault: false
+description: Background workers (labeller, score-log writer, tenant workflow, migrations). Can retry.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: riffle-batch
+value: 1000
+globalDefault: false
+preemptionPolicy: Never # waits for room, never evicts another pod
+description: Training and repo model fits. Waits.

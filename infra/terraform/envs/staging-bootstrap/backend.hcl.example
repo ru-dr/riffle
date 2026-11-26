@@ -1,0 +1,4 @@
+# Copy to backend.hcl (gitignored) and run: terraform init -backend-config=backend.hcl
+# Same bucket as envs/staging, its own prefix.
+bucket = "riffle-infra-platform-tfstate"
+prefix = "envs/staging-bootstrap"

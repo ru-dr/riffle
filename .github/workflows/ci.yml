@@ -206,3 +206,9 @@ jobs:
 
       - run: terraform validate
         working-directory: infra/terraform/envs/staging
+
+      - run: terraform init -backend=false -input=false
+        working-directory: infra/terraform/envs/staging-bootstrap
+
+      - run: terraform validate
+        working-directory: infra/terraform/envs/staging-bootstrap

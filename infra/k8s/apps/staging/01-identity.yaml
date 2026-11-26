@@ -1,0 +1,32 @@
+# Wave -3. The Kubernetes service accounts of the Riffle services, each linked to its Google
+# service account (Terraform phase 9). Source: infra/k8s/platform/identity.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: identity
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '-3'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ru-dr/riffle.git
+    targetRevision: main
+    path: infra/k8s/platform/identity
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: riffle-serving
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true
