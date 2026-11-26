@@ -7,6 +7,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 8.12"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.9"
+    }
   }
 
   # State lives in a GCS bucket created once by hand (see infra/terraform/README.md).

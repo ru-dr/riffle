@@ -45,3 +45,60 @@ variable "private_services_cidr" {
   type        = string
   default     = "10.40.0.0/16"
 }
+
+variable "cluster_release_channel" {
+  description = "GKE release channel."
+  type        = string
+  default     = "REGULAR"
+}
+
+variable "cluster_deletion_protection" {
+  description = "Refuse terraform destroy on the cluster. Off in staging so it can be torn down between demos."
+  type        = bool
+  default     = false
+}
+
+variable "db_tier" {
+  description = "Cloud SQL machine type. db-custom-1-3840 = 1 vCPU, 3.75 GB."
+  type        = string
+  default     = "db-custom-1-3840"
+}
+
+variable "db_availability_type" {
+  description = "ZONAL in staging (cheaper); REGIONAL in prod (standby in a second zone)."
+  type        = string
+  default     = "ZONAL"
+}
+
+variable "db_deletion_protection" {
+  description = "Refuse deleting the database. Off in staging so it can be torn down between demos."
+  type        = bool
+  default     = false
+}
+
+variable "db_people" {
+  description = "Team members who may log in to Postgres with their Google account (no password), keyed by a short name. Example: { divyam = { email = \"you@northeastern.edu\", database_roles = [] } }. Keep cloudsqlsuperuser for emergencies: it ignores tenant isolation."
+  type = map(object({
+    email          = string
+    database_roles = list(string)
+  }))
+  default = {}
+}
+
+variable "redis_tier" {
+  description = "BASIC in staging (one node); STANDARD_HA in prod (replica in a second zone)."
+  type        = string
+  default     = "BASIC"
+}
+
+variable "redis_memory_size_gb" {
+  description = "Redis memory in GB."
+  type        = number
+  default     = 1
+}
+
+variable "redis_deletion_protection" {
+  description = "Refuse deleting Redis. Off in staging so it can be torn down between demos."
+  type        = bool
+  default     = false
+}

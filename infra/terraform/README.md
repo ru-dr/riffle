@@ -12,7 +12,10 @@ For now the code is **written and validated only**; nothing has been applied.
 infra/terraform/
 ├── modules/                 one folder per kind of resource, reusable, no provider config
 │   ├── project-services/    Google APIs
-│   └── network/             VPC, subnet, private services access, Cloud NAT
+│   ├── network/             VPC, subnet, private services access, Cloud NAT
+│   ├── gke-autopilot/       the Kubernetes cluster and its node service account
+│   ├── cloud-sql/           Postgres: instance, databases, IAM logins
+│   └── memorystore/         Redis
 └── envs/
     └── staging/             one root per environment: state, provider, variables
         ├── versions.tf      Terraform and provider versions, GCS backend, provider
@@ -20,6 +23,9 @@ infra/terraform/
         ├── locals.tf        names, labels, the list of APIs
         ├── 01-project-services.tf
         ├── 02-network.tf    one numbered file per phase: each calls one module
+        ├── 03-cluster.tf
+        ├── 04-database.tf
+        ├── 05-redis.tf
         └── outputs.tf
 ```
 
@@ -67,9 +73,9 @@ The CI job `terraform` runs exactly this, with Terraform 1.9.
 | --- | --- | --- | --- | --- | --- |
 | 1 | Google APIs | `project-services` | `01-project-services.tf` | — | done |
 | 2 | Network, private services access, Cloud NAT + egress IP | `network` | `02-network.tf` | NAT gateway | done |
-| 3 | GKE Autopilot, regional, private nodes, Workload Identity | `gke-autopilot` | `03-cluster.tf` | Kubernetes cluster | to do |
-| 4 | Cloud SQL Postgres 17 (database `riffle`, MLflow database, IAM login for services) | `cloud-sql` | `04-database.tf` | Postgres, Model registry | to do |
-| 5 | Memorystore Redis 7.2 | `memorystore` | `05-redis.tf` | Redis | to do |
+| 3 | GKE Autopilot, regional, private nodes, Workload Identity | `gke-autopilot` | `03-cluster.tf` | Kubernetes cluster | done |
+| 4 | Cloud SQL Postgres 17 (databases `riffle` and `mlflow`, private IP, IAM logins only, backups) | `cloud-sql` | `04-database.tf` | Postgres, Model registry | done |
+| 5 | Memorystore Redis 7.2 (private, AUTH and TLS, no persistence) | `memorystore` | `05-redis.tf` | Redis | done |
 | 6 | Cloud Storage buckets (score log, models, snapshots, logs, traces) | `storage` | `06-storage.tf` | Object storage, Score log | to do |
 | 7 | Cloud KMS key-encryption key (ADR 0025) and Secret Manager entries | `kms`, `secrets` | `07-keys-and-secrets.tf` | Key vault | to do |
 | 8 | Pub/Sub from `infra/pubsub/topics.json`, dead-letter permissions | `pubsub` | `08-pubsub.tf` | Message queue | to do |
