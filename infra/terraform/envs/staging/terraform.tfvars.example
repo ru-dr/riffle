@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (gitignored) to change a default from variables.tf.
+# Nothing here is secret: secrets go in Secret Manager, never in Terraform.
+
+project_id  = "riffle-infra-platform"
+region      = "us-east4"
+environment = "staging"

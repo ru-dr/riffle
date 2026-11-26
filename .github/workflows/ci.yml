@@ -200,8 +200,9 @@ jobs:
       - run: terraform fmt -check -recursive
         working-directory: infra/terraform
 
+      # Every environment root under envs/. Modules are checked through the roots that use them.
       - run: terraform init -backend=false -input=false
-        working-directory: infra/terraform/store-vm
+        working-directory: infra/terraform/envs/staging
 
       - run: terraform validate
-        working-directory: infra/terraform/store-vm
+        working-directory: infra/terraform/envs/staging

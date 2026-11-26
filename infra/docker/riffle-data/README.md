@@ -103,7 +103,7 @@ Open http://127.0.0.1:8470 and paste the reader token. The lead puts `RIFFLE_SYN
 
 ## Run it on GCP
 
-The repeatable way is Terraform: [`infra/terraform/store-vm`](../../terraform/store-vm) builds the bucket, service account, address, firewall and a VM that runs this store, Loki + Grafana and Airflow (ADR 0018). The `gcloud` steps and `gcp/up.sh` below are the manual route and the one the first VM was made with.
+The `gcloud` steps and `gcp/up.sh` below are the way to run it on GCP. (The Terraform for this VM from ADR 0018 was removed when `infra/terraform` was restarted for the platform.)
 
 This has been run only on a laptop, never on GCP. You need a Google Cloud
 organisation or account, a project with billing, and `gcloud` signed in to it.

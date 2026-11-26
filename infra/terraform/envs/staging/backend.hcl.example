@@ -1,0 +1,4 @@
+# Copy to backend.hcl (gitignored) and run: terraform init -backend-config=backend.hcl
+# The bucket is made once by hand; see infra/terraform/README.md.
+bucket = "riffle-infra-platform-tfstate"
+prefix = "envs/staging"

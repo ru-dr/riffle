@@ -1,0 +1,61 @@
+{
+  "description": "Every Pub/Sub topic and subscription Riffle uses. The local stack (create_topics.py) and Terraform read this one file, so the two cannot drift apart. Each subscription gets a dead-letter topic named <topic>-dead-letter and a hold subscription on it, so a message that failed max_delivery_attempts times is kept, not dropped.",
+  "dead_letter": {
+    "max_delivery_attempts": 5,
+    "hold_retention_days": 7
+  },
+  "topics": [
+    {
+      "name": "pr-events",
+      "about": "PrEvent from intake: one per pull request trigger",
+      "subscriptions": [
+        {
+          "name": "scorer-pr-events",
+          "consumer": "scorer",
+          "ack_deadline_seconds": 60,
+          "message_ordering": true,
+          "retry_backoff_seconds": [10, 600]
+        }
+      ]
+    },
+    {
+      "name": "score-results",
+      "about": "ScoreResult from the scorer, after it is committed to Postgres",
+      "subscriptions": [
+        {
+          "name": "app-score-results",
+          "consumer": "app",
+          "ack_deadline_seconds": 60,
+          "message_ordering": false,
+          "retry_backoff_seconds": [10, 600]
+        }
+      ]
+    },
+    {
+      "name": "score-log",
+      "about": "One row per score with the features the scorer saw (ADR 0024); never on the scoring path",
+      "subscriptions": [
+        {
+          "name": "score-log-writer",
+          "consumer": "score-log writer",
+          "ack_deadline_seconds": 120,
+          "message_ordering": false,
+          "retry_backoff_seconds": [10, 600]
+        }
+      ]
+    },
+    {
+      "name": "installation-events",
+      "about": "GitHub installation events from intake, for the tenant workflow (ADR 0025)",
+      "subscriptions": [
+        {
+          "name": "app-installation-events",
+          "consumer": "app",
+          "ack_deadline_seconds": 60,
+          "message_ordering": true,
+          "retry_backoff_seconds": [10, 600]
+        }
+      ]
+    }
+  ]
+}

@@ -1,3 +1,0 @@
-# Copy to backend.hcl (gitignored) and fill in. Used as:
-#   terraform init -backend-config=backend.hcl
-bucket = "<your-project-id>-tfstate"

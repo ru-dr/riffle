@@ -17,8 +17,8 @@ The drop folder is `<repo>/logs/` (git ignores it; change it with `RIFFLE_LOGS_D
 command run on the host appears in Grafana once it writes there:
 
 ```bash
-mkdir -p logs/aidev
-python -m aidev_ingest download 2>&1 | tee logs/aidev/download.log
+mkdir -p logs/example
+your-command 2>&1 | tee logs/example/run.log
 ```
 
 Then in Grafana: `{job="host"}`, or `{job="host", filename=~".*download.log"}`.

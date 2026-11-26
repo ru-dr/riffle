@@ -1,54 +1,80 @@
 # terraform
 
-Managed dependencies: Postgres (features, tenants, outcomes), Redis
-(idempotency keys, inference cache), Pub/Sub topics and subscriptions, the DVC
-bucket, GKE pools, and IAM.
+The GCP platform Riffle runs on: everything outside Kubernetes in the production architecture
+(`site/public/architecture/`). Project `riffle-infra-platform`, region `us-east4`. What runs
+inside the cluster is deployed by Argo CD from `infra/k8s`, not from here.
 
-State is remote. Day to day, applies run from CI. The first apply of each root
-is done by hand from a laptop, because there is no CI identity until Workload
-Identity Federation exists; after that, change it through a pull request.
+For now the code is **written and validated only**; nothing has been applied.
 
-| Directory | What it holds |
-| --- | --- |
-| [`foundation`](foundation) | Ingestion base on GCP: raw bucket, BigQuery datasets, Artifact Registry, job service accounts, budget alert |
-| [`store-vm`](store-vm) | The team store VM on GCP: bucket, service account, address, firewall, and the VM that runs the store, Loki + Grafana and Airflow from `infra/docker` and `infra/compose.logging.yaml` (ADR 0018) |
+## Layout
 
-## foundation
-
-Default region `us-east4` (Northern Virginia). Project-specific values (project
-id, billing account, bucket names) are never committed: they live in
-`terraform.tfvars` and `backend.hcl`, both gitignored. Copy the matching
-`*.example` file for each and fill it in.
-
-One-off, before the first `terraform init`: create the state bucket, which
-Terraform cannot create for itself. Its location does not need to match the
-resources it tracks.
-
-```bash
-gcloud storage buckets create gs://<project-id>-tfstate \
-  --project <project-id> --location <region> \
-  --uniform-bucket-level-access --public-access-prevention
-gcloud storage buckets update gs://<project-id>-tfstate --versioning
+```
+infra/terraform/
+├── modules/                 one folder per kind of resource, reusable, no provider config
+│   ├── project-services/    Google APIs
+│   └── network/             VPC, subnet, private services access, Cloud NAT
+└── envs/
+    └── staging/             one root per environment: state, provider, variables
+        ├── versions.tf      Terraform and provider versions, GCS backend, provider
+        ├── variables.tf     every input, with defaults (address plan included)
+        ├── locals.tf        names, labels, the list of APIs
+        ├── 01-project-services.tf
+        ├── 02-network.tf    one numbered file per phase: each calls one module
+        └── outputs.tf
 ```
 
-Then, from `infra/terraform/foundation`:
+Rules that keep a problem easy to find:
+
+- **A module does one thing** and has the same four files: `main.tf` (resources),
+  `variables.tf` (inputs, with validation), `outputs.tf`, `versions.tf` (provider
+  requirements only). A module never configures a provider or a backend.
+- **An environment root only wires modules together.** Each `NN-<phase>.tf` file calls one
+  module, so an error in `module.network...` is in `02-network.tf` and `modules/network/`.
+- **Names come from `local.name`** (`riffle-staging`), so every resource in the console can be
+  traced back to its environment; every resource also gets the labels in `locals.tf`.
+- **No secret values in Terraform.** Secret Manager entries are created empty and filled by
+  hand.
+- **Inputs are validated** in `variables.tf`, so a wrong value fails at `plan` with a clear
+  message, not halfway through an apply.
+
+## Check it (no GCP access needed)
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # project id, billing account, raw bucket name
-cp backend.hcl.example backend.hcl             # state bucket name
-terraform init -backend-config=backend.hcl
-terraform plan
-terraform apply   # only after reading the plan
+cd infra/terraform
+terraform fmt -check -recursive                  # formatting
+cd envs/staging
+terraform init -backend=false -input=false       # downloads providers only, no state
+terraform validate
 ```
 
-Needs Application Default Credentials (`gcloud auth application-default login`).
-Never commit `terraform.tfvars`, `backend.hcl`, a `tfplan` file or anything
-under `.terraform/`; all are gitignored.
+The CI job `terraform` runs exactly this, with Terraform 1.9.
 
-The raw bucket has versioning on and a retention period (default 30 days,
-unlocked), so no object version can be permanently destroyed before it expires.
-That does not stop an authorised user replacing or deleting the live object:
-the old version is kept and can be restored. Append-only is therefore enforced
-by the job accounts having no delete role and by writing with
-`if_generation_match=0`. Lock the policy only once the object layout is settled:
-a locked policy cannot be shortened or removed.
+## Before the first apply (later, not now)
+
+1. Install `gcloud`, sign in, and make sure project `riffle-infra-platform` exists with billing.
+2. Create the state bucket once (Terraform cannot create the bucket that holds its own state):
+   ```bash
+   gcloud storage buckets create gs://riffle-infra-platform-tfstate --project riffle-infra-platform \
+     --location us-east4 --uniform-bucket-level-access --public-access-prevention
+   gcloud storage buckets update gs://riffle-infra-platform-tfstate --versioning
+   ```
+3. In `envs/staging`: copy `backend.hcl.example` to `backend.hcl`, then
+   `terraform init -backend-config=backend.hcl` and `terraform plan`.
+
+## Phases
+
+| # | Phase | Module | Root file | Diagram box | Status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Google APIs | `project-services` | `01-project-services.tf` | — | done |
+| 2 | Network, private services access, Cloud NAT + egress IP | `network` | `02-network.tf` | NAT gateway | done |
+| 3 | GKE Autopilot, regional, private nodes, Workload Identity | `gke-autopilot` | `03-cluster.tf` | Kubernetes cluster | to do |
+| 4 | Cloud SQL Postgres 17 (database `riffle`, MLflow database, IAM login for services) | `cloud-sql` | `04-database.tf` | Postgres, Model registry | to do |
+| 5 | Memorystore Redis 7.2 | `memorystore` | `05-redis.tf` | Redis | to do |
+| 6 | Cloud Storage buckets (score log, models, snapshots, logs, traces) | `storage` | `06-storage.tf` | Object storage, Score log | to do |
+| 7 | Cloud KMS key-encryption key (ADR 0025) and Secret Manager entries | `kms`, `secrets` | `07-keys-and-secrets.tf` | Key vault | to do |
+| 8 | Pub/Sub from `infra/pubsub/topics.json`, dead-letter permissions | `pubsub` | `08-pubsub.tf` | Message queue | to do |
+| 9 | One service account per service, Workload Identity, least privilege | `service-accounts` | `09-identity.tf` | Cluster platform (pod identity) | to do |
+| 10 | GitHub Actions access without keys (Workload Identity Federation) | `github-oidc` | `10-ci-access.tf` | CI/CD | to do |
+| 11 | Edge: global static IP, Cloud Armor (GitHub hook IPs, rate limits); HTTPS once there is a domain | `edge` | `11-edge.tf` | Load balancer, WAF | to do |
+| 12 | Argo CD bootstrap, then `infra/k8s`: namespaces, NetworkPolicy, External Secrets, KEDA, Gateway, the database migration Job | — | own root | Cluster platform | to do |
+| 13 | Observability base: Managed Prometheus, Loki and Tempo storage, uptime check | — | — | Observability | to do |

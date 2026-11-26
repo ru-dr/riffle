@@ -6,7 +6,7 @@ How Riffle runs, per environment.
 | --- | --- |
 | [`docker`](docker) | Service images and the local Compose stacks (today: Airflow, the riffle-data team store) |
 | [`k8s`](k8s) | Manifests for staging and prod |
-| [`terraform`](terraform) | The team store VM (`store-vm`: store, Loki + Grafana, Airflow, bucket, IAM); later Postgres, Redis, Pub/Sub, GKE |
+| [`terraform`](terraform) | The GCP platform (project `riffle-infra-platform`): network, GKE, Cloud SQL, Memorystore, Pub/Sub, storage, keys, identity, edge. Reusable modules in `modules/`, one root per environment in `envs/` |
 | [`loki`](loki), [`grafana`](grafana), [`alloy`](alloy) | The logging stack: where logs are stored, read, and collected from. One folder of configuration each; [`compose.logging.yaml`](compose.logging.yaml) runs the three together locally |
 
 | Environment | Where | Notes |
@@ -37,8 +37,8 @@ own. A command run on the host, outside Docker, appears once it writes a `*.log`
 `*.jsonl` file under `<repo>/logs/`:
 
 ```bash
-mkdir -p logs/aidev
-python -m aidev_ingest download 2>&1 | tee logs/aidev/download.log
+mkdir -p logs/example
+your-command 2>&1 | tee logs/example/run.log
 ```
 
 | Page | Address |
