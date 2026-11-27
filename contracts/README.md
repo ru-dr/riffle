@@ -13,6 +13,7 @@ Every rule kind, value, setting and default is listed in
 | Schema | Producer | Consumer | Owner |
 | --- | --- | --- | --- |
 | `pr_event.schema.json` | `intake` | `scorer` | #8 GitHub App |
+| `installation_event.schema.json` | `intake` | `app` (tenant workflow, ADR 0025) | #8 GitHub App |
 | `score_result.schema.json` | `scorer` | `app` | #9 Inference |
 | `explain.schema.json` | `scorer` → `explainer` (`POST /v1/explain`) | `scorer` | #9 Inference |
 | `mined_features.schema.json` | `scorer` (extractor), `pipelines/ingestion` (repo miner) | `scorer` (model), narrator, `pipelines/training` | #1 Features |
@@ -23,8 +24,8 @@ Every rule kind, value, setting and default is listed in
 | `mined_commit_features.schema.json` | `pipelines/ingestion` (repo miner), code features per head commit | `pipelines/training` | #5 Ingestion |
 
 Shapes are specified in the root `README.md` under **Contracts**; write the
-schema files to match. `pr_event`, `score_result` and `explain` have no schema
-file yet; their rows describe the target.
+schema files to match. `score_result` and `explain` have no schema file yet; their
+rows describe the target.
 
 Planned: `feature_vector.schema.json`, the full fixed model input (repo
 history, blame, diff, checks, mined, declared columns).

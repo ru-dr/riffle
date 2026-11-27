@@ -1,0 +1,151 @@
+{{- if and .Values.autoscaling.hpa.enabled .Values.autoscaling.keda.enabled }}
+{{- fail "use autoscaling.hpa or autoscaling.keda, not both" }}
+{{- end }}
+{{- if and .Values.autoscaling.keda.enabled (not .Values.autoscaling.keda.subscriptionEnv) }}
+{{- fail "autoscaling.keda.subscriptionEnv is required with KEDA" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "riffle.name" . }}
+  labels:
+    {{- include "riffle.labels" . | nindent 4 }}
+spec:
+  {{- if not (include "riffle.autoscaled" .) }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "riffle.selector" . | nindent 6 }}
+  # Never go below the current number of ready pods during a rollout: a new pod must be ready
+  # before an old one stops, so the warm replica is never lost.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "riffle.labels" . | nindent 8 }}
+    spec:
+      # Made in infra/k8s/platform/identity and linked to the Google account
+      # riffle-staging-<name> (Workload Identity). Its token is not mounted: GKE's metadata
+      # server gives Google credentials without it.
+      serviceAccountName: {{ include "riffle.name" . }}
+      automountServiceAccountToken: false
+      priorityClassName: {{ .Values.priorityClassName }}
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread over the region's zones, so one zone failing leaves the rest running.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "riffle.selector" . | nindent 14 }}
+      {{- if .Values.cloudSql.enabled }}
+      initContainers:
+        # Native sidecar: starts first, runs beside the service, logs in to Cloud SQL as the
+        # pod's Google account (no password). The service connects to 127.0.0.1:5432.
+        - name: cloud-sql-proxy
+          image: {{ .Values.cloudSql.proxyImage }}
+          restartPolicy: Always
+          args:
+            - --auto-iam-authn
+            - --private-ip
+            - --port=5432
+            - --structured-logs
+            - --health-check
+            - --http-address=0.0.0.0
+            - $(DB_CONNECTION_NAME)
+          envFrom:
+            - configMapRef:
+                name: riffle-platform-settings
+          startupProbe:
+            httpGet:
+              path: /startup
+              port: 9090
+            periodSeconds: 2
+            failureThreshold: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      {{- end }}
+      containers:
+        - name: {{ include "riffle.name" . }}
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          {{- with .Values.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: riffle-platform-settings
+            {{- if .Values.secrets }}
+            - secretRef:
+                name: {{ include "riffle.name" . }}-secrets
+            {{- end }}
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: {{ include "riffle.name" . }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otlpEndpoint }}
+            {{- if .Values.cloudSql.enabled }}
+            - name: DB_HOST
+              value: 127.0.0.1
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              value: riffle-staging-{{ include "riffle.name" . }}@riffle-infra-platform.iam
+            {{- end }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          ports:
+            {{- if .Values.port }}
+            - name: http
+              containerPort: {{ .Values.port }}
+            {{- end }}
+            {{- if .Values.metricsPort }}
+            - name: metrics
+              containerPort: {{ .Values.metricsPort }}
+            {{- end }}
+          {{- if .Values.port }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readinessPath }}
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.livenessPath }}
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # The root filesystem is read-only; /tmp is the one writable place.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}

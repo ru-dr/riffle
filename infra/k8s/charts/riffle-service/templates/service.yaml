@@ -1,0 +1,15 @@
+{{- if .Values.port }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "riffle.name" . }}
+  labels:
+    {{- include "riffle.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "riffle.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http
+{{- end }}

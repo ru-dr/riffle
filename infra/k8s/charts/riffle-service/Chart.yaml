@@ -1,0 +1,5 @@
+apiVersion: v2
+name: riffle-service
+description: One Riffle service on GKE, built the way infra/k8s/README.md requires (service account, settings, secrets, Cloud SQL sidecar, scaling, metrics).
+type: application
+version: 0.1.0

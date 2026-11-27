@@ -1,0 +1,35 @@
+{{- if .Values.autoscaling.keda.enabled }}
+# More pods when messages wait on the service's Pub/Sub subscription. KEDA reads the backlog as
+# its own Google account (keda, infra/terraform/envs/staging/09-identity.tf), not the service's.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "riffle.name" . }}
+  labels:
+    {{- include "riffle.labels" . | nindent 4 }}
+spec:
+  podIdentity:
+    provider: gcp
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "riffle.name" . }}
+  labels:
+    {{- include "riffle.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "riffle.name" . }}
+  minReplicaCount: {{ .Values.autoscaling.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.keda.maxReplicas }}
+  triggers:
+    - type: gcp-pubsub
+      authenticationRef:
+        name: {{ include "riffle.name" . }}
+      metadata:
+        mode: SubscriptionSize
+        value: {{ .Values.autoscaling.keda.messagesPerReplica | quote }}
+        # The subscription's name in GCP, read from riffle-platform-settings through the
+        # Deployment's environment.
+        subscriptionNameFromEnv: {{ .Values.autoscaling.keda.subscriptionEnv }}
+{{- end }}

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/installation_event.schema.json",
+  "title": "Installation event",
+  "x-riffle-version": "1.0",
+  "description": "What intake publishes on the installation-events topic (riffle-<environment>-installation-events in GCP) and the app consumes to run the tenant workflow (ADR 0025): an installation created, deleted, suspended or unsuspended, or repositories added to or removed from it. Signature verified and duplicates dropped. The ordering key is the tenant_id, so one installation's events arrive in order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "delivery_id",
+    "tenant_id",
+    "event",
+    "action",
+    "account_login",
+    "account_type",
+    "repositories_added",
+    "repositories_removed",
+    "received_at"
+  ],
+  "properties": {
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{1,64}$",
+      "description": "GitHub's X-GitHub-Delivery header. The tenant workflow is idempotent on it"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$",
+      "description": "GitHub App installation id"
+    },
+    "event": {
+      "enum": [
+        "installation",
+        "installation_repositories"
+      ],
+      "description": "GitHub's event name"
+    },
+    "action": {
+      "enum": [
+        "created",
+        "deleted",
+        "suspend",
+        "unsuspend",
+        "new_permissions_accepted",
+        "added",
+        "removed"
+      ],
+      "description": "GitHub's action. added and removed come with installation_repositories, the rest with installation"
+    },
+    "account_login": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Organisation or user the App is installed on"
+    },
+    "account_type": {
+      "enum": [
+        "Organization",
+        "User"
+      ],
+      "description": "Kind of account"
+    },
+    "repositories_added": {
+      "type": "array",
+      "description": "Repositories the installation now covers: all of them on created, the new ones on added, otherwise empty",
+      "items": {
+        "$ref": "#/$defs/repository"
+      }
+    },
+    "repositories_removed": {
+      "type": "array",
+      "description": "Repositories taken out of the installation on removed, otherwise empty",
+      "items": {
+        "$ref": "#/$defs/repository"
+      }
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When intake verified the delivery, RFC 3339 in UTC"
+    }
+  },
+  "$defs": {
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "full_name"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "GitHub repository id; stays the same when the repository is renamed"
+        },
+        "full_name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+          "description": "Repository as owner/name"
+        }
+      }
+    }
+  }
+}

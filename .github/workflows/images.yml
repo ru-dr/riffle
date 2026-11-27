@@ -1,0 +1,132 @@
+name: images
+
+# Builds the container images the cluster runs and, on main, pushes them to Artifact Registry
+# (infra/terraform/modules/artifact-registry). Logs in to GCP without keys: GitHub gives the
+# run a short-lived token, which Workload Identity Federation swaps for the ci-images account
+# (infra/terraform/modules/github-oidc).
+#
+# Pull requests only build, to prove the Dockerfile still works. Pushes need three repository
+# variables (Settings > Secrets and variables > Actions > Variables; none of them is secret),
+# taken from `terraform output github_actions` and `terraform output image_registry` in
+# infra/terraform/envs/staging:
+#   GCP_WORKLOAD_IDENTITY_PROVIDER   workload_identity_provider
+#   GCP_CI_IMAGES_SERVICE_ACCOUNT    ci_images_service_account
+#   GCP_IMAGE_REGISTRY               image_registry, e.g. us-east4-docker.pkg.dev/riffle-infra-platform/riffle-staging
+# Until they are set (before the first apply), main builds without pushing.
+#
+# Tags are immutable in the registry, so every image is tagged with the commit it was built
+# from (sha-<12 characters>), never "latest". The run's summary says which tag to put in
+# infra/k8s (for the training image: platform/training/kustomization.yaml, newTag).
+#
+# A service is added as one more entry in the matrix, with its paths in the triggers below.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - services/intake/**
+      - infra/docker/outcome-training/**
+      - pipelines/training/outcome/**
+      - pipelines/training/outcome_features.py
+      - pipelines/evaluation/eval_script.py
+      - .github/workflows/images.yml
+  pull_request:
+    paths:
+      - services/intake/**
+      - infra/docker/outcome-training/**
+      - pipelines/training/outcome/**
+      - pipelines/training/outcome_features.py
+      - pipelines/evaluation/eval_script.py
+      - .github/workflows/images.yml
+  workflow_dispatch:
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write # lets the run ask GitHub for the token Google checks
+
+jobs:
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The outcome model's training run (infra/k8s/platform/training).
+          - image: outcome-training
+            context: .
+            dockerfile: infra/docker/outcome-training/Dockerfile
+          # The webhook front door (infra/k8s/apps/staging/20-intake.yaml).
+          - image: intake
+            context: services/intake
+            dockerfile: services/intake/Dockerfile
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Image name and tag
+        id: name
+        env:
+          REGISTRY: ${{ vars.GCP_IMAGE_REGISTRY || 'local' }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          tag="sha-${GITHUB_SHA::12}"
+          {
+            echo "tag=$tag"
+            echo "ref=$REGISTRY/$IMAGE:$tag"
+            echo "host=${REGISTRY%%/*}"   # e.g. us-east4-docker.pkg.dev
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GCP (no keys)
+        if: env.PUSH == 'true'
+        id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_IMAGES_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Log in to Artifact Registry
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ steps.name.outputs.host }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build${{ env.PUSH == 'true' && ' and push' || '' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          tags: ${{ steps.name.outputs.ref }}
+          push: ${{ env.PUSH == 'true' }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Summary
+        env:
+          IMAGE: ${{ matrix.image }}
+          REF: ${{ steps.name.outputs.ref }}
+          TAG: ${{ steps.name.outputs.tag }}
+        run: |
+          {
+            echo "### $IMAGE"
+            if [ "$PUSH" = "true" ]; then
+              echo "Pushed \`$REF\`."
+              echo
+              echo "To deploy it, set \`newTag: $TAG\` for \`$IMAGE\` in infra/k8s."
+            else
+              echo "Built, not pushed (pull request, branch other than main, or the GCP repository variables are not set yet)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

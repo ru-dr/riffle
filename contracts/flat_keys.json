@@ -1,4 +1,61 @@
 {
+  "installation_event.schema.json": {
+    "/delivery_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/tenant_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/event": {
+      "type": [
+        "string"
+      ]
+    },
+    "/action": {
+      "type": [
+        "string"
+      ]
+    },
+    "/account_login": {
+      "type": [
+        "string"
+      ]
+    },
+    "/account_type": {
+      "type": [
+        "string"
+      ]
+    },
+    "/repositories_added/*/id": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/repositories_added/*/full_name": {
+      "type": [
+        "string"
+      ]
+    },
+    "/repositories_removed/*/id": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/repositories_removed/*/full_name": {
+      "type": [
+        "string"
+      ]
+    },
+    "/received_at": {
+      "type": [
+        "string"
+      ]
+    }
+  },
   "mined_commit_features.schema.json": {
     "/repo": {
       "type": [
@@ -4753,6 +4810,43 @@
       ]
     },
     "/source": {
+      "type": [
+        "string"
+      ]
+    }
+  },
+  "pr_event.schema.json": {
+    "/delivery_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/tenant_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/repo": {
+      "type": [
+        "string"
+      ]
+    },
+    "/pr_number": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/action": {
+      "type": [
+        "string"
+      ]
+    },
+    "/head_sha": {
+      "type": [
+        "string"
+      ]
+    },
+    "/received_at": {
       "type": [
         "string"
       ]

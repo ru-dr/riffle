@@ -705,6 +705,28 @@ Body of POST /v1/outcomes. Lets an org report outcomes Riffle cannot see (intern
 | `occurred_at` | string (date-time) |  |  | When the outcome happened |
 | `source` | string |  |  | Free label for audit, e.g. internal-ci |
 
+## Installation event (`installation_event.schema.json`)
+
+**Version:** 1.0
+
+What intake publishes on the installation-events topic (riffle-<environment>-installation-events in GCP) and the app consumes to run the tenant workflow (ADR 0025): an installation created, deleted, suspended or unsuspended, or repositories added to or removed from it. Signature verified and duplicates dropped. The ordering key is the tenant_id, so one installation's events arrive in order.
+
+| Key | Allowed | Default | Flags | Meaning |
+|---|---|---|---|---|
+| `delivery_id` | string matching `^[A-Za-z0-9-]{1,64}$` |  |  | GitHub's X-GitHub-Delivery header. The tenant workflow is idempotent on it |
+| `tenant_id` | string matching `^[1-9][0-9]{0,19}$` |  |  | GitHub App installation id |
+| `event` | `installation`, `installation_repositories` |  |  | GitHub's event name |
+| `action` | `created`, `deleted`, `suspend`, `unsuspend`, `new_permissions_accepted`, `added`, `removed` |  |  | GitHub's action. added and removed come with installation_repositories, the rest with installation |
+| `account_login` | string |  |  | Organisation or user the App is installed on |
+| `account_type` | `Organization`, `User` |  |  | Kind of account |
+| `repositories_added` | list of objects |  |  | Repositories the installation now covers: all of them on created, the new ones on added, otherwise empty |
+| `repositories_added[].id` | integer 1– |  |  | GitHub repository id; stays the same when the repository is renamed |
+| `repositories_added[].full_name` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  | Repository as owner/name |
+| `repositories_removed` | list of objects |  |  | Repositories taken out of the installation on removed, otherwise empty |
+| `repositories_removed[].id` | integer 1– |  |  | GitHub repository id; stays the same when the repository is renamed |
+| `repositories_removed[].full_name` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  | Repository as owner/name |
+| `received_at` | string (date-time) |  |  | When intake verified the delivery, RFC 3339 in UTC |
+
 ## Riffle head commit features (`mined_commit_features.schema.json`)
 
 **Version:** 1.1
@@ -1334,3 +1356,19 @@ One PR at one moment while it was open (pipelines/ingestion/repo_miner/snapshots
 | `moment_bucket` | `open`, `<1d`, `1-3d`, `3-7d`, `7-30d`, `>30d` |  |  | Time band of the snapshot: open (the open trigger) or time since start, for reporting metrics per moment. |
 | `llm_diff_truncated` | boolean or null |  |  | True when the LLM diff size cap dropped or cut code the model would have read; false when the whole diff was shown; null when no LLM call was made (off, skipped, empty or a reused answer). Metadata about the call, never a model input. Computed in `pipelines/ingestion/repo_miner/features/llm_flags.py`. |
 | `szz_window_closed` | boolean or null |  |  | True when the SZZ observation window for the PR has closed: `szz_maturity_days` (default 90) had passed between the PR's merge and the observation cutoff (`observed_through`), so a `label_szz_bug` of false is mature. False while the window is still open: a fix that would later be traced to this PR may not exist yet. Null when the SZZ label was not computed (SZZ off, an unmerged PR) or `szz_maturity_days` is 0 (no cap, so no window). Never a model input. Computed in `pipelines/ingestion/repo_miner/labels.py`. |
+
+## PR event (`pr_event.schema.json`)
+
+**Version:** 1.0
+
+What intake publishes on the pr-events topic (riffle-<environment>-pr-events in GCP) and the scorer consumes: one pull request trigger, with its signature verified and duplicates dropped. Carries identifiers only, never code or the GitHub payload; the scorer reads the rest itself, pinned to head_sha. The ordering key is <tenant_id>/<repo>#<pr_number>, so the events of one PR arrive in order.
+
+| Key | Allowed | Default | Flags | Meaning |
+|---|---|---|---|---|
+| `delivery_id` | string matching `^[A-Za-z0-9-]{1,64}(:[1-9][0-9]{0,9})?$` |  |  | GitHub's X-GitHub-Delivery header. When one delivery names several PRs (a check suite), intake publishes one event per PR and appends :<pr_number>. Scoring is idempotent on this value |
+| `tenant_id` | string matching `^[1-9][0-9]{0,19}$` |  |  | GitHub App installation id |
+| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  | Repository as owner/name |
+| `pr_number` | integer 1– |  |  | Pull request number |
+| `action` | `opened`, `synchronize`, `reopened`, `ready_for_review`, `edited`, `labeled`, `ci_completed` |  |  | What triggered the event. Covers every trigger rescore.on can enable; ci_completed is mapped from a completed check suite |
+| `head_sha` | string matching `^[0-9a-f]{40}$` |  |  | Head commit of the PR when the event happened |
+| `received_at` | string (date-time) |  |  | When intake verified the delivery, RFC 3339 in UTC |

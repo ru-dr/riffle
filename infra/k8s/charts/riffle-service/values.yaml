@@ -1,0 +1,69 @@
+# Defaults for one Riffle service. Each service's Argo CD Application (infra/k8s/apps/staging)
+# sets what differs. Every key is used by a template; nothing here is a secret.
+
+# The service's name. Also its Kubernetes service account (made in infra/k8s/platform/identity,
+# never by this chart), its pod label app.kubernetes.io/name (the network rules match on it) and
+# the Secret <name>-secrets it reads.
+name: ""
+
+image:
+  repository: ""   # e.g. us-east4-docker.pkg.dev/riffle-infra-platform/riffle-staging/intake
+  tag: ""          # sha-<commit>, from the images workflow; tags are immutable
+args: []
+
+# Live path: riffle-serving. Background: riffle-workers. Training: riffle-batch.
+priorityClassName: riffle-serving
+
+# Read the Secret <name>-secrets (infra/k8s/platform/secrets) into the environment.
+secrets: false
+
+# Extra environment variables, on top of riffle-platform-settings and the Secret.
+env: {}
+
+# Port the service listens on (0: none, e.g. a queue worker); a Service is made for it.
+port: 0
+# Port of /metrics, named "metrics": Managed Prometheus scrapes it (the network rules allow only
+# that port). 0: no metrics.
+metricsPort: 9090
+
+probes:
+  readinessPath: /readyz
+  livenessPath: /healthz
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Used only when autoscaling is off.
+replicas: 1
+
+autoscaling:
+  # On CPU: for services that answer HTTP (intake, app-dashboard).
+  hpa:
+    enabled: false
+    minReplicas: 1   # at least one warm replica, always
+    maxReplicas: 5
+    targetCPU: 70
+  # On Pub/Sub backlog: for queue workers (scorer, app-github, writers). KEDA reads the
+  # subscription's backlog as its own Google account (keda), which may read metrics.
+  keda:
+    enabled: false
+    subscriptionEnv: ""   # settings key holding the subscription name, e.g. SUBSCRIPTION_SCORER_PR_EVENTS
+    messagesPerReplica: 5
+    minReplicas: 1
+    maxReplicas: 10
+
+# Keep at least one pod up during node upgrades and scale-downs.
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# Postgres through the Cloud SQL Proxy sidecar: the service connects to 127.0.0.1:5432 as user
+# riffle-staging-<name>@riffle-infra-platform.iam, database DB_NAME, no password.
+cloudSql:
+  enabled: false
+  proxyImage: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.28.1
+
+# Traces go to Alloy (infra/k8s/apps/staging/12-alloy.yaml), which sends them to Tempo.
+otlpEndpoint: http://alloy.observability.svc:4317

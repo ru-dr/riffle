@@ -1,0 +1,16 @@
+{{- if .Values.metricsPort }}
+# Google Managed Prometheus scrapes /metrics on the port named "metrics" every 30 s.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: {{ include "riffle.name" . }}
+  labels:
+    {{- include "riffle.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "riffle.selector" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: 30s
+{{- end }}

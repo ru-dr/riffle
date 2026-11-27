@@ -1,0 +1,59 @@
+# Wave 4, after the platform. intake, the webhook front door (services/intake), from the shared
+# chart infra/k8s/charts/riffle-service. The Gateway sends /webhook and /healthz to it.
+# To deploy a new build, put the tag from the images workflow's summary in image.tag.
+# Until the first image is pushed, the tag is a placeholder and the pod cannot start (the
+# Application shows Degraded).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: intake
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ru-dr/riffle.git
+    targetRevision: main
+    path: infra/k8s/charts/riffle-service
+    helm:
+      releaseName: intake
+      valuesObject:
+        name: intake
+        image:
+          repository: us-east4-docker.pkg.dev/riffle-infra-platform/riffle-staging/intake
+          tag: not-built-yet
+        priorityClassName: riffle-serving
+        secrets: true
+        port: 8080
+        metricsPort: 9090
+        probes:
+          readinessPath: /readyz
+          livenessPath: /healthz
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        autoscaling:
+          hpa:
+            enabled: true
+            minReplicas: 1
+            maxReplicas: 5
+            targetCPU: 70
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: riffle-serving
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true

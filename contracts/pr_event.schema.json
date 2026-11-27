@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/pr_event.schema.json",
+  "title": "PR event",
+  "x-riffle-version": "1.0",
+  "description": "What intake publishes on the pr-events topic (riffle-<environment>-pr-events in GCP) and the scorer consumes: one pull request trigger, with its signature verified and duplicates dropped. Carries identifiers only, never code or the GitHub payload; the scorer reads the rest itself, pinned to head_sha. The ordering key is <tenant_id>/<repo>#<pr_number>, so the events of one PR arrive in order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "delivery_id",
+    "tenant_id",
+    "repo",
+    "pr_number",
+    "action",
+    "head_sha",
+    "received_at"
+  ],
+  "properties": {
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{1,64}(:[1-9][0-9]{0,9})?$",
+      "description": "GitHub's X-GitHub-Delivery header. When one delivery names several PRs (a check suite), intake publishes one event per PR and appends :<pr_number>. Scoring is idempotent on this value"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$",
+      "description": "GitHub App installation id"
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+      "description": "Repository as owner/name"
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Pull request number"
+    },
+    "action": {
+      "enum": [
+        "opened",
+        "synchronize",
+        "reopened",
+        "ready_for_review",
+        "edited",
+        "labeled",
+        "ci_completed"
+      ],
+      "description": "What triggered the event. Covers every trigger rescore.on can enable; ci_completed is mapped from a completed check suite"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Head commit of the PR when the event happened"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When intake verified the delivery, RFC 3339 in UTC"
+    }
+  }
+}

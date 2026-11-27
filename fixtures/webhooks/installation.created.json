@@ -1,0 +1,31 @@
+{
+  "action": "created",
+  "installation": {
+    "id": 48213,
+    "account": {
+      "login": "acme-corp",
+      "id": 9001,
+      "type": "Organization"
+    },
+    "repository_selection": "selected"
+  },
+  "repositories": [
+    {
+      "id": 700001,
+      "name": "payments",
+      "full_name": "acme-corp/payments",
+      "private": true
+    },
+    {
+      "id": 700002,
+      "name": "web",
+      "full_name": "acme-corp/web",
+      "private": false
+    }
+  ],
+  "sender": {
+    "login": "dev-jane",
+    "id": 5501,
+    "type": "User"
+  }
+}

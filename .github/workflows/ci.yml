@@ -168,6 +168,29 @@ jobs:
       - name: Logging stack configuration
         run: python -m pytest infra/tests/test_logging_stack.py -q
 
+  # intake (Go): unit tests with the race detector, on in-memory Redis and Pub/Sub. Its
+  # messages are checked against contracts/ and its fixtures read from fixtures/webhooks.
+  intake:
+    name: intake
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/intake
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: services/intake/go.mod
+          cache-dependency-path: services/intake/go.sum
+
+      - name: Formatted
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - run: go vet ./...
+
+      - run: go test -race ./...
+
   # AIDev ingestion: its own job, as it is its own service. Offline only: a fake hub and the
   # committed inventory. The tests that talk to Hugging Face need RUN_NETWORK_TESTS=1 and are
   # not run here.

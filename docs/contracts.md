@@ -59,6 +59,18 @@ Earlier drafts (1–4) were never merged and need no migration.
 | 1.1 | 2026-10-23 | Columns computed from the diff range carry `x-riffle-diff-derived: true`. No column added or changed (miner v7.0.0) |
 | 1.0 | 2026-10-19 | Code features per head commit a PR had while open (miner v3.1.0) |
 
+## `pr_event.schema.json`
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0 | 2026-11-26 | First schema file for the event intake publishes on `pr-events` (the shape in the root README). `delivery_id` gains a `:<pr_number>` suffix when one check suite delivery names several PRs |
+
+## `installation_event.schema.json`
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0 | 2026-11-26 | Installation and repository events intake publishes on `installation-events` for the tenant workflow (ADR 0025) |
+
 ## `outcome_import.schema.json`
 
 | Version | Date | Changes |

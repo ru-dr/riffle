@@ -1,0 +1,26 @@
+{
+  "action": "removed",
+  "installation": {
+    "id": 48213,
+    "account": {
+      "login": "acme-corp",
+      "id": 9001,
+      "type": "Organization"
+    }
+  },
+  "repository_selection": "selected",
+  "repositories_added": [],
+  "repositories_removed": [
+    {
+      "id": 700002,
+      "name": "web",
+      "full_name": "acme-corp/web",
+      "private": false
+    }
+  ],
+  "sender": {
+    "login": "dev-jane",
+    "id": 5501,
+    "type": "User"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "action": "synchronize",
+  "number": 42,
+  "before": "a3f1c9e200000000000000000000000000000000",
+  "after": "b7d2e4f100000000000000000000000000000000",
+  "pull_request": {
+    "number": 42,
+    "state": "open",
+    "draft": false,
+    "title": "Add retry to payment webhook handler",
+    "user": {
+      "login": "dev-jane",
+      "id": 5501,
+      "type": "User"
+    },
+    "head": {
+      "ref": "fix/retry",
+      "sha": "b7d2e4f100000000000000000000000000000000",
+      "repo": {
+        "id": 700001,
+        "full_name": "acme-corp/payments"
+      }
+    },
+    "base": {
+      "ref": "main",
+      "sha": "1111111111111111111111111111111111111111",
+      "repo": {
+        "id": 700001,
+        "full_name": "acme-corp/payments"
+      }
+    }
+  },
+  "repository": {
+    "id": 700001,
+    "name": "payments",
+    "full_name": "acme-corp/payments",
+    "private": true,
+    "owner": {
+      "login": "acme-corp",
+      "id": 9001,
+      "type": "Organization"
+    }
+  },
+  "installation": {
+    "id": 48213
+  },
+  "sender": {
+    "login": "dev-jane",
+    "id": 5501,
+    "type": "User"
+  }
+}

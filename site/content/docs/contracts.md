@@ -7,6 +7,7 @@ format. **Any change to a schema is a breaking change.**
 | Schema | Producer | Consumer |
 | --- | --- | --- |
 | `pr_event` | `intake` | `scorer` |
+| `installation_event` | `intake` | `app` (install and uninstall workflow) |
 | `score_result` | `scorer` | `app` |
 | `explain` | `scorer` → `explainer` (`POST /v1/explain`) | `scorer` |
 | `mined_features` | `scorer` (extractor) | the model, the narrator, training |
