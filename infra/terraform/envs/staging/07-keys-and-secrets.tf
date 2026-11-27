@@ -24,6 +24,12 @@ resource "random_password" "dashboard_session_key" {
   special = false
 }
 
+# Grafana's admin login. Read it with: gcloud secrets versions access latest --secret=riffle-staging-grafana-admin
+resource "random_password" "grafana_admin" {
+  length  = 32
+  special = false
+}
+
 module "secrets" {
   source = "../../modules/secrets"
 
@@ -53,12 +59,17 @@ module "secrets" {
       purpose = "Memorystore AUTH string"
       set_by  = "terraform"
     }
+    "grafana-admin" = {
+      purpose = "Grafana admin password (user admin)"
+      set_by  = "terraform"
+    }
   }
 
   values = {
     "github-webhook-secret" = random_password.github_webhook_secret.result
     "dashboard-session-key" = random_password.dashboard_session_key.result
     "redis-auth"            = module.redis.auth_string
+    "grafana-admin"         = random_password.grafana_admin.result
   }
 
   depends_on = [module.project_services]

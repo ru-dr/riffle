@@ -92,6 +92,12 @@ variable "iam_users" {
   }
 }
 
+variable "connector_public_ip" {
+  description = "Give the instance a public IP that only the Cloud SQL Proxy with a Google login can use (no authorised networks, connector required). Lets the team connect from a laptop; off means pods only."
+  type        = bool
+  default     = false
+}
+
 variable "backup_location" {
   description = "Where backups are stored. A multi-region (us, eu, asia) keeps them safe if the instance's region fails."
   type        = string

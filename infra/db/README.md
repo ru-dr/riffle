@@ -21,6 +21,10 @@ Kubernetes Job before each deploy.
   security and owns nothing. The migration creates the role if it is missing; Terraform
   creates the login and grants it the role. Never connect a service as a superuser: a
   superuser skips every policy.
+- **People get `riffle_readonly`**, never a write role: it reads every table and is still
+  bound by row-level security (`SET app.tenant_id` first). It is granted through `db_people`
+  in Terraform (`database_roles = ["riffle_readonly"]`), after the migration that creates it
+  has run.
 - **`score_results` is append-only for services** (no `UPDATE` or `DELETE` grant). A rescore
   is a new delivery and a new row. Its key, `delivery_id`, makes scoring idempotent.
 - **A score is either ranked or unranked with a reason, never half.** `risk_score`,

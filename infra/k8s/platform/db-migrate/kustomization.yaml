@@ -10,6 +10,7 @@ configMapGenerator:
   - name: db-migrations
     files:
       - ../../../db/migrations/20261125000001_tenants_repos_score_results.sql
+      - ../../../db/migrations/20261127000001_readonly_role.sql
   - name: db-grants
     files:
       - grants.sql

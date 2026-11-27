@@ -11,6 +11,7 @@ module "database" {
   tier                = var.db_tier
   availability_type   = var.db_availability_type
   deletion_protection = var.db_deletion_protection
+  connector_public_ip = var.db_connector_public_ip
   labels              = local.labels
 
   # Who may log in, all with Google identities, nobody with a password: the services from

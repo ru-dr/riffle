@@ -124,6 +124,7 @@ module "identity" {
     grafana = {
       namespace     = "observability"
       description   = "Dashboards; reads metrics from Managed Prometheus through Cloud Monitoring"
+      secrets       = ["grafana-admin"]
       project_roles = ["roles/monitoring.viewer"]
     }
     keda = {
