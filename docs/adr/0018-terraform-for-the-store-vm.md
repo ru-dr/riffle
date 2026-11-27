@@ -1,7 +1,7 @@
 # 0018: Terraform for the team store VM
 
 - **Date:** 2026-10-27
-- **Status:** Proposed
+- **Status:** Superseded by 0026
 - **Owners:** #10 Deployment & CI/CD, with #5 Data ingestion
 
 ## Context
