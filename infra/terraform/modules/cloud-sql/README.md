@@ -5,7 +5,7 @@ registry (database `mlflow`). Diagram: "Postgres" and the Model registry's metad
 
 | Setting | Why |
 | --- | --- |
-| Private IP for pods; optional connector-only public IP (`connector_public_ip`) | Pods use the private IP. The public IP has no authorised networks, so with the connector required the only way in is the Cloud SQL Proxy with a Google login: how the team connects from a laptop |
+| Private IP only, no public IP | Only pods in the VPC can reach it. People connect through the `db-proxy` pod and `kubectl port-forward` (`infra/k8s/tools/db-proxy.yaml`), still logging in as themselves |
 | `connector_enforcement = REQUIRED` | Every connection goes through the Cloud SQL connector (Auth Proxy sidecar or a language connector): TLS and a Google identity on each login |
 | IAM logins only, no passwords | Services and the migration Job log in as their Google service accounts. The built-in `postgres` user is never given a password, so it cannot log in |
 | Edition `ENTERPRISE` | Postgres 16+ would otherwise default to Enterprise Plus, at several times the price |

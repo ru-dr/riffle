@@ -9,7 +9,10 @@ Fail open: a PR is always stored and published, ranked or unranked with a reason
   model_unavailable        no model loaded (none registered yet, or MLflow never answered)
   scoring_failed           scoring raised on MAX_ATTEMPTS deliveries in a row (until then the message is retried)
 The message is stored before it is published, so a crash in between republishes the stored row on redelivery, never
-a second score. The LLM is never called here; explanation stays null until the explainer is built.
+a second score. The model's inputs are not stored in Postgres (ADR 0024: feature vectors would grow the transactional
+store without bound); they go only to the score log. So a republished score sends its ScoreResult again but not its
+score log row, which is counted in riffle_score_log_dropped_total like any other lost log row. The LLM is never
+called here; explanation stays null until the explainer is built.
 """
 from __future__ import annotations
 
@@ -94,14 +97,17 @@ class Scorer:
 
         stored = self.store.get(msg["tenant_id"], msg["delivery_id"])
         if stored is not None:
-            self.publish(stored)
+            self.publish(stored, features=None)
             log.info("already scored: republished", extra=ctx)
             return "duplicate"
 
         record = self.score(msg, delivery_attempt, ctx)
-        if not self.store.insert(record):       # stored meanwhile by another delivery of the same message
+        features = record.pop("features")       # to the score log only, never to Postgres
+        if self.store.insert(record):
+            self.publish(record, features=features or {})
+        else:                                   # stored meanwhile by another delivery, which logs it
             record = self.store.get(msg["tenant_id"], msg["delivery_id"]) or record
-        self.publish(record)
+            self.publish(record, features=None)
         outcome = record["unranked_reason"] or "ranked"
         log.info("scored", extra={**ctx, "result": outcome, "model_version": record["model_version"],
                                   "rank_band": record["rank_band"]})
@@ -144,21 +150,25 @@ class Scorer:
             "features": p.features})
         return record
 
-    def publish(self, record: dict):
+    def publish(self, record: dict, features: dict | None):
         """score-results must be stored by Pub/Sub, or the message is redelivered. score-log is never on the scoring
-        path (ADR 0024): if it fails the score still goes out, and riffle_score_log_dropped_total counts the loss."""
+        path (ADR 0024): if it fails the score still goes out, and riffle_score_log_dropped_total counts the loss.
+        features None (a republished score: its inputs are not stored) sends no score log row and counts it."""
         attrs = {"delivery_id": record["delivery_id"], "tenant_id": record["tenant_id"]}
         result = self.publisher.publish("score-results", score_result(record),
                                         {**attrs, "schema": f"score_result/{self.contracts.version['score_result']}"})
-        try:
-            logged = self.publisher.publish("score-log", score_log(record),
-                                            {**attrs, "schema": f"score_log/{self.contracts.version['score_log']}"})
-        except Exception:  # noqa: BLE001
-            logged = None
+        logged = None
+        if features is not None:
+            try:
+                logged = self.publisher.publish("score-log", score_log(record, features),
+                                                {**attrs, "schema": f"score_log/{self.contracts.version['score_log']}"})
+            except Exception:  # noqa: BLE001
+                logged = None
         result.result(timeout=30)
         try:
             if logged is None:
-                raise RuntimeError("score-log publish not started")
+                raise RuntimeError("score log row not sent" if features is not None
+                                   else "republished score: its inputs are not stored")
             logged.result(timeout=30)
         except Exception:  # noqa: BLE001
             SCORE_LOG_DROPPED.inc()
@@ -171,7 +181,7 @@ def base_record(msg: dict, now: str) -> dict:
             "p_lands_clean": None, "p_lands_after_rework": None, "p_goes_nowhere": None,
             "rank_score": None, "rank_mode": ranking.RANK_MODE, "rank_band": None, "model_version": None,
             "miner_version": msg.get("miner_version") if isinstance(msg.get("miner_version"), str) else None,
-            "layer_weight": 0.0, "predictions": None, "features": None, "explanation": None,
+            "layer_weight": 0.0, "predictions": None, "features": {}, "explanation": None,
             "unranked_reason": None, "scored_at": now}
 
 
@@ -196,7 +206,7 @@ def score_result(r: dict) -> dict:
             "rank_mode": r["rank_mode"], "explanation": r["explanation"]}
 
 
-def score_log(r: dict) -> dict:
+def score_log(r: dict, features: dict) -> dict:
     """contracts/score_log.schema.json"""
-    return {**{k: r[k] for k in COMMON}, "features": r.get("features") or {},
+    return {**{k: r[k] for k in COMMON}, "features": features,
             **{k: r[k] for k in ("p_lands_clean", "p_lands_after_rework", "p_goes_nowhere")}}

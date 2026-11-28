@@ -9,7 +9,7 @@ or by CI on `main`.
 | --- | --- |
 | `container.developer` | Use `kubectl`: pods, logs, Kubernetes Secrets, `port-forward` |
 | `secretmanager.secretAccessor`, `secretmanager.viewer` | List and read Secret Manager secrets |
-| `cloudsql.client`, `cloudsql.instanceUser` | Connect to Postgres through the Cloud SQL Proxy with their Google login (also add them to `db_people`) |
+| `cloudsql.client`, `cloudsql.instanceUser` | Log in to Postgres with their own Google token, through the `db-proxy` pod and `port-forward` (the database has no public IP; also add them to `db_people`) |
 | `monitoring.viewer`, `logging.viewer` | Metrics, alerts and logs |
 | `pubsub.viewer` | See topics, subscriptions and dead letters |
 | `artifactregistry.reader` | Pull images |

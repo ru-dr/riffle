@@ -80,6 +80,7 @@ module "identity" {
       subscribes  = ["score-log-writer"]
       buckets     = { score-log = "roles/storage.objectCreator" } # adds files, never rewrites
       tenant_kek  = true
+      database    = true # reads, or makes, the tenant's data key in tenant_keys (ADR 0028)
     }
     tenant-workflow = {
       namespace   = "riffle-workers"
@@ -91,6 +92,13 @@ module "identity" {
       secrets    = ["github-app-private-key"]
       tenant_kek = true # wraps each new tenant's data key
       database   = true
+    }
+    # The on-demand proxy pod people connect through (infra/k8s/tools/db-proxy.yaml): may open a
+    # connection to the instance, has no database login, so each person logs in as themselves.
+    db-proxy = {
+      namespace     = "riffle-workers"
+      description   = "Cloud SQL Proxy pod people reach Postgres through (kubectl port-forward)"
+      project_roles = ["roles/cloudsql.client"]
     }
     db-migrate = {
       namespace          = "riffle-workers"

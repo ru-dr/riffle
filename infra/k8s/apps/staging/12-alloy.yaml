@@ -26,13 +26,16 @@ spec:
           configMap:
             create: true
             content: |
-              // Logs: tail the Riffle pods through the Kubernetes API (Autopilot does not let a pod read
-              // the node's log files), keep level as a label and delivery_id / tenant_id as structured
-              // metadata (searchable without making a label per PR), send to Loki.
+              // Logs: tail the pods through the Kubernetes API (Autopilot does not let a pod read the
+              // node's log files): the Riffle namespaces and the platform's (Argo CD, External Secrets,
+              // KEDA, Kueue, the observability stack), so a failing platform component shows in Loki
+              // too. Labels: namespace, service, pod, container, level. delivery_id and tenant_id are
+              // structured metadata (searchable without making a label per PR).
               discovery.kubernetes "pods" {
                 role = "pod"
                 namespaces {
-                  names = ["riffle-serving", "riffle-workers", "riffle-ml"]
+                  names = ["riffle-serving", "riffle-workers", "riffle-ml", "argocd", "observability",
+                           "external-secrets", "keda", "kueue-system"]
                 }
               }
 
@@ -42,8 +45,11 @@ spec:
                   source_labels = ["__meta_kubernetes_namespace"]
                   target_label  = "namespace"
                 }
+                // service: app.kubernetes.io/name, else the app label, else the Job's name.
                 rule {
-                  source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+                  source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name", "__meta_kubernetes_pod_label_app", "__meta_kubernetes_pod_label_job_name"]
+                  separator     = ";"
+                  regex         = "^;*([^;]+).*$"
                   target_label  = "service"
                 }
                 rule {
@@ -61,15 +67,55 @@ spec:
                 forward_to = [loki.process.riffle.receiver]
               }
 
+              // One level label for every format: JSON "level" (Riffle's Python services: info; intake's
+              // Go slog: INFO), JSON "severity" (Cloud SQL Proxy), logfmt level= (Argo CD) and klog's
+              // first letter (I, W, E, F). Always lower case: debug, info, warning, error.
+              // The chart passes this file through Helm's tpl, so each Alloy template below is wrapped in
+              // Helm's raw-string markers (double brace and backtick), which Helm prints unchanged. Keep
+              // curly-brace pairs out of comments here: Helm would try to run them.
               loki.process "riffle" {
                 stage.json {
-                  expressions = { level = "level", delivery_id = "delivery_id", tenant_id = "tenant_id" }
+                  expressions = { level = "level", severity = "severity", delivery_id = "delivery_id", tenant_id = "tenant_id" }
+                }
+                stage.regex {
+                  expression = "(?:^|\\s)level=\"?(?P<logfmt_level>[A-Za-z]+)"
+                }
+                stage.regex {
+                  expression = "^(?P<klog_level>[IWEF])\\d{4} "
+                }
+                stage.template {
+                  source   = "level"
+                  template = "{{`{{ $l := ToLower (or .level .severity .logfmt_level .klog_level) }}{{ if or (eq $l \"warn\") (eq $l \"w\") }}warning{{ else if or (eq $l \"err\") (eq $l \"e\") (eq $l \"f\") (eq $l \"fatal\") (eq $l \"critical\") (eq $l \"panic\") }}error{{ else if eq $l \"i\" }}info{{ else }}{{ $l }}{{ end }}`}}"
                 }
                 stage.labels {
                   values = { level = "" }
                 }
                 stage.structured_metadata {
                   values = { delivery_id = "", tenant_id = "" }
+                }
+                forward_to = [loki.write.default.receiver]
+              }
+
+              // Kubernetes events (OOMKilled, image pull errors, failed scheduling, probe failures) of the
+              // same namespaces, as log lines with job="kubernetes-events"; level is warning or info.
+              loki.source.kubernetes_events "events" {
+                namespaces = ["riffle-serving", "riffle-workers", "riffle-ml", "argocd", "observability",
+                              "external-secrets", "keda", "kueue-system"]
+                job_name   = "kubernetes-events"
+                log_format = "json"
+                forward_to = [loki.process.events.receiver]
+              }
+
+              loki.process "events" {
+                stage.json {
+                  expressions = { level = "type" }
+                }
+                stage.template {
+                  source   = "level"
+                  template = "{{`{{ if eq .level \"Warning\" }}warning{{ else }}info{{ end }}`}}"
+                }
+                stage.labels {
+                  values = { level = "" }
                 }
                 forward_to = [loki.write.default.receiver]
               }

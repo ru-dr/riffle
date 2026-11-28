@@ -9,7 +9,8 @@ Kubernetes Job before each deploy.
 | --- | --- | --- |
 | `tenants` | One row per GitHub App installation, with its status (active, suspended, deleting) | `tenant_id` (the installation id) |
 | `repos` | The repositories each installation gave access to | `tenant_id`, `repo_id` |
-| `score_results` | One row per score: the outcome probabilities, `rank_score` and band, model and miner versions, the inputs; append-only | `delivery_id` |
+| `tenant_keys` | Each tenant's data key, wrapped by KMS `tenant-kek`; encrypts its files (ADR 0028). Services may read and insert, never change; people cannot read it | `tenant_id` |
+| `score_results` | One row per score: the outcome probabilities, `rank_score` and band, model and miner versions; append-only. `features` stays null: the model's inputs go to the score log in object storage, not Postgres (ADR 0024) | `delivery_id` |
 
 ## Invariants
 

@@ -1,0 +1,10 @@
+# pyarrow has the training image's version (infra/docker/outcome-training/requirements.txt), so training reads
+# these files with the library that wrote them.
+pyarrow==25.0.1
+cryptography==50.0.2
+google-cloud-kms==3.19.0
+google-cloud-pubsub==2.44.0
+google-cloud-storage==3.17.2
+psycopg[binary]==3.3.9
+prometheus-client==0.26.0
+jsonschema==4.23.0

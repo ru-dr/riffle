@@ -160,3 +160,215 @@ resource "google_monitoring_alert_policy" "intake_latency" {
     auto_close = "1800s"
   }
 }
+
+# intake answered GitHub 503 because Pub/Sub did not take the message. GitHub does not redeliver
+# by itself, so those PRs are missing until someone redelivers them from the App's settings.
+resource "google_monitoring_alert_policy" "intake_publish_failed" {
+  project               = var.project_id
+  display_name          = "${var.name}: intake cannot publish"
+  combiner              = "OR"
+  severity              = "ERROR"
+  notification_channels = local.channels
+
+  conditions {
+    display_name = "Webhooks answered 503 (publish_failed)"
+    condition_prometheus_query_language {
+      query                     = "sum(rate(riffle_intake_events_total{namespace=\"riffle-serving\", result=\"publish_failed\"}[10m])) > 0"
+      duration                  = "300s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  documentation {
+    subject   = "Riffle ${var.name}: intake cannot publish webhooks"
+    content   = "intake answered GitHub 503 because Pub/Sub did not store the message. GitHub does not retry by itself: once Pub/Sub is back, redeliver the failed deliveries from the GitHub App's settings (Advanced, Recent deliveries)."
+    mime_type = "text/markdown"
+  }
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+}
+
+# ---- scorer (services/scorer). Its metrics exist once it runs; until then these policies wait.
+# Every PR is stored and shown either way (fail open); these say when PRs stop being ranked.
+
+locals {
+  scorer = "namespace=\"riffle-serving\""
+}
+
+# PRs arrive and no model is loaded: none uploaded to MLflow yet, or MLflow never answered.
+resource "google_monitoring_alert_policy" "scorer_no_model" {
+  project               = var.project_id
+  display_name          = "${var.name}: scorer has no model"
+  combiner              = "OR"
+  severity              = "ERROR"
+  notification_channels = local.channels
+
+  conditions {
+    display_name = "PRs stored unranked, model_unavailable"
+    condition_prometheus_query_language {
+      query                     = "sum(rate(riffle_scorer_messages_total{${local.scorer}, result=\"model_unavailable\"}[10m])) > 0"
+      duration                  = "600s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  documentation {
+    subject   = "Riffle ${var.name}: PRs are not ranked, the scorer has no model"
+    content   = "The scorer found no model at riffle-outcome-setup-g@champion. Check that a version is registered and has the alias champion (services/scorer/README.md, Uploading the model), and that MLflow is up in riffle-ml."
+    mime_type = "text/markdown"
+  }
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+}
+
+# PRs that should have been ranked end unranked: scoring failed three times, or the row was invalid.
+resource "google_monitoring_alert_policy" "scorer_failing" {
+  project               = var.project_id
+  display_name          = "${var.name}: scorer failing PRs"
+  combiner              = "OR"
+  severity              = "ERROR"
+  notification_channels = local.channels
+
+  conditions {
+    display_name = "More than ${var.scorer_failed_share * 100}% of PRs unranked by a failure"
+    condition_prometheus_query_language {
+      query                     = "sum(rate(riffle_scorer_messages_total{${local.scorer}, result=~\"scoring_failed|invalid_input\"}[15m])) / sum(rate(riffle_scorer_messages_total{${local.scorer}, result=~\"ranked|scoring_failed|invalid_input\"}[15m])) > ${var.scorer_failed_share}"
+      duration                  = "900s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  documentation {
+    subject   = "Riffle ${var.name}: the scorer is leaving PRs unranked"
+    content   = "PRs are stored unranked with scoring_failed (scoring raised three times: often the history store) or invalid_input (the row breaks its contract, or comes from a miner version the model was not trained on). The scorer's logs name the reason: Grafana, Riffle live path, or Loki {service=\"scorer\"}."
+    mime_type = "text/markdown"
+  }
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+}
+
+# The scorer cannot store or publish: Postgres or Pub/Sub. Messages wait and are redelivered.
+resource "google_monitoring_alert_policy" "scorer_errors" {
+  project               = var.project_id
+  display_name          = "${var.name}: scorer cannot store or publish"
+  combiner              = "OR"
+  severity              = "ERROR"
+  notification_channels = local.channels
+
+  conditions {
+    display_name = "Messages redelivered because the store or Pub/Sub failed"
+    condition_prometheus_query_language {
+      query                     = "sum(rate(riffle_scorer_messages_total{${local.scorer}, result=\"error\"}[10m])) > 0"
+      duration                  = "600s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  documentation {
+    subject   = "Riffle ${var.name}: the scorer cannot store or publish scores"
+    content   = "Scores are not reaching Postgres or the score-results topic, so PRs wait. Check the cloud-sql-proxy sidecar and the scorer's logs. After ${var.max_delivery_attempts} deliveries a message goes to the dead letter and is kept 7 days."
+    mime_type = "text/markdown"
+  }
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+}
+
+# Score log rows dropped (ADR 0024): the score still posted, but monitoring and retraining lose the row.
+resource "google_monitoring_alert_policy" "score_log_dropped" {
+  project               = var.project_id
+  display_name          = "${var.name}: score log rows dropped"
+  combiner              = "OR"
+  severity              = "WARNING"
+  notification_channels = local.channels
+
+  conditions {
+    display_name = "riffle_score_log_dropped_total increased"
+    condition_prometheus_query_language {
+      query                     = "sum(increase(riffle_score_log_dropped_total{${local.scorer}}[15m])) > 0"
+      duration                  = "0s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  documentation {
+    subject   = "Riffle ${var.name}: score log rows were dropped"
+    content   = "The scorer could not publish to score-log. Scores were not affected; the dropped rows are missing from the score log used for monitoring and retraining. Check Pub/Sub and the scorer's logs (\"score log not published\")."
+    mime_type = "text/markdown"
+  }
+
+  alert_strategy {
+    auto_close = "3600s"
+  }
+}
+
+# Scoring is slow (history download, model, Postgres).
+resource "google_monitoring_alert_policy" "scorer_latency" {
+  project               = var.project_id
+  display_name          = "${var.name}: scorer slow"
+  combiner              = "OR"
+  severity              = "WARNING"
+  notification_channels = local.channels
+
+  conditions {
+    display_name = "scorer p95 above ${var.scorer_p95_seconds} s"
+    condition_prometheus_query_language {
+      query                     = "histogram_quantile(0.95, sum by (le) (rate(riffle_scorer_latency_seconds_bucket{${local.scorer}, result=\"ranked\"}[10m]))) > ${var.scorer_p95_seconds}"
+      duration                  = "900s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  documentation {
+    subject   = "Riffle ${var.name}: the scorer is slow"
+    content   = "p95 of riffle_scorer_latency_seconds for ranked PRs is above ${var.scorer_p95_seconds} s. Usual causes: history files downloaded often (HISTORY_CACHE_SECONDS), Postgres slow, or too few pods (KEDA)."
+    mime_type = "text/markdown"
+  }
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+}
+
+# The score-log writer cannot write files: Postgres (the tenant's key), KMS or the bucket. Rows wait
+# in the queue; after max_delivery_attempts they go to the dead letter.
+resource "google_monitoring_alert_policy" "score_log_writer_failing" {
+  project               = var.project_id
+  display_name          = "${var.name}: score log files not written"
+  combiner              = "OR"
+  severity              = "WARNING"
+  notification_channels = local.channels
+
+  conditions {
+    display_name = "riffle_score_log_write_failures_total increasing"
+    condition_prometheus_query_language {
+      query                     = "sum(rate(riffle_score_log_write_failures_total{namespace=\"riffle-workers\"}[15m])) > 0"
+      duration                  = "900s"
+      evaluation_interval       = "60s"
+      disable_metric_validation = true
+    }
+  }
+
+  documentation {
+    subject   = "Riffle ${var.name}: the score-log writer cannot write files"
+    content   = "Score log rows are waiting in the queue. The writer's logs (\"score log file not written\") say which step failed: the tenant's data key (Postgres, KMS tenant-kek) or the score-log bucket. Scores are not affected."
+    mime_type = "text/markdown"
+  }
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+}

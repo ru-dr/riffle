@@ -13,6 +13,7 @@ not a cost tweak.
 ```
 infra/k8s/
 ├── apps/staging/        one Argo CD Application per component (app of apps), numbered in deploy order
+├── tools/               manifests people apply by hand when needed, never by Argo CD (db-proxy.yaml)
 ├── charts/riffle-service/  the shared Helm chart every Riffle service is deployed with
 └── platform/            what the Applications that point here deploy (each folder is a Kustomization)
     ├── cluster-policies/   priority classes, default requests, quotas, network rules
@@ -30,7 +31,7 @@ infra/k8s/
 | Wave | Application | What | Source |
 | --- | --- | --- | --- |
 | -3 | `cluster-policies` | Priority classes (serving > workers > batch), default requests, quotas on workers and ml, default-deny ingress plus the allowed paths | `platform/cluster-policies` |
-| -3 | `identity` | 14 Kubernetes service accounts, each annotated with its Google account | `platform/identity` |
+| -3 | `identity` | 15 Kubernetes service accounts, each annotated with its Google account | `platform/identity` |
 | -2 | `external-secrets` | External Secrets Operator 2.15.0 | Helm chart |
 | -2 | `keda` | KEDA 2.21.1, its operator as the `keda` Google account | Helm chart |
 | -2 | `kueue` | Kueue 0.20.8 (OCI chart) | Helm chart |
@@ -38,11 +39,14 @@ infra/k8s/
 | -1 | `training-queues` | Spot flavour, `training` ClusterQueue (16 CPU, 64 Gi), LocalQueue in `riffle-ml` | `platform/training-queues` |
 | 0 | `gateway` | The load balancer on the fixed IP; `/webhook` and `/healthz` to intake, `/app` to the dashboard; Cloud Armor on both | `platform/gateway` |
 | 1 | `db-migrate` | Migrations and grants, on every sync | `platform/db-migrate` |
-| 2 | `loki`, `tempo` | Logs and traces, stored in their buckets | Helm charts |
+| 2 | `loki`, `tempo` | Logs (30 days) and traces (14 days), stored in their buckets | Helm charts |
 | 2 | `mlflow` | MLflow 3.18 with a Cloud SQL Proxy sidecar; `http://mlflow.riffle-ml.svc:5000` | `platform/mlflow` |
 | 2 | `training` | Weekly global training CronJob (suspended, see Training) | `platform/training` |
+| 3 | `alloy`, `grafana` | Log, Kubernetes event and trace collection (see Logs); Grafana with its dashboard sidecar | Helm charts |
+| 3 | `dashboards` | Grafana dashboards as ConfigMaps: `Riffle: live path` (intake, scorer, score-log writer, queues) and `Riffle: logs` (errors per service, one delivery's lines, platform errors, Kubernetes events) | `platform/dashboards` |
 | 4 | `intake` | The webhook front door (`services/intake`), at least 1 warm pod, HPA on CPU | `charts/riffle-service` |
-| 3 | `alloy`, `grafana` | Log and trace collection; dashboards | Helm charts |
+| 4 | `scorer` | Ranks PRs from `pr-features` with the MLflow champion (`services/scorer`), Cloud SQL sidecar, KEDA on its backlog | `charts/riffle-service` |
+| 4 | `scorelog-writer` | `score-log` to Parquet per tenant and day, encrypted with the tenant's key (`services/scorelog-writer`), Cloud SQL sidecar, KEDA | `charts/riffle-service` |
 
 Argo CD waits for each wave to be healthy before the next (configured in
 `infra/terraform/envs/staging-bootstrap/values/argocd.yaml`).
@@ -61,6 +65,25 @@ so no manifest hard-codes an environment's resource names.
 | `riffle-workers` | pr-miner, outcome-labeler, scorelog-writer, tenant-workflow, db-migrate | `riffle-workers` |
 | `riffle-ml` | retrain, trainer, mlflow | `riffle-batch` (training), `riffle-workers` |
 | `observability` | Loki, Tempo, Alloy, Grafana | — |
+
+## Logs
+
+Alloy (`apps/staging/12-alloy.yaml`) reads the logs of every pod in the Riffle namespaces
+(`riffle-serving`, `riffle-workers`, `riffle-ml`) and the platform's (`argocd`, `observability`,
+`external-secrets`, `keda`, `kueue-system`) through the Kubernetes API, plus their Kubernetes
+events, and sends them to Loki. Kept 30 days.
+
+| Label | Value |
+| --- | --- |
+| `namespace`, `pod`, `container` | Where the line came from |
+| `service` | The pod's `app.kubernetes.io/name` (else its `app` label, else its Job's name) |
+| `level` | `debug`, `info`, `warning` or `error`, whatever the format: JSON `level` (Riffle's services), JSON `severity` (Cloud SQL Proxy), logfmt `level=` (Argo CD), klog's first letter. Lines with no level have none |
+| `job="kubernetes-events"` | Kubernetes events (OOMKilled, BackOff, FailedScheduling ...); `level` is `warning` or `info` |
+
+`delivery_id` and `tenant_id` are structured metadata, not labels, so they can be searched without
+a label per PR: `{namespace="riffle-serving"} | delivery_id="<id>"`. In Grafana: **Riffle: logs**,
+or Explore with the Loki data source. A service logs JSON lines on stdout with `level`, `msg`,
+`delivery_id` and `tenant_id` to get all of this.
 
 ## Deploying a service: the shared chart
 
@@ -118,6 +141,9 @@ drift (their code does not exist yet).
   as `database = true` in `infra/terraform/envs/staging/09-identity.tf`.
 - A secret for a service: grant it in `09-identity.tf`, then add it to that service's
   ExternalSecret in `platform/secrets`.
+- A Grafana dashboard: add its JSON to `platform/dashboards` and an entry to its
+  `kustomization.yaml`. Dashboards are read-only in Grafana; change them in git. Alerts are in
+  Terraform (`infra/terraform/modules/monitoring`), not in Grafana.
 
 ## Troubleshooting
 
@@ -125,6 +151,7 @@ drift (their code does not exist yet).
 | --- | --- |
 | An Application stays OutOfSync or Degraded | Argo CD UI: the resource's events |
 | `SecretSyncedError` on an ExternalSecret | The secret has no value yet (filled by hand), or the service lacks access in `09-identity.tf` |
+| A pod restarts or stays Pending | Grafana, Riffle: logs, Kubernetes events (OOMKilled, FailedScheduling, BackOff) |
 | `db-migrate` fails | Its pod's logs: `migrate` (SQL), `cloud-sql-proxy` (login), `grants` (roles) |
 | `/webhook` returns 403 | Cloud Armor: the caller is not in GitHub's hook ranges (`github_hook_ranges`) |
 | Route shows unresolved backends | The service's Service does not exist yet |

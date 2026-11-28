@@ -13,8 +13,9 @@ from datetime import timezone
 
 COLUMNS = ("delivery_id", "tenant_id", "repo", "pr_number", "head_sha", "trigger", "p_lands_clean",
            "p_lands_after_rework", "p_goes_nowhere", "rank_score", "rank_mode", "rank_band", "model_version",
-           "miner_version", "layer_weight", "predictions", "features", "explanation", "unranked_reason", "scored_at")
-JSON_COLUMNS = ("predictions", "features")
+           "miner_version", "layer_weight", "predictions", "explanation", "unranked_reason", "scored_at")
+# The features column stays null: the model's inputs go to the score log, not Postgres (ADR 0024).
+JSON_COLUMNS = ("predictions",)
 
 INSERT = (f"INSERT INTO score_results ({', '.join(COLUMNS)}) VALUES ({', '.join(['%s'] * len(COLUMNS))}) "
           "ON CONFLICT (delivery_id) DO NOTHING")

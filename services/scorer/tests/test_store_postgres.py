@@ -39,11 +39,13 @@ def test_a_scored_pr_is_stored_once_and_read_back(db, message, tiny_model_dir):
                        publisher=pub, contracts=scoring.Contracts())
     assert s.handle(json.dumps(message).encode()) == "ranked"
     first = pub.sent[0][1]
+    assert len(pub.sent[1][1]["features"]) == 161                     # the inputs go to the score log
     pub.sent.clear()
     assert s.handle(json.dumps(message).encode()) == "duplicate"      # read back from Postgres and republished
-    again = pub.sent[0][1]
-    assert again == first
-    assert len(pub.sent[1][1]["features"]) == 161
+    assert [t for t, _, _ in pub.sent] == ["score-results"] and pub.sent[0][1] == first
+    # ...and are never stored in Postgres (ADR 0024).
+    assert db._run("48213", lambda c: c.execute("SELECT features FROM score_results WHERE delivery_id = %s",
+                                                (message["delivery_id"],)).fetchone()[0]) is None
 
 
 def test_unranked_rows_meet_the_tables_rule(db, message):

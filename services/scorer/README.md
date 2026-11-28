@@ -20,7 +20,10 @@ Invariants:
   is a template that cannot be imported. The model libraries have the training image's versions.
   `tests/test_same_as_training.py` fails if either one drifts.
 - **Idempotent per `delivery_id`.** The row is stored before it is published. A redelivered message
-  republishes the stored row and is never scored again.
+  republishes the stored ScoreResult and is never scored again.
+- **The model's inputs are never stored in Postgres** (ADR 0024: they would grow the transactional
+  store without bound). They go only to the score log. A republished score therefore sends no score
+  log row; that loss is counted in `riffle_score_log_dropped_total`.
 - **One pinned model per request.** A request keeps the model it started with, and a new champion is
   swapped in whole. `model_version` is `riffle-outcome-setup-g/<version>/new_repos`, and the row's
   `miner_version` is stored with it.

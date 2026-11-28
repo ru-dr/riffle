@@ -6,6 +6,8 @@ next-env.d.ts
 # Environment
 .env
 .env.local
+# Every password of the platform, written by infra/fetch-credentials.sh: never commit
+infra/credentials.local.md
 
 # Python
 __pycache__/

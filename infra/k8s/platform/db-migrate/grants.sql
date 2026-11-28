@@ -11,6 +11,7 @@ GRANT riffle_app TO "riffle-staging-app-github@riffle-infra-platform.iam";
 GRANT riffle_app TO "riffle-staging-app-dashboard@riffle-infra-platform.iam";
 GRANT riffle_app TO "riffle-staging-outcome-labeler@riffle-infra-platform.iam";
 GRANT riffle_app TO "riffle-staging-tenant-workflow@riffle-infra-platform.iam";
+GRANT riffle_app TO "riffle-staging-scorelog-writer@riffle-infra-platform.iam";
 GRANT riffle_app TO "riffle-staging-retrain@riffle-infra-platform.iam";
 GRANT riffle_app TO "riffle-staging-trainer@riffle-infra-platform.iam";
 

@@ -46,3 +46,20 @@ variable "intake_p99_seconds" {
     error_message = "intake_p99_seconds must be between 0 and GitHub's 10 s."
   }
 }
+
+variable "scorer_failed_share" {
+  description = "Alert when more than this share of PRs the scorer should rank end unranked by a failure (scoring_failed, invalid_input)."
+  type        = number
+  default     = 0.05
+
+  validation {
+    condition     = var.scorer_failed_share > 0 && var.scorer_failed_share < 1
+    error_message = "scorer_failed_share must be between 0 and 1."
+  }
+}
+
+variable "scorer_p95_seconds" {
+  description = "Alert when the scorer's p95 time per ranked PR is above this."
+  type        = number
+  default     = 5
+}

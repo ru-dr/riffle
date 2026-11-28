@@ -1,0 +1,757 @@
+{
+ "uid": "riffle-live-path",
+ "title": "Riffle: live path",
+ "tags": [
+  "riffle"
+ ],
+ "timezone": "utc",
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": false,
+ "refresh": "1m",
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "description": "intake, scorer, the score-log writer and their queues. Alerts: infra/terraform/modules/monitoring.",
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Intake: GitHub webhooks",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "panels": []
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Webhooks by result",
+   "description": "published, duplicate, ignored, in_flight, pong; failures: rejected (bad signature or request), publish_failed (Pub/Sub, answered 503)",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 1
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum by (result) (rate(riffle_intake_events_total{namespace=\"riffle-serving\"}[5m]))",
+      "step": "60s"
+     },
+     "legendFormat": "{{result}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "intake latency",
+   "description": "GitHub gives up at 10 s; the alert fires at p99 above 2 s",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 1
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "histogram_quantile(0.5, sum by (le) (rate(riffle_intake_latency_seconds_bucket{namespace=\"riffle-serving\"}[5m])))",
+      "step": "60s"
+     },
+     "legendFormat": "p50"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "histogram_quantile(0.99, sum by (le) (rate(riffle_intake_latency_seconds_bucket{namespace=\"riffle-serving\"}[5m])))",
+      "step": "60s"
+     },
+     "legendFormat": "p99"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 4,
+   "type": "row",
+   "title": "Scorer: ranking PRs",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 9
+   },
+   "panels": []
+  },
+  {
+   "id": 5,
+   "type": "stat",
+   "title": "Model in service",
+   "description": "riffle-outcome-setup-g@champion as loaded from MLflow; empty means no model (PRs stored unranked, model_unavailable)",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 8,
+    "x": 0,
+    "y": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "max by (model_version, miner_version) (riffle_scorer_model_info{namespace=\"riffle-serving\"})",
+      "step": "60s"
+     },
+     "legendFormat": "{{model_version}} (miner {{miner_version}})"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "name",
+    "colorMode": "none"
+   }
+  },
+  {
+   "id": 6,
+   "type": "stat",
+   "title": "Ranked share",
+   "description": "Of the PRs the model could rank (outside contributors), the share that was ranked",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 8,
+    "x": 8,
+    "y": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum(rate(riffle_scorer_messages_total{namespace=\"riffle-serving\", result=\"ranked\"}[15m])) / sum(rate(riffle_scorer_messages_total{namespace=\"riffle-serving\", result=~\"ranked|model_unavailable|scoring_failed|invalid_input\"}[15m]))",
+      "step": "60s"
+     },
+     "legendFormat": "ranked"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value"
+   }
+  },
+  {
+   "id": 7,
+   "type": "stat",
+   "title": "Score log rows dropped (1 h)",
+   "description": "ADR 0024: the score still posted; the row is missing from the score log",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 8,
+    "x": 16,
+    "y": 10
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum(increase(riffle_score_log_dropped_total{namespace=\"riffle-serving\"}[1h]))",
+      "step": "60s"
+     },
+     "legendFormat": "dropped"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value"
+   }
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "PRs by result",
+   "description": "ranked; unranked: not_outside_contributor (by design), model_unavailable, scoring_failed, invalid_input; duplicate (redelivered); retry and error (redelivered)",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 16
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum by (result) (rate(riffle_scorer_messages_total{namespace=\"riffle-serving\"}[5m]))",
+      "step": "60s"
+     },
+     "legendFormat": "{{result}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "Scorer latency (ranked PRs)",
+   "description": "History, model, Postgres and publishing together",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 16
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "histogram_quantile(0.5, sum by (le) (rate(riffle_scorer_latency_seconds_bucket{namespace=\"riffle-serving\", result=\"ranked\"}[5m])))",
+      "step": "60s"
+     },
+     "legendFormat": "p50"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "histogram_quantile(0.95, sum by (le) (rate(riffle_scorer_latency_seconds_bucket{namespace=\"riffle-serving\", result=\"ranked\"}[5m])))",
+      "step": "60s"
+     },
+     "legendFormat": "p95"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 10,
+   "type": "timeseries",
+   "title": "PRs by tenant",
+   "description": "",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 24
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum by (tenant) (rate(riffle_scorer_messages_total{namespace=\"riffle-serving\"}[5m]))",
+      "step": "60s"
+     },
+     "legendFormat": "{{tenant}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Deferred by fair share",
+   "description": "A tenant over TENANT_MAX_IN_FLIGHT has its message redelivered later",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 24
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum by (tenant) (rate(riffle_scorer_fair_share_deferred_total{namespace=\"riffle-serving\"}[5m]))",
+      "step": "60s"
+     },
+     "legendFormat": "{{tenant}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 12,
+   "type": "row",
+   "title": "Queues: Pub/Sub",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 32
+   },
+   "panels": []
+  },
+  {
+   "id": 13,
+   "type": "timeseries",
+   "title": "Messages waiting",
+   "description": "KEDA scales the scorer on scorer-pr-features",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 33
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum by (subscription_id) (pubsub_googleapis_com:subscription_num_undelivered_messages{monitored_resource=\"pubsub_subscription\", subscription_id=~\"riffle-staging-.*\", subscription_id!~\".*-dead-letter-hold\"})",
+      "step": "60s"
+     },
+     "legendFormat": "{{subscription_id}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 14,
+   "type": "timeseries",
+   "title": "Oldest unacknowledged message",
+   "description": "The alert fires above 5 minutes",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 33
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "max by (subscription_id) (pubsub_googleapis_com:subscription_oldest_unacked_message_age{monitored_resource=\"pubsub_subscription\", subscription_id=~\"riffle-staging-.*\", subscription_id!~\".*-dead-letter-hold\"})",
+      "step": "60s"
+     },
+     "legendFormat": "{{subscription_id}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 15,
+   "type": "timeseries",
+   "title": "In dead letter",
+   "description": "Messages a consumer failed 5 times; kept 7 days",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 33
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum by (subscription_id) (pubsub_googleapis_com:subscription_num_undelivered_messages{monitored_resource=\"pubsub_subscription\", subscription_id=~\"riffle-staging-.*-dead-letter-hold\"})",
+      "step": "60s"
+     },
+     "legendFormat": "{{subscription_id}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 18,
+   "type": "row",
+   "title": "Score log writer (ADR 0024)",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 41
+   },
+   "panels": []
+  },
+  {
+   "id": 19,
+   "type": "timeseries",
+   "title": "Rows by result",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "description": "written; dropped: invalid, duplicate, tenant_gone",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 42
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps"
+    },
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum by (result) (rate(riffle_score_log_rows_total{namespace=\"riffle-workers\"}[5m]))",
+      "step": "60s"
+     },
+     "legendFormat": "{{result}}"
+    }
+   ]
+  },
+  {
+   "id": 20,
+   "type": "timeseries",
+   "title": "Files written and failures",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "description": "A failure is retried; the alert fires after 15 minutes of failures",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 42
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum(rate(riffle_score_log_files_total{namespace=\"riffle-workers\"}[5m]))",
+      "step": "60s"
+     },
+     "legendFormat": "files/s"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum(rate(riffle_score_log_write_failures_total{namespace=\"riffle-workers\"}[5m]))",
+      "step": "60s"
+     },
+     "legendFormat": "failures/s"
+    }
+   ]
+  },
+  {
+   "id": 21,
+   "type": "timeseries",
+   "title": "Rows held for their file",
+   "datasource": {
+    "type": "stackdriver",
+    "uid": "gmp"
+   },
+   "description": "Held unacknowledged until the file is stored (BATCH_ROWS or FLUSH_SECONDS)",
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 42
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "stackdriver",
+      "uid": "gmp"
+     },
+     "queryType": "promQL",
+     "promQLQuery": {
+      "projectName": "riffle-infra-platform",
+      "expr": "sum(riffle_score_log_buffered_rows{namespace=\"riffle-workers\"})",
+      "step": "60s"
+     },
+     "legendFormat": "held"
+    }
+   ]
+  },
+  {
+   "id": 16,
+   "type": "row",
+   "title": "Logs",
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 50
+   },
+   "panels": []
+  },
+  {
+   "id": 17,
+   "type": "logs",
+   "title": "Errors and warnings (intake, scorer, score-log writer)",
+   "description": "delivery_id and tenant_id are in each line",
+   "datasource": {
+    "type": "loki",
+    "uid": "loki"
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 51
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "loki",
+      "uid": "loki"
+     },
+     "queryType": "range",
+     "expr": "{namespace=~\"riffle-serving|riffle-workers\", service=~\"intake|scorer|scorelog-writer\", level=~\"(?i)error|warn.*\"}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "showTime": true,
+    "wrapLogMessage": true,
+    "sortOrder": "Descending"
+   }
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "annotations": {
+  "list": []
+ }
+}

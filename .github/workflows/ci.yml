@@ -222,6 +222,35 @@ jobs:
         env:
           SCORER_TEST_DATABASE_URL: postgresql://postgres:pw@localhost:5432/postgres
 
+  # scorelog-writer (Python): batching and acknowledgement with fakes for Pub/Sub, KMS and the bucket, the
+  # encrypted file format and its flat columns, and tenant_keys on a real Postgres with the real migrations.
+  scorelog-writer:
+    name: scorelog-writer
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.12-alpine
+        env:
+          POSTGRES_PASSWORD: pw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: services/scorelog-writer
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - run: python -m pytest tests -q
+        env:
+          WRITER_TEST_DATABASE_URL: postgresql://postgres:pw@localhost:5432/postgres
+
   # AIDev ingestion: its own job, as it is its own service. Offline only: a fake hub and the
   # committed inventory. The tests that talk to Hugging Face need RUN_NETWORK_TESTS=1 and are
   # not run here.

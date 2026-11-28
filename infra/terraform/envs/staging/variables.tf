@@ -167,12 +167,6 @@ variable "alert_emails" {
   default     = []
 }
 
-variable "db_connector_public_ip" {
-  description = "Let the team reach Postgres from a laptop through the Cloud SQL Proxy (Google login, no authorised networks)."
-  type        = bool
-  default     = true
-}
-
 variable "team_members" {
   description = "People who may run and debug the platform (module team-access): user:<email> or group:<email>."
   type        = list(string)

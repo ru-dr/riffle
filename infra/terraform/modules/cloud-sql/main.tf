@@ -33,10 +33,9 @@ resource "google_sql_database_instance" "this" {
     connector_enforcement = "REQUIRED"
 
     ip_configuration {
-      # Pods use the private IP. The public IP, when on, has no authorised networks: with
-      # connector_enforcement REQUIRED the only way in is the Cloud SQL Proxy (or a connector)
-      # with a valid Google login, which is how the team reaches it from a laptop.
-      ipv4_enabled    = var.connector_public_ip
+      # Private IP only: reachable from inside the VPC (pods), never from the internet. People
+      # connect through a proxy pod in the cluster (infra/k8s/tools/db-proxy.yaml).
+      ipv4_enabled    = false
       private_network = var.network_id
       ssl_mode        = "ENCRYPTED_ONLY"
     }

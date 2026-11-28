@@ -24,6 +24,8 @@ on:
   push:
     branches: [main]
     paths:
+      - services/scorelog-writer/**
+      - contracts/flatten.py
       - services/scorer/**
       - contracts/pr_features.schema.json
       - contracts/mined_dataset.schema.json
@@ -37,6 +39,8 @@ on:
       - .github/workflows/images.yml
   pull_request:
     paths:
+      - services/scorelog-writer/**
+      - contracts/flatten.py
       - services/scorer/**
       - contracts/pr_features.schema.json
       - contracts/mined_dataset.schema.json
@@ -79,6 +83,11 @@ jobs:
           - image: scorer
             context: .
             dockerfile: services/scorer/Dockerfile
+          # The score-log writer (infra/k8s/apps/staging/22-scorelog-writer.yaml); from the repo
+          # root, for the contract and contracts/flatten.py.
+          - image: scorelog-writer
+            context: .
+            dockerfile: services/scorelog-writer/Dockerfile
     env:
       PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     steps:

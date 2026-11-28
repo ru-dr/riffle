@@ -26,8 +26,8 @@ def make(fakes, current, **kw):
                           now=lambda: "2026-11-27T12:00:00.000Z", **kw)
 
 
-def check_published(publisher, delivery_id):
-    assert [t for t, _, _ in publisher.sent] == ["score-results", "score-log"]
+def check_published(publisher, delivery_id, logged=True):
+    assert [t for t, _, _ in publisher.sent] == (["score-results", "score-log"] if logged else ["score-results"])
     for topic, msg, attrs in publisher.sent:
         name = topic.replace("-", "_").rstrip("s") if topic == "score-results" else "score_log"
         v = jsonschema.Draft202012Validator(contract(name), format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER)
@@ -39,7 +39,7 @@ def check_published(publisher, delivery_id):
     if ranked:
         assert result["model_version"] and abs(result["p_merge"] - result["p_lands_clean"] -
                                                result["p_lands_after_rework"]) < 1e-9
-    return result, publisher.sent[1][1]
+    return result, (publisher.sent[1][1] if logged else None)
 
 
 def test_an_outside_contributors_pr_is_ranked(fakes, loaded, message, history):
@@ -52,7 +52,9 @@ def test_an_outside_contributors_pr_is_ranked(fakes, loaded, message, history):
     assert abs(result["rank_score"] - (result["p_lands_clean"] + 0.6 * result["p_lands_after_rework"])) < 1e-9
     assert result["explanation"] is None and result["layer_weight"] == 0
     assert result["miner_version"] == "7.2.2" and log["features"]["ah_n"] == 3 and len(log["features"]) == 161
-    assert fakes["store"].rows[message["delivery_id"]]["rank_score"] == result["rank_score"]
+    stored = fakes["store"].rows[message["delivery_id"]]
+    assert stored["rank_score"] == result["rank_score"]
+    assert "features" not in stored                     # the inputs go to the score log only (ADR 0024)
 
 
 def test_the_band_comes_from_the_repos_recent_scores(fakes, loaded, message):
@@ -66,8 +68,11 @@ def test_a_redelivered_message_is_republished_not_rescored(fakes, loaded, messag
     s.handle(json.dumps(message).encode())
     first = fakes["publisher"].sent[0][1]
     fakes["publisher"].sent.clear()
+    before = scoring.SCORE_LOG_DROPPED._value.get()
     assert s.handle(json.dumps(message).encode()) == "duplicate"
-    assert check_published(fakes["publisher"], message["delivery_id"])[0] == first
+    # The same ScoreResult again; no score log row, as its inputs are not stored, and the loss is counted.
+    assert check_published(fakes["publisher"], message["delivery_id"], logged=False)[0] == first
+    assert scoring.SCORE_LOG_DROPPED._value.get() == before + 1
 
 
 @pytest.mark.parametrize("change, reason", [
@@ -108,7 +113,7 @@ def test_pubsub_down_is_redelivered_and_then_republished(fakes, loaded, message)
     assert message["delivery_id"] in fakes["store"].rows       # stored before publishing
     fakes["publisher"] = FakePublisher()
     assert make(fakes, loaded).handle(json.dumps(message).encode()) == "duplicate"
-    check_published(fakes["publisher"], message["delivery_id"])
+    check_published(fakes["publisher"], message["delivery_id"], logged=False)
 
 
 def test_the_score_log_failing_never_stops_the_score(fakes, loaded, message):

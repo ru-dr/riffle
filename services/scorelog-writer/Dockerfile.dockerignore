@@ -1,0 +1,8 @@
+# Build context for services/scorelog-writer/Dockerfile (BuildKit reads <Dockerfile>.dockerignore):
+# everything is excluded except what the image copies.
+*
+!services/scorelog-writer/requirements.txt
+!services/scorelog-writer/scorelog_writer/
+!contracts/score_log.schema.json
+!contracts/flatten.py
+**/__pycache__/

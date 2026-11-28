@@ -1,4 +1,5 @@
-# Wave 3. Grafana with Loki, Tempo and Managed Prometheus as data sources. No public address:
+# Wave 3. Grafana with Loki, Tempo and Managed Prometheus as data sources, and the dashboards of
+# infra/k8s/platform/dashboards (16-dashboards.yaml). No public address:
 # kubectl -n observability port-forward svc/grafana 3000:80 (user admin; password: gcloud secrets versions access latest --secret=riffle-staging-grafana-admin).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -62,6 +63,16 @@ spec:
               jsonData:
                 authenticationType: gce
                 defaultProject: riffle-infra-platform
+        # Loads the dashboards in infra/k8s/platform/dashboards (ConfigMaps labelled
+        # grafana_dashboard: "1" in this namespace) and reloads them when they change.
+        sidecar:
+          dashboards:
+            enabled: true
+            label: grafana_dashboard
+            labelValue: "1"
+        # The sidecar may read ConfigMaps in this namespace only.
+        rbac:
+          namespaced: true
         admin:
           existingSecret: grafana-admin
           userKey: admin-user

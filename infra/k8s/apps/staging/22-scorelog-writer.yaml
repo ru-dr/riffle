@@ -1,0 +1,66 @@
+# Wave 4. The score-log writer (services/scorelog-writer), from the shared chart: reads score-log
+# and writes each tenant's rows as Parquet files encrypted with that tenant's data key, under
+# gs://<score-log bucket>/score_log/tenant=<id>/date=<day>/ (ADR 0024, ADR 0028). Background
+# work: riffle-workers, scaled by KEDA on its backlog. To deploy a new build, put the tag from
+# the images workflow's summary in image.tag.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: scorelog-writer
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ru-dr/riffle.git
+    targetRevision: main
+    path: infra/k8s/charts/riffle-service
+    helm:
+      releaseName: scorelog-writer
+      valuesObject:
+        name: scorelog-writer
+        image:
+          repository: us-east4-docker.pkg.dev/riffle-infra-platform/riffle-staging/scorelog-writer
+          tag: not-built-yet
+        priorityClassName: riffle-workers
+        port: 8080
+        metricsPort: 9090
+        probes:
+          readinessPath: /readyz
+          livenessPath: /healthz
+        cloudSql:
+          enabled: true
+        env:
+          BATCH_ROWS: '500'
+          FLUSH_SECONDS: '60'
+          KEY_CACHE_SECONDS: '600'
+        # Up to MAX_HELD_MESSAGES rows (5000) held while their files fill.
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+        autoscaling:
+          keda:
+            enabled: true
+            subscriptionEnv: SUBSCRIPTION_SCORE_LOG_WRITER
+            messagesPerReplica: 2000
+            minReplicas: 1
+            maxReplicas: 3
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: riffle-workers
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true

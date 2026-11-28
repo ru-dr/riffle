@@ -1,0 +1,18 @@
+# Grafana dashboards, as ConfigMaps labelled grafana_dashboard: "1" in observability. Grafana's
+# dashboard sidecar (infra/k8s/apps/staging/13-grafana.yaml) loads every such ConfigMap and
+# reloads it when it changes. A dashboard is a JSON file here plus one entry below; edit the
+# JSON in git, not in Grafana (dashboards loaded this way are read-only there).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: observability
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
+configMapGenerator:
+  - name: dashboard-live-path
+    files:
+      - live-path.json   # intake, scorer, score-log writer, Pub/Sub queues, error logs
+  - name: dashboard-logs
+    files:
+      - logs.json        # errors per service, one delivery's lines, platform errors, Kubernetes events

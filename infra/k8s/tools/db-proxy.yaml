@@ -1,0 +1,64 @@
+# On-demand way into Postgres for people. The database has no public IP, so the Cloud SQL Proxy
+# runs here, inside the VPC, and you reach it with kubectl port-forward. Not deployed by Argo CD:
+# start it when you need it, delete it when done (it stops by itself after 8 hours).
+#
+#   kubectl apply -f infra/k8s/tools/db-proxy.yaml
+#   kubectl -n riffle-workers wait --for=condition=Ready pod/db-proxy
+#   kubectl -n riffle-workers port-forward pod/db-proxy 5432:5432 &
+#   PGPASSWORD="$(gcloud sql generate-login-token)" \
+#     psql "host=127.0.0.1 port=5432 dbname=riffle user=<your email> sslmode=disable"
+#   riffle=> SET app.tenant_id = '<installation id>';
+#   kubectl delete -f infra/k8s/tools/db-proxy.yaml
+#
+# You log in as yourself: the password is your own short-lived Google token, so you get your own
+# role (riffle_readonly, from db_people in Terraform) and row-level security applies. The pod's
+# account (db-proxy) may only open the connection; it has no database login. The token lasts
+# about an hour; run psql again with a fresh one after that.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-proxy
+  namespace: riffle-workers
+  labels:
+    app.kubernetes.io/name: db-proxy
+    app.kubernetes.io/part-of: riffle
+spec:
+  serviceAccountName: db-proxy
+  automountServiceAccountToken: false
+  priorityClassName: riffle-workers
+  restartPolicy: Never
+  activeDeadlineSeconds: 28800   # 8 hours, so a forgotten proxy does not stay open
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: cloud-sql-proxy
+      image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.28.1
+      args:
+        # No --auto-iam-authn: the proxy only carries the connection; each person logs in with
+        # their own token.
+        - --private-ip
+        - --port=5432             # on the pod's localhost only: port-forward reaches it, other pods do not
+        - --structured-logs
+        - --health-check
+        - --http-address=0.0.0.0
+        - $(DB_CONNECTION_NAME)
+      envFrom:
+        - configMapRef:
+            name: riffle-platform-settings
+      readinessProbe:
+        httpGet:
+          path: /readiness
+          port: 9090
+        periodSeconds: 2
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
