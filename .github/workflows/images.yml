@@ -24,6 +24,11 @@ on:
   push:
     branches: [main]
     paths:
+      - services/scorer/**
+      - contracts/pr_features.schema.json
+      - contracts/mined_dataset.schema.json
+      - contracts/score_result.schema.json
+      - contracts/score_log.schema.json
       - services/intake/**
       - infra/docker/outcome-training/**
       - pipelines/training/outcome/**
@@ -32,6 +37,11 @@ on:
       - .github/workflows/images.yml
   pull_request:
     paths:
+      - services/scorer/**
+      - contracts/pr_features.schema.json
+      - contracts/mined_dataset.schema.json
+      - contracts/score_result.schema.json
+      - contracts/score_log.schema.json
       - services/intake/**
       - infra/docker/outcome-training/**
       - pipelines/training/outcome/**
@@ -64,6 +74,11 @@ jobs:
           - image: intake
             context: services/intake
             dockerfile: services/intake/Dockerfile
+          # The scorer (infra/k8s/apps/staging/21-scorer.yaml); from the repo root, for the shared
+          # feature module and the contracts.
+          - image: scorer
+            context: .
+            dockerfile: services/scorer/Dockerfile
     env:
       PUSH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     steps:

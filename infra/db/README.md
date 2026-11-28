@@ -9,7 +9,7 @@ Kubernetes Job before each deploy.
 | --- | --- | --- |
 | `tenants` | One row per GitHub App installation, with its status (active, suspended, deleting) | `tenant_id` (the installation id) |
 | `repos` | The repositories each installation gave access to | `tenant_id`, `repo_id` |
-| `score_results` | One row per score; append-only | `delivery_id` |
+| `score_results` | One row per score: the outcome probabilities, `rank_score` and band, model and miner versions, the inputs; append-only | `delivery_id` |
 
 ## Invariants
 
@@ -27,9 +27,10 @@ Kubernetes Job before each deploy.
   has run.
 - **`score_results` is append-only for services** (no `UPDATE` or `DELETE` grant). A rescore
   is a new delivery and a new row. Its key, `delivery_id`, makes scoring idempotent.
-- **A score is either ranked or unranked with a reason, never half.** `risk_score`,
-  `rank_band` and `model_version` are all set, or all null with `unranked_reason` set (fail
-  open). Null means "not ranked", never 0.
+- **A score is either ranked or unranked with a reason, never half.** `rank_score`,
+  `rank_band` and `model_version` are all set, or `rank_score` and `rank_band` are null with
+  `unranked_reason` set (fail open). Null means "not ranked", never 0. `risk_score` stays null
+  until a `label_bad` model is served (migration `20261127000002`).
 
 ## Adding a migration
 

@@ -30,7 +30,7 @@ infra/k8s/
 | Wave | Application | What | Source |
 | --- | --- | --- | --- |
 | -3 | `cluster-policies` | Priority classes (serving > workers > batch), default requests, quotas on workers and ml, default-deny ingress plus the allowed paths | `platform/cluster-policies` |
-| -3 | `identity` | 12 Kubernetes service accounts, each annotated with its Google account | `platform/identity` |
+| -3 | `identity` | 14 Kubernetes service accounts, each annotated with its Google account | `platform/identity` |
 | -2 | `external-secrets` | External Secrets Operator 2.15.0 | Helm chart |
 | -2 | `keda` | KEDA 2.21.1, its operator as the `keda` Google account | Helm chart |
 | -2 | `kueue` | Kueue 0.20.8 (OCI chart) | Helm chart |
@@ -58,7 +58,7 @@ so no manifest hard-codes an environment's resource names.
 | --- | --- | --- |
 | `riffle-gateway` | The Gateway | — |
 | `riffle-serving` | intake, scorer, explainer, app-github, app-dashboard | `riffle-serving` |
-| `riffle-workers` | outcome-labeler, scorelog-writer, tenant-workflow, db-migrate | `riffle-workers` |
+| `riffle-workers` | pr-miner, outcome-labeler, scorelog-writer, tenant-workflow, db-migrate | `riffle-workers` |
 | `riffle-ml` | retrain, trainer, mlflow | `riffle-batch` (training), `riffle-workers` |
 | `observability` | Loki, Tempo, Alloy, Grafana | — |
 

@@ -191,6 +191,37 @@ jobs:
 
       - run: go test -race ./...
 
+  # scorer (Python): the model-running code is the training notebook's and its libraries the training image's
+  # versions (checked), a tiny model in the saved format through the whole path with fakes for MLflow, Pub/Sub and
+  # the bucket, every published message checked against contracts/, and score_results on a real Postgres with the
+  # real migrations, as a riffle_app login (row-level security on).
+  scorer:
+    name: scorer
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.12-alpine
+        env:
+          POSTGRES_PASSWORD: pw
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 20
+    defaults:
+      run:
+        working-directory: services/scorer
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - run: python -m pytest tests -q
+        env:
+          SCORER_TEST_DATABASE_URL: postgresql://postgres:pw@localhost:5432/postgres
+
   # AIDev ingestion: its own job, as it is its own service. Offline only: a fake hub and the
   # committed inventory. The tests that talk to Hugging Face need RUN_NETWORK_TESTS=1 and are
   # not run here.

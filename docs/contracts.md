@@ -65,6 +65,24 @@ Earlier drafts (1–4) were never merged and need no migration.
 | --- | --- | --- |
 | 1.0 | 2026-11-26 | First schema file for the event intake publishes on `pr-events` (the shape in the root README). `delivery_id` gains a `:<pr_number>` suffix when one check suite delivery names several PRs |
 
+## `pr_features.schema.json`
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0 | 2026-11-27 | One live PR as a `mined_dataset` row, from the pr-miner to the scorer (ADR 0027); `disabled_sources` lists the miner sources left off |
+
+## `score_result.schema.json`
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0 | 2026-11-27 | First schema file for what the scorer stores and publishes on `score-results`: the outcome probabilities, reasons and labels of setup G, `rank_score` with its `rank_mode` and band, `model_version` with `miner_version`, and the unranked reasons (`model_unavailable`, `not_outside_contributor`, `scoring_failed`, `invalid_input`). Replaces the root README's `risk_score` shape; `score_results` follows in migration `20261127000002` |
+
+## `score_log.schema.json`
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0 | 2026-11-27 | One row per score with the model's inputs, published on `score-log` after the score is stored (ADR 0024) |
+
 ## `installation_event.schema.json`
 
 | Version | Date | Changes |

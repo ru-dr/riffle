@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/pr_features.schema.json",
+  "title": "PR features",
+  "x-riffle-version": "1.0",
+  "description": "What the pr-miner publishes on the pr-features topic (riffle-<environment>-pr-features in GCP) and the scorer consumes: one pull request as the repo miner describes it, so the model sees the same shape it was trained on (ADR 0027). row is a row of mined_dataset.schema.json, made by the miner's own code; while the PR is open its outcome and label fields are null. The ordering key is <tenant_id>/<repo>#<pr_number>.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "delivery_id",
+    "tenant_id",
+    "repo",
+    "pr_number",
+    "head_sha",
+    "action",
+    "miner_version",
+    "mined_at",
+    "disabled_sources",
+    "row"
+  ],
+  "x-riffle-code-checks": [
+    "row validates against mined_dataset.schema.json",
+    "row.repo, row.pr_number and row.head_sha equal repo, pr_number and head_sha",
+    "row holds every column the model reads (the miner columns listed in pipelines/training/outcome_features.py MINER_FEATURES)",
+    "miner_version is the version the model in service was trained with (part of model_version)"
+  ],
+  "properties": {
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{1,64}(:[1-9][0-9]{0,9})?$",
+      "description": "The PrEvent's delivery_id; scoring stays idempotent on it"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$",
+      "description": "GitHub App installation id"
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+      "description": "Repository as owner/name"
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Pull request number"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Head commit of the PR when the event happened"
+    },
+    "action": {
+      "enum": [
+        "opened",
+        "synchronize",
+        "reopened",
+        "ready_for_review",
+        "edited",
+        "labeled",
+        "ci_completed"
+      ],
+      "description": "What triggered the event. Covers every trigger rescore.on can enable; ci_completed is mapped from a completed check suite"
+    },
+    "miner_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "pipelines/ingestion/repo_miner/version.py of the miner that made the row"
+    },
+    "mined_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the row was made, RFC 3339 in UTC"
+    },
+    "disabled_sources": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "llm",
+          "semgrep",
+          "osv"
+        ]
+      },
+      "description": "Miner sources left off for live scoring, so their columns are null: the LLM is never on the scoring path; Semgrep and OSV are slow and mostly empty in training"
+    },
+    "row": {
+      "type": "object",
+      "description": "One row of contracts/mined_dataset.schema.json for this PR as it stands at head_sha. Outcome and label fields are null while the PR is open; the scorer adds the repo's earlier rows from the history store before scoring"
+    }
+  }
+}

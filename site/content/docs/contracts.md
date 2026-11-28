@@ -6,9 +6,11 @@ format. **Any change to a schema is a breaking change.**
 
 | Schema | Producer | Consumer |
 | --- | --- | --- |
-| `pr_event` | `intake` | `scorer` |
+| `pr_event` | `intake` | `pr-miner` |
 | `installation_event` | `intake` | `app` (install and uninstall workflow) |
+| `pr_features` | `pr-miner` | `scorer` |
 | `score_result` | `scorer` | `app` |
+| `score_log` | `scorer` | the score-log writer, training |
 | `explain` | `scorer` → `explainer` (`POST /v1/explain`) | `scorer` |
 | `mined_features` | `scorer` (extractor) | the model, the narrator, training |
 | `outcome_import` | your systems (`POST /v1/outcomes`) | label mining |
@@ -35,21 +37,36 @@ Published by `intake` for every verified delivery.
 
 ## ScoreResult
 
-Written by `scorer`, read by `app`.
+Written by `scorer` after the score is stored, read by `app`. The full list of keys is in
+`contracts/score_result.schema.json`. A PR is ranked (`rank_score`, `rank_band` and
+`model_version` set) or unranked with a reason, never half.
 
 ```json
 {
-  "delivery_id":   "string",
-  "tenant_id":     "string",
-  "pr_number":     0,
-  "risk_score":    0.0,
-  "rank_band":     "review_first | standard | senior_recommended",
-  "model_version": "string, pinned for this request",
-  "features":      { "...": "the vector used, for audit" },
-  "explanation":   "string or null when the explainer timed out",
-  "scored_at":     "RFC3339 timestamp"
+  "delivery_id":          "string",
+  "tenant_id":            "string",
+  "repo":                 "owner/name",
+  "pr_number":            0,
+  "head_sha":             "40 hex characters",
+  "trigger":              "opened | synchronize | ...",
+  "p_lands_clean":        0.0,
+  "p_lands_after_rework": 0.0,
+  "p_goes_nowhere":       0.0,
+  "p_merge":              0.0,
+  "rank_score":           0.0,
+  "rank_mode":            "merge_first | risk_first | custom",
+  "rank_band":            "senior_recommended | review_first | standard | null",
+  "model_version":        "riffle-outcome-setup-g/7/new_repos, pinned for this request",
+  "miner_version":        "7.2.2",
+  "layer_weight":         0.0,
+  "unranked_reason":      "model_unavailable | not_outside_contributor | scoring_failed | invalid_input | null",
+  "explanation":          "string or null",
+  "scored_at":            "RFC3339 timestamp"
 }
 ```
+
+The model's inputs are not in the result. They go to the score log (`score_log`), one row per
+score.
 
 ## Rules for changing a schema
 

@@ -10,7 +10,23 @@
       "about": "PrEvent from intake: one per pull request trigger",
       "subscriptions": [
         {
-          "name": "scorer-pr-events",
+          "name": "pr-miner-pr-events",
+          "consumer": "pr-miner",
+          "ack_deadline_seconds": 600,
+          "message_ordering": true,
+          "retry_backoff_seconds": [
+            10,
+            600
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pr-features",
+      "about": "PrFeatures from the pr-miner: one PR as a mined_dataset row, the shape the model was trained on (ADR 0027)",
+      "subscriptions": [
+        {
+          "name": "scorer-pr-features",
           "consumer": "scorer",
           "ack_deadline_seconds": 60,
           "message_ordering": true,

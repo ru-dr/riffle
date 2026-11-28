@@ -28,12 +28,16 @@ module "identity" {
     }
     scorer = {
       namespace   = "riffle-serving"
-      description = "Scores each PR with the global and repo models"
-      subscribes  = ["scorer-pr-events"]
+      description = "Scores each PR (from the pr-miner) with the model in MLflow"
+      subscribes  = ["scorer-pr-features"]
       publishes   = ["score-results", "score-log"]
-      buckets     = { models = "roles/storage.objectViewer" }
-      secrets     = ["github-app-private-key"] # reads the PR from GitHub
-      database    = true
+      buckets = {
+        snapshots = "roles/storage.objectViewer" # the history store: the repo's earlier rows
+      }
+      # The model comes through MLflow (--serve-artifacts), not the models bucket; the PR comes
+      # from the pr-miner, so no GitHub key.
+      tenant_kek = true # decrypts a tenant's history
+      database   = true
     }
     explainer = {
       namespace   = "riffle-serving"
@@ -54,6 +58,15 @@ module "identity" {
     }
 
     # ---- riffle-workers: background work ----
+    pr-miner = {
+      namespace   = "riffle-workers"
+      description = "Turns each PR event into a mined_dataset row with the repo miner's code (ADR 0027)"
+      subscribes  = ["pr-miner-pr-events"]
+      publishes   = ["pr-features"]
+      buckets     = { snapshots = "roles/storage.objectUser" } # repo copies and the history store
+      secrets     = ["github-app-private-key"]                 # reads the PR as the GitHub App
+      tenant_kek  = true
+    }
     outcome-labeler = {
       namespace   = "riffle-workers"
       description = "Turns reverts, CI fails and hotfixes into labels"

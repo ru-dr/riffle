@@ -1,0 +1,11 @@
+# Build context for services/scorer/Dockerfile (BuildKit reads <Dockerfile>.dockerignore): everything is excluded
+# except what the image copies, so the repo's data, clones and models never reach the build.
+*
+!services/scorer/requirements.txt
+!services/scorer/scorer/
+!pipelines/training/outcome_features.py
+!contracts/pr_features.schema.json
+!contracts/mined_dataset.schema.json
+!contracts/score_result.schema.json
+!contracts/score_log.schema.json
+**/__pycache__/

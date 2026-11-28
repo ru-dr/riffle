@@ -7,7 +7,8 @@ name gets the environment prefix, e.g. `riffle-staging-pr-events`.
 
 | Topic | From | Read by (subscription) |
 | --- | --- | --- |
-| `pr-events` | intake | scorer (`scorer-pr-events`, ordered per PR) |
+| `pr-events` | intake | pr-miner (`pr-miner-pr-events`, ordered per PR) |
+| `pr-features` | pr-miner | scorer (`scorer-pr-features`, ordered per PR, ADR 0027) |
 | `score-results` | scorer | app (`app-score-results`) |
 | `score-log` | scorer | score-log writer (`score-log-writer`, ADR 0024) |
 | `installation-events` | intake | app (`app-installation-events`, ordered, ADR 0025) |

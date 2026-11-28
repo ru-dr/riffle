@@ -1372,3 +1372,85 @@ What intake publishes on the pr-events topic (riffle-<environment>-pr-events in 
 | `action` | `opened`, `synchronize`, `reopened`, `ready_for_review`, `edited`, `labeled`, `ci_completed` |  |  | What triggered the event. Covers every trigger rescore.on can enable; ci_completed is mapped from a completed check suite |
 | `head_sha` | string matching `^[0-9a-f]{40}$` |  |  | Head commit of the PR when the event happened |
 | `received_at` | string (date-time) |  |  | When intake verified the delivery, RFC 3339 in UTC |
+
+## PR features (`pr_features.schema.json`)
+
+**Version:** 1.0
+
+What the pr-miner publishes on the pr-features topic (riffle-<environment>-pr-features in GCP) and the scorer consumes: one pull request as the repo miner describes it, so the model sees the same shape it was trained on (ADR 0027). row is a row of mined_dataset.schema.json, made by the miner's own code; while the PR is open its outcome and label fields are null. The ordering key is <tenant_id>/<repo>#<pr_number>.
+
+| Key | Allowed | Default | Flags | Meaning |
+|---|---|---|---|---|
+| `delivery_id` | string matching `^[A-Za-z0-9-]{1,64}(:[1-9][0-9]{0,9})?$` |  |  | The PrEvent's delivery_id; scoring stays idempotent on it |
+| `tenant_id` | string matching `^[1-9][0-9]{0,19}$` |  |  | GitHub App installation id |
+| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  | Repository as owner/name |
+| `pr_number` | integer 1– |  |  | Pull request number |
+| `head_sha` | string matching `^[0-9a-f]{40}$` |  |  | Head commit of the PR when the event happened |
+| `action` | `opened`, `synchronize`, `reopened`, `ready_for_review`, `edited`, `labeled`, `ci_completed` |  |  | What triggered the event. Covers every trigger rescore.on can enable; ci_completed is mapped from a completed check suite |
+| `miner_version` | string matching `^[0-9]+\.[0-9]+\.[0-9]+$` |  |  | pipelines/ingestion/repo_miner/version.py of the miner that made the row |
+| `mined_at` | string (date-time) |  |  | When the row was made, RFC 3339 in UTC |
+| `disabled_sources` | list of `llm`, `semgrep`, `osv` |  |  | Miner sources left off for live scoring, so their columns are null: the LLM is never on the scoring path; Semgrep and OSV are slow and mostly empty in training |
+| `row` | object |  |  | One row of contracts/mined_dataset.schema.json for this PR as it stands at head_sha. Outcome and label fields are null while the PR is open; the scorer adds the repo's earlier rows from the history store before scoring |
+
+## Score log row (`score_log.schema.json`)
+
+**Version:** 1.0
+
+One row per score the scorer writes, with the features it saw (ADR 0024): published on score-log after the result is committed, batched into Parquet per tenant and day by the score-log writer, never rewritten. Training reads it beside the miner's rows; a row is used only with the miner version it records.
+
+| Key | Allowed | Default | Flags | Meaning |
+|---|---|---|---|---|
+| `delivery_id` | string matching `^[A-Za-z0-9-]{1,64}(:[1-9][0-9]{0,9})?$` |  |  | The PR event's delivery_id; one result per delivery (scoring is idempotent on it) |
+| `tenant_id` | string matching `^[1-9][0-9]{0,19}$` |  |  | GitHub App installation id |
+| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  | Repository as owner/name |
+| `pr_number` | integer 1– |  |  | Pull request number |
+| `head_sha` | string matching `^[0-9a-f]{40}$` |  |  | Head commit of the PR when the event happened |
+| `trigger` | `opened`, `synchronize`, `reopened`, `ready_for_review`, `edited`, `labeled`, `ci_completed` |  |  | The PR event's action that caused this score |
+| `scored_at` | string (date-time) |  |  | When the result was written, RFC 3339 in UTC |
+| `model_version` | string or null |  |  | The registered model version and variant used, pinned for this request (e.g. riffle-outcome-setup-g/7/new_repos); null when no model was available |
+| `miner_version` | string or null |  |  | Version of the miner that made the features (ADR 0027) |
+| `rank_score` | number or null 0–1 |  |  | The number the queue is sorted by, from the repo's ranking mode (ADR 0019); null when unranked |
+| `rank_band` | `senior_recommended`, `review_first`, `standard`, `None` |  |  | Band from the repo's rank_bands; null when unranked |
+| `layer_weight` | number 0–1 |  |  | The repo layer's share of the score; 0 while no repo layer is served |
+| `unranked_reason` | `model_unavailable`, `not_outside_contributor`, `scoring_failed`, `invalid_input`, `None` |  |  | Why the PR has no rank; null when ranked. An unranked PR is still shown (fail open) |
+| `p_lands_clean` | number or null 0–1 |  |  | Chance the PR is merged without rework |
+| `p_lands_after_rework` | number or null 0–1 |  |  | Chance the PR is merged after rework |
+| `p_goes_nowhere` | number or null 0–1 |  |  | Chance the PR is never merged |
+| `features` | object |  |  | The row the model read, as name to value: the miner's columns from pr_features.row plus the engineered features, in flat form (ADR 0012) |
+
+## Score result (`score_result.schema.json`)
+
+**Version:** 1.0
+
+What the scorer publishes on score-results after writing it to Postgres, and the app consumes: one PR's predicted outcome, its rank and band (ADR 0019), and the versions that made them. A PR is either ranked (rank_score, rank_band and model_version set, unranked_reason null) or unranked with a reason and still shown. The feature vector is not carried here; it is in the score log (ADR 0024).
+
+| Key | Allowed | Default | Flags | Meaning |
+|---|---|---|---|---|
+| `delivery_id` | string matching `^[A-Za-z0-9-]{1,64}(:[1-9][0-9]{0,9})?$` |  |  | The PR event's delivery_id; one result per delivery (scoring is idempotent on it) |
+| `tenant_id` | string matching `^[1-9][0-9]{0,19}$` |  |  | GitHub App installation id |
+| `repo` | string matching `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` |  |  | Repository as owner/name |
+| `pr_number` | integer 1– |  |  | Pull request number |
+| `head_sha` | string matching `^[0-9a-f]{40}$` |  |  | Head commit of the PR when the event happened |
+| `trigger` | `opened`, `synchronize`, `reopened`, `ready_for_review`, `edited`, `labeled`, `ci_completed` |  |  | The PR event's action that caused this score |
+| `p_lands_clean` | number or null 0–1 |  |  | Chance the PR is merged without rework |
+| `p_lands_after_rework` | number or null 0–1 |  |  | Chance the PR is merged after rework |
+| `p_goes_nowhere` | number or null 0–1 |  |  | Chance the PR is never merged |
+| `p_merge` | number or null 0–1 |  |  | p_lands_clean + p_lands_after_rework |
+| `p_reason_abandoned` | number or null 0–1 |  |  | Given it goes nowhere, chance the reason is abandoned |
+| `p_reason_duplicate` | number or null 0–1 |  |  | Given it goes nowhere, chance the reason is duplicate |
+| `p_reason_unwanted` | number or null 0–1 |  |  | Given it goes nowhere, chance the reason is unwanted |
+| `p_reason_ci_technical` | number or null 0–1 |  |  | Given it goes nowhere, chance the reason is ci_technical |
+| `p_reason_unknown` | number or null 0–1 |  |  | Given it goes nowhere, chance the reason is unknown |
+| `p_label_bad` | number or null 0–1 |  |  | Chance of label_bad (ADR 0002) |
+| `p_label_revert` | number or null 0–1 |  |  | Chance of a revert |
+| `p_label_hotfix` | number or null 0–1 |  |  | Chance of a hotfix |
+| `p_label_szz_bug` | number or null 0–1 |  |  | Chance of a later bug fix traced back to it |
+| `rank_score` | number or null 0–1 |  |  | The number the queue is sorted by, from the repo's ranking mode (ADR 0019); null when unranked |
+| `rank_mode` | `merge_first`, `risk_first`, `custom` |  |  | The ranking mode that made rank_score (ADR 0019); merge_first = p_lands_clean + 0.6 x p_lands_after_rework |
+| `rank_band` | `senior_recommended`, `review_first`, `standard`, `None` |  |  | Band from the repo's rank_bands; null when unranked |
+| `model_version` | string or null |  |  | The registered model version and variant used, pinned for this request (e.g. riffle-outcome-setup-g/7/new_repos); null when no model was available |
+| `miner_version` | string or null |  |  | Version of the miner that made the features (ADR 0027) |
+| `layer_weight` | number 0–1 |  |  | The repo layer's share of the score; 0 while no repo layer is served |
+| `unranked_reason` | `model_unavailable`, `not_outside_contributor`, `scoring_failed`, `invalid_input`, `None` |  |  | Why the PR has no rank; null when ranked. An unranked PR is still shown (fail open) |
+| `scored_at` | string (date-time) |  |  | When the result was written, RFC 3339 in UTC |
+| `explanation` | string or null |  |  | One sentence from the explainer; null when it was slow, down or off. The rank is valid either way |

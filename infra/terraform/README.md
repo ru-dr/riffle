@@ -154,7 +154,7 @@ gcloud container clusters get-credentials riffle-staging --region us-east4 --dns
 | 6 | Cloud Storage buckets (score log, models, snapshots, logs, traces), private, with lifecycle rules | `storage-buckets`, `06-storage.tf` | Object storage, Score log | done |
 | 7 | Cloud KMS key-encryption key (ADR 0025, rotated every 90 days) and Secret Manager entries | `kms`, `secrets`, `07-keys-and-secrets.tf` | Key vault | done |
 | 8 | Pub/Sub from `infra/pubsub/topics.json` (5 topics), dead-letter topics, hold subscriptions | `pubsub`, `08-pubsub.tf` | Message queue | done |
-| 9 | One service account per service (16), Workload Identity, least privilege; database logins | `service-accounts`, `09-identity.tf` | Cluster platform (pod identity) | done |
+| 9 | One service account per service (17), Workload Identity, least privilege; database logins | `service-accounts`, `09-identity.tf` | Cluster platform (pod identity) | done |
 | 10 | Artifact Registry, and GitHub Actions access without keys (images from any branch, Terraform from main) | `artifact-registry`, `github-oidc`, `10-ci-access.tf` | CI/CD, Container registry | done |
 | 11 | Edge: global static IP, Cloud Armor (GitHub-only `/webhook`, OWASP rules in preview, rate limit) | `edge`, `11-edge.tf` | Load balancer, WAF | done |
 | 12 | Namespaces and platform settings, Argo CD; then from `infra/k8s`: policies, service accounts, External Secrets, KEDA, Kueue, Gateway, the database migration Job | `envs/staging-bootstrap`, `infra/k8s` | Cluster platform | done |

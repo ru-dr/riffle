@@ -1,0 +1,70 @@
+# Wave 4, after the platform and MLflow. The scorer (services/scorer), from the shared chart
+# infra/k8s/charts/riffle-service: reads pr-features, ranks each PR with the model registered in
+# MLflow as riffle-outcome-setup-g@champion, writes score_results, publishes score-results and
+# score-log. A queue worker: KEDA scales it on the subscription's backlog, never below one warm pod.
+# To deploy a new build, put the tag from the images workflow's summary in image.tag. Until a
+# model is uploaded (services/scorer/README.md) every PR is stored unranked, model_unavailable.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: scorer
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '4'
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ru-dr/riffle.git
+    targetRevision: main
+    path: infra/k8s/charts/riffle-service
+    helm:
+      releaseName: scorer
+      valuesObject:
+        name: scorer
+        image:
+          repository: us-east4-docker.pkg.dev/riffle-infra-platform/riffle-staging/scorer
+          tag: not-built-yet
+        priorityClassName: riffle-serving
+        port: 8080
+        metricsPort: 9090
+        probes:
+          readinessPath: /readyz
+          livenessPath: /healthz
+        cloudSql:
+          enabled: true
+        env:
+          MLFLOW_TRACKING_URI: http://mlflow.riffle-ml.svc:5000
+          MODEL_NAME: riffle-outcome-setup-g
+          MODEL_ALIAS: champion
+          MODEL_VARIANT: new_repos
+          WORKERS: '16'
+          TENANT_MAX_IN_FLIGHT: '4'
+        # The model (one variant, three seeds) and the pandas, LightGBM and XGBoost runtimes.
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        autoscaling:
+          keda:
+            enabled: true
+            subscriptionEnv: SUBSCRIPTION_SCORER_PR_FEATURES
+            messagesPerReplica: 20
+            minReplicas: 1
+            maxReplicas: 10
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: riffle-serving
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
+    syncOptions:
+    - ServerSideApply=true

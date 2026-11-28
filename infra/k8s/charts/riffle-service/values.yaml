@@ -49,7 +49,7 @@ autoscaling:
   # subscription's backlog as its own Google account (keda), which may read metrics.
   keda:
     enabled: false
-    subscriptionEnv: ""   # settings key holding the subscription name, e.g. SUBSCRIPTION_SCORER_PR_EVENTS
+    subscriptionEnv: ""   # settings key holding the subscription name, e.g. SUBSCRIPTION_SCORER_PR_FEATURES
     messagesPerReplica: 5
     minReplicas: 1
     maxReplicas: 10

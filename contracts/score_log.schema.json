@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://riffle.dev/contracts/score_log.schema.json",
+  "title": "Score log row",
+  "x-riffle-version": "1.0",
+  "description": "One row per score the scorer writes, with the features it saw (ADR 0024): published on score-log after the result is committed, batched into Parquet per tenant and day by the score-log writer, never rewritten. Training reads it beside the miner's rows; a row is used only with the miner version it records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "delivery_id",
+    "tenant_id",
+    "repo",
+    "pr_number",
+    "head_sha",
+    "trigger",
+    "scored_at",
+    "model_version",
+    "miner_version",
+    "rank_score",
+    "rank_band",
+    "layer_weight",
+    "unranked_reason",
+    "features"
+  ],
+  "properties": {
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{1,64}(:[1-9][0-9]{0,9})?$",
+      "description": "The PR event's delivery_id; one result per delivery (scoring is idempotent on it)"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$",
+      "description": "GitHub App installation id"
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$",
+      "description": "Repository as owner/name"
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Pull request number"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Head commit of the PR when the event happened"
+    },
+    "trigger": {
+      "enum": [
+        "opened",
+        "synchronize",
+        "reopened",
+        "ready_for_review",
+        "edited",
+        "labeled",
+        "ci_completed"
+      ],
+      "description": "The PR event's action that caused this score"
+    },
+    "scored_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the result was written, RFC 3339 in UTC"
+    },
+    "model_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The registered model version and variant used, pinned for this request (e.g. riffle-outcome-setup-g/7/new_repos); null when no model was available"
+    },
+    "miner_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Version of the miner that made the features (ADR 0027)"
+    },
+    "rank_score": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "The number the queue is sorted by, from the repo's ranking mode (ADR 0019); null when unranked"
+    },
+    "rank_band": {
+      "enum": [
+        "senior_recommended",
+        "review_first",
+        "standard",
+        null
+      ],
+      "description": "Band from the repo's rank_bands; null when unranked"
+    },
+    "layer_weight": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "The repo layer's share of the score; 0 while no repo layer is served"
+    },
+    "unranked_reason": {
+      "enum": [
+        "model_unavailable",
+        "not_outside_contributor",
+        "scoring_failed",
+        "invalid_input",
+        null
+      ],
+      "description": "Why the PR has no rank; null when ranked. An unranked PR is still shown (fail open)"
+    },
+    "p_lands_clean": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Chance the PR is merged without rework"
+    },
+    "p_lands_after_rework": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Chance the PR is merged after rework"
+    },
+    "p_goes_nowhere": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Chance the PR is never merged"
+    },
+    "features": {
+      "type": "object",
+      "description": "The row the model read, as name to value: the miner's columns from pr_features.row plus the engineered features, in flat form (ADR 0012)",
+      "additionalProperties": {
+        "type": [
+          "number",
+          "string",
+          "boolean",
+          "null"
+        ]
+      }
+    }
+  }
+}

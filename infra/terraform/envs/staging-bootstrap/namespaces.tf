@@ -27,7 +27,7 @@ locals {
     "observability"  = { tier = "observability", gateway_access = "false" }
   }
 
-  # TOPIC_PR_EVENTS, SUBSCRIPTION_SCORER_PR_EVENTS, BUCKET_SCORE_LOG, ... distinct(): the same
+  # TOPIC_PR_EVENTS, SUBSCRIPTION_SCORER_PR_FEATURES, BUCKET_SCORE_LOG, ... distinct(): the same
   # short name can be both a topic and a bucket (score-log).
   env_name = { for k in distinct(concat(keys(local.platform.pubsub_topics), keys(local.platform.pubsub_subscriptions), keys(local.platform.buckets))) : k => upper(replace(k, "-", "_")) }
 

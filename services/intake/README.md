@@ -20,7 +20,7 @@ Invariant: the same delivery ID must never be published twice.
 
 | GitHub event | Published | Contract |
 | --- | --- | --- |
-| `pull_request`: opened, synchronize, reopened, ready_for_review, edited, labeled | One `PrEvent` on `pr-events` | [`pr_event`](../../contracts/pr_event.schema.json) |
+| `pull_request`: opened, synchronize, reopened, ready_for_review, edited, labeled | One `PrEvent` on `pr-events` (read by the pr-miner, which makes the model's row, ADR 0027) | [`pr_event`](../../contracts/pr_event.schema.json) |
 | `check_suite`: completed | One `PrEvent` (`ci_completed`) per PR in the suite; with several PRs the delivery id gets `:<pr_number>` | `pr_event` |
 | `installation`: created, deleted, suspend, unsuspend, new_permissions_accepted; `installation_repositories`: added, removed | One `InstallationEvent` on `installation-events` (ADR 0025) | [`installation_event`](../../contracts/installation_event.schema.json) |
 | `ping` | Nothing; answers `pong` | |

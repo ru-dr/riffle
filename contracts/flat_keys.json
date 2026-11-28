@@ -4851,5 +4851,316 @@
         "string"
       ]
     }
+  },
+  "pr_features.schema.json": {
+    "/delivery_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/tenant_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/repo": {
+      "type": [
+        "string"
+      ]
+    },
+    "/pr_number": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/head_sha": {
+      "type": [
+        "string"
+      ]
+    },
+    "/action": {
+      "type": [
+        "string"
+      ]
+    },
+    "/miner_version": {
+      "type": [
+        "string"
+      ]
+    },
+    "/mined_at": {
+      "type": [
+        "string"
+      ]
+    },
+    "/disabled_sources": {
+      "type": [
+        "array"
+      ]
+    },
+    "/row": {
+      "type": [
+        "object"
+      ]
+    }
+  },
+  "score_log.schema.json": {
+    "/delivery_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/tenant_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/repo": {
+      "type": [
+        "string"
+      ]
+    },
+    "/pr_number": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/head_sha": {
+      "type": [
+        "string"
+      ]
+    },
+    "/trigger": {
+      "type": [
+        "string"
+      ]
+    },
+    "/scored_at": {
+      "type": [
+        "string"
+      ]
+    },
+    "/model_version": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/miner_version": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/rank_score": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/rank_band": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/layer_weight": {
+      "type": [
+        "number"
+      ]
+    },
+    "/unranked_reason": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/p_lands_clean": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_lands_after_rework": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_goes_nowhere": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/features/{key}": {
+      "type": [
+        "boolean",
+        "null",
+        "number",
+        "string"
+      ]
+    }
+  },
+  "score_result.schema.json": {
+    "/delivery_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/tenant_id": {
+      "type": [
+        "string"
+      ]
+    },
+    "/repo": {
+      "type": [
+        "string"
+      ]
+    },
+    "/pr_number": {
+      "type": [
+        "integer"
+      ]
+    },
+    "/head_sha": {
+      "type": [
+        "string"
+      ]
+    },
+    "/trigger": {
+      "type": [
+        "string"
+      ]
+    },
+    "/p_lands_clean": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_lands_after_rework": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_goes_nowhere": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_merge": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_reason_abandoned": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_reason_duplicate": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_reason_unwanted": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_reason_ci_technical": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_reason_unknown": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_label_bad": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_label_revert": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_label_hotfix": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/p_label_szz_bug": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/rank_score": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "/rank_mode": {
+      "type": [
+        "string"
+      ]
+    },
+    "/rank_band": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/model_version": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/miner_version": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/layer_weight": {
+      "type": [
+        "number"
+      ]
+    },
+    "/unranked_reason": {
+      "type": [
+        "null",
+        "string"
+      ]
+    },
+    "/scored_at": {
+      "type": [
+        "string"
+      ]
+    },
+    "/explanation": {
+      "type": [
+        "null",
+        "string"
+      ]
+    }
   }
 }
